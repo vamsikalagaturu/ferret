@@ -1,4 +1,5 @@
 #include "app.h"
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,6 +8,14 @@
 
 static char pending[2]; /* the chord prefix typed so far */
 static int visual;      /* cursor moves extend the selection from the anchor */
+
+static struct {
+    int on;
+    int seen;   /* a layout drew the field since the last keys_handle */
+    int result; /* what the field returned since then */
+    char *uri;
+    fr_text text;
+} insert;
 
 void filter_start(int first_char)
 {
@@ -61,6 +70,88 @@ int step_back(int quit_at_end)
 }
 
 const char *keys_pending(void) { return pending; }
+
+int keys_mode(void) { return insert.on ? MODE_INSERT : visual ? MODE_VISUAL : MODE_NORMAL; }
+
+static unsigned insert_id(void) { return ui_id("insert", 0); }
+
+/* how: 'i' caret before the extension, 'a'/'A' at the end, 'I' at the start, 'c' the stem cleared */
+static void insert_start(int how)
+{
+    fr_item *it = browser_item(br.cursor);
+    if (!it || !br.uri) return;
+    visual = 0;
+    int stem = (int)fr_stem_len(it->e.name, it->e.is_dir);
+    text_set(&insert.text, how == 'c' ? it->e.name + stem : it->e.name);
+    int at = how == 'I' || how == 'c' ? 0 : how == 'i' ? stem : insert.text.len;
+    text_select(&insert.text, at, at);
+    free(insert.uri);
+    insert.uri = fr_uri_join(br.uri, it->e.name);
+    insert.on = insert.seen = 1;
+    ui.focus = insert_id();
+    view_reveal(br.cursor);
+    ui.dirty = 1;
+}
+
+static void insert_stop(void)
+{
+    insert.on = 0;
+    free(insert.uri);
+    insert.uri = NULL;
+    if (ui.focus == insert_id()) ui.focus = 0;
+    ui.dirty = 1;
+}
+
+static void insert_commit(void)
+{
+    char *old = fr_uri_name(insert.uri);
+    int same = !strcmp(old, insert.text.buf);
+    free(old);
+    if (same) {
+        insert_stop();
+        return;
+    }
+    if (!fr_name_valid(insert.text.buf)) {
+        ui_toast("A name cannot be empty, \".\", \"..\" or contain \"/\"");
+        return;
+    }
+    char *parent = fr_uri_parent(insert.uri), *to = fr_uri_join(parent, insert.text.buf);
+    int rc = fr_vfs_rename(insert.uri, to);
+    free(parent), free(to);
+    if (rc == -EEXIST) ui_toast("\"%s\" already exists here", insert.text.buf);
+    else if (rc) ui_toast("Could not rename: %s", fr_vfs_error(rc));
+    else {
+        free(br.focus_name);
+        br.focus_name = fr_strdup(insert.text.buf);
+        browser_reload();
+        free(br.focus_name);
+        br.focus_name = NULL;
+        insert_stop();
+    }
+}
+
+int keys_insert_field(int v, Rectangle r)
+{
+    if (!insert.on || v != br.cursor) return 0;
+    fr_item *it = browser_item(v);
+    char *uri = it ? fr_uri_join(br.uri, it->e.name) : NULL;
+    int same = uri && !strcmp(uri, insert.uri);
+    free(uri);
+    if (!same) return 0;
+    insert.seen = 1;
+    insert.result |= ui_text_field(insert_id(), &insert.text, r, NULL);
+    return 1;
+}
+
+/* after the layouts drew: committing reloads the folder, which must not happen while its rows are drawn */
+static void insert_poll(void)
+{
+    int rc = insert.result, seen = insert.seen;
+    insert.result = insert.seen = 0;
+    if (!insert.on) return;
+    if (rc & TEXT_CANCEL || !seen || ui.focus != insert_id()) insert_stop();
+    else if (rc & TEXT_SUBMIT) insert_commit();
+}
 
 static void set_pending(int c)
 {
@@ -206,7 +297,11 @@ static void command(int c)
     case K(0, 'D'): ops_delete(0); break;
     case K(0, 'X'): ops_delete(1); break;
     case K(0, 'r'): ops_rename_start(); break;
-    case K(0, 'a'): ops_new_folder_start(); break;
+    case K(0, 'i'):
+    case K(0, 'a'):
+    case K(0, 'A'):
+    case K(0, 'I'):
+    case K(0, 'c'): insert_start(c); break;
     case K(0, '.'): toggle_hidden(); break;
     case K(0, 'q'): app.quit = 1; break;
     case K('g', 'h'):
@@ -228,6 +323,7 @@ static void command(int c)
 
 void keys_handle(void)
 {
+    insert_poll();
     if (visual && !br.nselected) visual = 0;
     if (ui_key(KEY_BACK, 0)) step_back(1);
     if (ui_key(KEY_ESCAPE, 0)) {
@@ -266,7 +362,10 @@ void keys_handle(void)
     if (ui_key(KEY_V, MOD_CTRL)) ops_paste();
     if (ui_key(KEY_DELETE, 0)) ops_delete(0);
     if (ui_key(KEY_DELETE, MOD_SHIFT)) ops_delete(1);
-    if (ui_key(KEY_F2, 0)) ops_rename_start();
+    if (ui_key(KEY_F2, 0)) {
+        if (ui.touch) ops_rename_start();
+        else insert_start('i');
+    }
     if (ui_key(KEY_N, MOD_CTRL | MOD_SHIFT)) ops_new_folder_start();
     if (ui_key(KEY_H, MOD_CTRL)) toggle_hidden();
     if (ui_key(KEY_F5, 0) || ui_key(KEY_R, MOD_CTRL)) browser_reload();

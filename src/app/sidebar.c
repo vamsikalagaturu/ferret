@@ -86,8 +86,12 @@ void places_draw(Rectangle r)
         y += ih;
     }
     if (ui.touch) return;
-    float count_h = DP(28);
-    Rectangle help = {r.x + DP(8), fmaxf(y + DP(12) + count_h, r.y + r.height - ih - DP(8)), r.width - DP(16), ih};
+    float count_h = DP(28), mode_h = DP(24);
+    Rectangle help = {r.x + DP(8), fmaxf(y + DP(12) + mode_h + count_h, r.y + r.height - ih - DP(8)), r.width - DP(16), ih};
+    static const char *const modes[] = {"-- NORMAL --", "-- VISUAL --", "-- INSERT --"};
+    int mode = keys_mode();
+    ui_text_box(modes[mode], (Rectangle){r.x + DP(20), help.y - DP(6) - count_h - mode_h, r.width - DP(40), mode_h}, 15, FONT_REGULAR,
+                mode == MODE_NORMAL ? theme.text_faint : theme.accent, ALIGN_LEFT, 0);
     char count[96];
     int n = br.view.n != br.items.n ? snprintf(count, sizeof count, "%d of %d items shown", br.view.n, br.items.n)
                                     : snprintf(count, sizeof count, "%d %s", br.view.n, br.view.n == 1 ? "item" : "items");

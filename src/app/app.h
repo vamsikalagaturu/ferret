@@ -111,8 +111,11 @@ int favorite_index(const char *uri); /* -1 when not a favorite */
 void favorite_toggle(const char *uri);
 
 /* ---- keys (keys.c) ---- */
+typedef enum { MODE_NORMAL, MODE_VISUAL, MODE_INSERT } fr_mode;
 void keys_handle(void);
 const char *keys_pending(void); /* the chord prefix waiting for its next key, "" none */
+int keys_mode(void);            /* an fr_mode */
+int keys_insert_field(int v, Rectangle r); /* draws view row v's name being typed in r; 0 when v is not renamed in place */
 void filter_start(int first_char);
 void filter_stop(void);
 int step_back(int quit_at_end);
