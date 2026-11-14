@@ -42,10 +42,8 @@ void view_row_pressed(int v, int right_click)
     int idx = br.view.v[v];
     br.keyboard = 0;
     if (ui.touch) {
-        if (right_click) {
-            browser_set_selected(idx, !it->selected);
-            plat_haptic();
-        } else if (br.nselected) browser_set_selected(idx, !it->selected);
+        if (right_click) browser_set_selected(idx, !it->selected);
+        else if (br.nselected) browser_set_selected(idx, !it->selected);
         else ops_open_item(it);
         br.cursor = v;
         return;
