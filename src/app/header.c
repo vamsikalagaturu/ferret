@@ -9,19 +9,15 @@ float header_height(void) { return DP(ui.touch ? 56 : 48); }
 static void draw_breadcrumb(Rectangle r)
 {
     if (!br.uri) return;
-    int p = place_of(br.uri);
-    const char *rest = br.uri;
     struct {
         char *label, *uri;
     } segs[64];
     int n = 0;
-    if (p >= 0) {
-        segs[n].label = fr_strdup(app.places.v[p].label), segs[n++].uri = fr_strdup(app.places.v[p].uri);
-        rest = br.uri + strlen(app.places.v[p].uri);
-    } else {
-        segs[n].label = fr_strdup("/"), segs[n++].uri = fr_uri_from_path("/");
-        rest = fr_uri_path(br.uri);
-    }
+    const char *rest = fr_uri_path(br.uri), *end_of_uri = br.uri + strlen(br.uri);
+    if (rest < br.uri || rest > end_of_uri) rest = end_of_uri;
+    if (fr_uri_local(br.uri)) segs[n].label = fr_strdup("/");
+    else segs[n].label = fr_strndup(br.uri, (size_t)(rest - br.uri));
+    segs[n++].uri = fr_strndup(br.uri, (size_t)(rest - br.uri) + 1);
     while (*rest && n < 64) {
         while (*rest == '/') rest++;
         if (!*rest) break;

@@ -260,11 +260,12 @@ static struct {
     Rectangle anchor, rect;
     menu_item items[32];
     int n, clicked, hot, prev_layer;
+    int fresh; /* opened by this frame's click, which must not count as one outside it */
 } menu;
 
 void ui_menu_open(unsigned id, Rectangle anchor)
 {
-    menu.id = id, menu.anchor = anchor, menu.clicked = -1, menu.hot = -1;
+    menu.id = id, menu.anchor = anchor, menu.clicked = -1, menu.hot = -1, menu.fresh = 1;
     ui.dirty = 1;
 }
 
@@ -364,7 +365,12 @@ void ui_menu_end(void)
         } else if ((k == KEY_ENTER || k == KEY_KP_ENTER) && menu.hot >= 0) menu.clicked = menu.hot, ui.keys[i].used = 1, ui.dirty = 1;
         else if (k == KEY_ESCAPE || k == KEY_BACK) ui_menu_close(), ui.keys[i].used = 1;
     }
-    if ((ui.pressed || ui.rpressed) && !CheckCollisionPointRec(ui.mouse, menu.rect)) ui_menu_close();
+    if (!menu.fresh && (ui.pressed || ui.rpressed) && !CheckCollisionPointRec(ui.mouse, menu.rect)) {
+        ui_menu_close();
+        /* a right click elsewhere opens the menu there, as one click */
+        if (ui.rpressed) ui_push_mouse(MOUSE_BUTTON_RIGHT, 1), ui_push_mouse(MOUSE_BUTTON_RIGHT, 0);
+    }
+    menu.fresh = 0;
     ui.layer = menu.prev_layer;
 }
 

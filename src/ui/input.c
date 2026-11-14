@@ -103,7 +103,7 @@ void ui_begin_frame(void)
     double now = fr_now();
     ui.dt = ui.now ? fmin(fmax(now - ui.now, 0), 0.05) : 0;
     ui.now = now;
-    ui.scale = plat_scale();
+    ui.scale = plat_scale() * (ui.user_scale > 0 ? ui.user_scale : 1);
     ui.touch = plat_touch();
     ui.w = (float)GetRenderWidth();
     ui.h = (float)GetRenderHeight();

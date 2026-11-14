@@ -5,7 +5,7 @@
  * else is an error for that line, which is skipped. */
 #include "util.h"
 
-enum { TOML_STRING, TOML_BOOL, TOML_STRINGS };
+enum { TOML_STRING, TOML_BOOL, TOML_STRINGS, TOML_NUMBER };
 
 typedef struct {
     char *table; /* "" before the first header */
@@ -13,6 +13,7 @@ typedef struct {
     int type;
     char *str;
     int b;
+    double num;
     fr_strs strs;
 } fr_toml_value;
 
@@ -36,5 +37,6 @@ void fr_toml_comment(fr_toml_out *o, const char *text); /* "# text"; "" writes a
 void fr_toml_table(fr_toml_out *o, const char *name);
 void fr_toml_string(fr_toml_out *o, const char *key, const char *value);
 void fr_toml_bool(fr_toml_out *o, const char *key, int value);
+void fr_toml_number(fr_toml_out *o, const char *key, double value);
 void fr_toml_strings(fr_toml_out *o, const char *key, const fr_strs *values); /* one per line */
 #endif

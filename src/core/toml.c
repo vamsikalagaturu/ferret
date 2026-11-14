@@ -131,6 +131,14 @@ static int parse_value(cursor *c, fr_toml_value *v)
             return 1;
         }
     }
+    if ((*c->s >= '0' && *c->s <= '9') || *c->s == '-' || *c->s == '+') {
+        char *end;
+        v->num = strtod(c->s, &end);
+        if (end == c->s || bare_char(*end)) return 0;
+        c->s = end;
+        v->type = TOML_NUMBER;
+        return 1;
+    }
     if (*c->s != '[') return 0;
     c->s++;
     v->type = TOML_STRINGS;
@@ -260,6 +268,15 @@ void fr_toml_bool(fr_toml_out *o, const char *key, int value)
 {
     put_key(o, key);
     puts_(o, value ? "true\n" : "false\n");
+}
+
+void fr_toml_number(fr_toml_out *o, const char *key, double value)
+{
+    char buf[32];
+    snprintf(buf, sizeof buf, "%g\n", value);
+    if (!strpbrk(buf, ".e")) snprintf(buf, sizeof buf, "%.1f\n", value);
+    put_key(o, key);
+    puts_(o, buf);
 }
 
 void fr_toml_strings(fr_toml_out *o, const char *key, const fr_strs *values)

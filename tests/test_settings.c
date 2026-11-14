@@ -52,7 +52,9 @@ int main(void)
                       "sort = \"name\"\n"
                       "[ theme ]\n"
                       "red = \"#ff0000\"\n");
-    CHECK(t.error_line == 4);
+    CHECK(t.error_line == 0);
+    v = fr_toml_get(&t, "", "number", TOML_NUMBER);
+    CHECK(v && v->num == 3);
     v = fr_toml_get(&t, "", "sort", TOML_STRING);
     CHECK(v && !strcmp(v->str, "name"));
     v = fr_toml_get(&t, "", "quoted key", TOML_STRING);

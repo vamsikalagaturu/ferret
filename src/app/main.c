@@ -43,8 +43,8 @@ static void draw_menus(void)
             if (ui_menu_item(fav ? "Remove from favorites" : "Add to favorites", fav ? "star-off" : "star", -1)) favorite_toggle(br.uri);
         }
         ui_menu_separator();
-        static const char *sorts[] = {"Sort by name", "Sort by size", "Sort by date", "Sort by kind"};
-        for (int i = 0; i < 4; i++)
+        static const char *sorts[] = {"Sort by name", "Sort by size", "Sort by date", "Sort by kind", "Sort by extension"};
+        for (int i = 0; i < 5; i++)
             if (ui_menu_item(sorts[i], NULL, br.sort == (fr_sort)i)) br.sort = (fr_sort)i, browser_rebuild_view();
         if (ui_menu_item("Reverse order", NULL, br.desc)) br.desc = !br.desc, browser_rebuild_view();
         if (ui_menu_item("Show hidden", NULL, br.show_hidden)) br.show_hidden = !br.show_hidden, browser_rebuild_view();
@@ -52,6 +52,13 @@ static void draw_menus(void)
         static const char *layouts[] = {"Details", "Columns", "Grid"};
         for (int i = 0; i < 3; i++)
             if (ui_menu_item(layouts[i], NULL, app.layout == (fr_layout)i)) view_set_layout((fr_layout)i);
+        ui_menu_separator();
+        char size[48];
+        snprintf(size, sizeof size, "Bigger interface (now %d%%)", (int)lroundf(ui.user_scale * 100));
+        if (ui_menu_item(size, "zoom-in", -1)) app_zoom(1);
+        if (ui_menu_item("Smaller interface", "zoom-out", -1)) app_zoom(-1);
+        if (ui.user_scale != 1 && ui_menu_item("Default interface size", NULL, -1)) app_zoom(0);
+        if (ui_menu_item("Keyboard shortcuts", "keyboard", -1)) app.help_open = 1;
         ui_menu_separator();
         if (ui_menu_item("Refresh", "refresh-cw", -1)) browser_reload();
         ui_menu_end();
@@ -62,6 +69,12 @@ static void draw_menus(void)
         if (ui_menu_item("Copy", "copy", -1)) ops_copy(0);
         if (ui_menu_item("Cut", "scissors", -1)) ops_copy(1);
         if (br.nselected == 1 && ui_menu_item("Rename", "pencil", -1)) ops_rename_start();
+        if (br.nselected == 1 && it && it->e.is_dir) {
+            char *uri = fr_uri_join(br.uri, it->e.name);
+            int fav = favorite_index(uri) >= 0;
+            if (ui_menu_item(fav ? "Remove from favorites" : "Add to favorites", fav ? "star-off" : "star", -1)) favorite_toggle(uri);
+            free(uri);
+        }
         ui_menu_separator();
         if (br.uri && fr_vfs_can_trash(br.uri) && ui_menu_item("Move to trash", "trash-2", -1)) ops_delete(0);
         if (ui_menu_item("Delete permanently", "trash-2", -1)) ops_delete(1);
@@ -73,6 +86,11 @@ static void draw_menus(void)
         if (ui_menu_item("New folder", "folder-plus", -1)) ops_new_folder_start();
         if (clip.uris.n && ui_menu_item("Paste", "clipboard-paste", -1)) ops_paste();
         if (ui_menu_item("Select all", "check-check", -1)) browser_select_all();
+        if (br.uri) {
+            int fav = favorite_index(br.uri) >= 0;
+            if (ui_menu_item(fav ? "Remove this folder from favorites" : "Add this folder to favorites", fav ? "star-off" : "star", -1))
+                favorite_toggle(br.uri);
+        }
         if (ui_menu_item("Show hidden", NULL, br.show_hidden)) br.show_hidden = !br.show_hidden, browser_rebuild_view();
         if (ui_menu_item("Refresh", "refresh-cw", -1)) browser_reload();
         ui_menu_end();
@@ -83,6 +101,87 @@ static void draw_menus(void)
         if (br.uri && fr_vfs_can_trash(br.uri) && ui_menu_item("Delete permanently", "trash-2", -1)) ops_delete(1);
         ui_menu_end();
     }
+}
+
+void app_zoom(int dir)
+{
+    float s = ui.user_scale > 0 ? ui.user_scale : 1;
+    s = dir > 0 ? s + 0.1f : dir < 0 ? s - 0.1f : 1;
+    s = fmaxf((float)UI_SCALE_MIN, fminf((float)UI_SCALE_MAX, roundf(s * 10) / 10));
+    ui.user_scale = s;
+    ui_toast("Interface size %d%%", (int)lroundf(s * 100));
+}
+
+/* ---- the status bar and the keyboard shortcuts ---- */
+
+static float draw_status(Rectangle area)
+{
+    if (ui.touch) return 0;
+    float h = DP(28), pad = DP(12);
+    Rectangle r = {area.x, area.y + area.height - h, area.width, h};
+    ui_rect(r, theme.surface);
+    ui_hline(r.x, r.y, r.width, theme.border);
+    char text[128];
+    int n = snprintf(text, sizeof text, "%d %s", br.view.n, br.view.n == 1 ? "item" : "items");
+    if (br.nselected) n += snprintf(text + n, sizeof text - (size_t)n, ", %d selected", br.nselected);
+    if (br.filtering && br.filter.len) snprintf(text + n, sizeof text - (size_t)n, ", filtered");
+    ui_text_box(text, (Rectangle){r.x + pad, r.y, r.width / 2, h}, 13, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 0);
+    Rectangle help = {r.x + r.width - h - DP(4), r.y, h, h};
+    int state;
+    if (ui_clickable(ui_id("help", 0), help, &state)) app.help_open = !app.help_open;
+    if (state) ui_round(help, 6, state == 2 ? theme.pressed : theme.hover);
+    ui_text_box("?", help, 15, FONT_SEMIBOLD, app.help_open ? theme.accent : theme.text_dim, ALIGN_CENTER, 0);
+    return h;
+}
+
+static const char *const shortcuts[][2] = {
+    {"j / k, arrows", "down / up"},        {"h / l", "parent folder / open"},
+    {"gg / G", "top / bottom"},            {"Ctrl+d / Ctrl+u", "half a page down / up"},
+    {"Enter", "open"},                     {"Backspace, Alt+Left", "back"},
+    {"Alt+Right", "forward"},              {"Ctrl+L", "type a location (Tab completes)"},
+    {"/", "filter this folder"},           {"n / N", "next / previous row"},
+    {"Space", "select and move down"},     {"v", "select a range"},
+    {"Ctrl+A", "select all"},              {"Esc", "clear the selection, close"},
+    {"yy / dd / p", "copy / cut / paste"}, {"yp / yP", "copy the folder's / item's path"},
+    {"r, F2", "rename"},                   {"a", "new folder"},
+    {"D, Delete", "move to the trash"},    {"X, Shift+Delete", "delete permanently"},
+    {"Alt+Enter", "properties"},           {".", "show hidden files"},
+    {"sn ss sm se", "sort by name, size, date, extension"}, {"S", "reverse the order"},
+    {"Ctrl+1 / 2 / 3", "details, columns, grid"},          {"m", "add or remove this folder as a favorite"},
+    {"g1 .. g9", "open favorite 1 to 9"},  {"gh, g~", "home"},
+    {"Ctrl+= / Ctrl+- / Ctrl+0", "bigger / smaller / default interface"},
+    {"F5, Ctrl+R", "refresh"},             {"?", "this list"},
+    {"q, Ctrl+Q", "quit"},
+};
+
+static void draw_help(void)
+{
+    if (!app.help_open) return;
+    ui_layer(1);
+    ui_rect((Rectangle){0, 0, ui.w, ui.h}, theme.scrim);
+    int n = (int)(sizeof shortcuts / sizeof *shortcuts);
+    float lh = DP(26), pad = DP(24), kw = DP(200);
+    float w = fminf(ui.safe.width - DP(32), DP(620)), h = fminf(ui.safe.height - DP(48), pad * 2 + DP(40) + n * lh);
+    Rectangle card = {ui.safe.x + (ui.safe.width - w) / 2, ui.safe.y + (ui.safe.height - h) / 2, w, h};
+    ui_round(card, 14, theme.surface_hi);
+    ui_round_line(card, 14, theme.border);
+    ui_text_box("Keyboard shortcuts", (Rectangle){card.x + pad, card.y + pad, w - 2 * pad, DP(28)}, 18, FONT_SEMIBOLD, theme.text, ALIGN_LEFT, 0);
+    Rectangle body = {card.x + pad, card.y + pad + DP(40), w - 2 * pad, h - 2 * pad - DP(40)};
+    static fr_scroll scroll;
+    ui_scroll(ui_id("help-list", 0), &scroll, body, n * lh);
+    ui_clip_begin(body);
+    for (int i = 0; i < n; i++) {
+        float y = body.y + i * lh - scroll.offset;
+        ui_text_box(shortcuts[i][0], (Rectangle){body.x, y, kw - DP(12), lh}, 14, FONT_SEMIBOLD, theme.accent, ALIGN_LEFT, 0);
+        ui_text_box(shortcuts[i][1], (Rectangle){body.x + kw, y, body.width - kw, lh}, 14, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 0);
+    }
+    ui_clip_end();
+    int typed_q = 0;
+    for (int i = 0; i < ui.nchars; i++)
+        if (ui.chars[i] == '?') typed_q = 1;
+    if (typed_q || ui_key(KEY_ESCAPE, 0) || ui_key(KEY_BACK, 0) || (ui.pressed && !CheckCollisionPointRec(ui.mouse, card)))
+        app.help_open = 0, ui.nchars = 0;
+    ui_layer(0);
 }
 
 /* ---- Android's storage permission ---- */
@@ -125,7 +224,7 @@ static void frame(void)
         return;
     }
     if (app_wide() || app.drawer_open) places_refresh(0);
-    int modal = ops_dialog_open() || ui_menu_is_open();
+    int modal = ops_dialog_open() || ui_menu_is_open() || app.help_open;
     Rectangle s = ui.safe;
     if (app_wide()) {
         float sw = DP(240);
@@ -135,6 +234,7 @@ static void frame(void)
     }
     float hh = header_height();
     Rectangle list = {s.x, s.y + hh, s.width, s.height - hh};
+    list.height -= draw_status(list);
     list.height -= ops_draw_jobs(list);
     list.height -= draw_paste_bar(list);
     view_draw(list);
@@ -158,6 +258,7 @@ static void frame(void)
     }
     draw_menus();
     ops_draw_dialogs();
+    draw_help();
     ui_toast_draw(list.y + list.height);
     if (!modal) keys_handle();
     else if (ui_key(KEY_BACK, 0)) ui_menu_close();
@@ -169,6 +270,7 @@ static void frame(void)
 int fr_app_main(int argc, char **argv)
 {
     plat_init_window();
+    ui.user_scale = 1;
     settings_load();
     theme_load(settings.theme);
     ui_input_init();

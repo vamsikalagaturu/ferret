@@ -23,7 +23,8 @@ void theme_load(char *const *overrides);
 enum { MOD_SHIFT = 1, MOD_CTRL = 2, MOD_ALT = 4, MOD_SUPER = 8 };
 
 typedef struct {
-    float scale; /* pixels per dp */
+    float scale;      /* pixels per dp */
+    float user_scale; /* the interface size chosen in the app, over the system's scale (1 = as the system says) */
     int touch;
     float w, h;              /* window, pixels */
     float il, it, ir, ib;    /* insets, pixels */
