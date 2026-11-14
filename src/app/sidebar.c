@@ -186,12 +186,17 @@ void places_draw(Rectangle r)
     }
     y = disks_draw(r, y, ih, disk_current);
     if (ui.touch) return;
-    float count_h = DP(28), mode_h = DP(24);
-    Rectangle help = {r.x + DP(8), fmaxf(y + DP(12) + mode_h + count_h, r.y + r.height - ih - DP(8)), r.width - DP(16), ih};
-    static const char *const modes[] = {"-- NORMAL --", "-- VISUAL --", "-- INSERT --"};
+    float status_h = DP(36);
+    Rectangle help = {r.x + DP(8), fmaxf(y + DP(12) + status_h, r.y + r.height - ih - DP(8)), r.width - DP(16), ih};
+    Rectangle status = {r.x + DP(16), help.y - DP(8) - status_h, r.width - DP(32), status_h};
+    ui_hline(r.x + DP(16), status.y - DP(4), r.width - DP(32), theme.border);
+    static const char *const modes[] = {"NORMAL", "VISUAL", "INSERT"};
     int mode = keys_mode();
-    ui_text_box(modes[mode], (Rectangle){r.x + DP(20), help.y - DP(6) - count_h - mode_h, r.width - DP(40), mode_h}, 15, FONT_REGULAR,
-                mode == MODE_NORMAL ? theme.text_faint : theme.accent, ALIGN_LEFT, 0);
+    Color pill_c = mode == MODE_INSERT ? theme.success : mode == MODE_VISUAL ? theme.warning : theme.accent;
+    float pw = ui_text_width(modes[mode], 12, FONT_SEMIBOLD) + DP(16), ph = DP(22);
+    Rectangle pill = {status.x, status.y + (status_h - ph) / 2, pw, ph};
+    ui_round(pill, 6, pill_c);
+    ui_text_box(modes[mode], pill, 12, FONT_SEMIBOLD, theme.on_accent, ALIGN_CENTER, 0);
     char count[96];
     int hidden = 0;
     for (int i = 0; !br.show_hidden && i < br.items.n; i++) hidden += br.items.v[i].e.hidden;
@@ -199,13 +204,15 @@ void places_draw(Rectangle r)
                                           : snprintf(count, sizeof count, "%d %s", br.view.n, br.view.n == 1 ? "item" : "items");
     if (hidden) n += snprintf(count + n, sizeof count - (size_t)n, ", %d hidden", hidden);
     if (br.nselected) snprintf(count + n, sizeof count - (size_t)n, ", %d selected", br.nselected);
-    ui_text_box(count, (Rectangle){r.x + DP(20), help.y - DP(6) - count_h, r.width - DP(40), count_h}, 15, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 0);
-    ui_hline(r.x + DP(16), help.y - DP(6), r.width - DP(32), theme.border);
+    ui_text_box(count, (Rectangle){pill.x + pw + DP(10), status.y, status.width - pw - DP(10), status_h}, 14, FONT_REGULAR, theme.text_dim,
+                ALIGN_LEFT, 0);
     int state;
     if (ui_clickable(ui_id("help", 0), help, &state)) app.help_open = 1;
     if (state) ui_round(help, 8, state == 2 ? theme.pressed : theme.hover);
     ui_icon("keyboard", (Rectangle){help.x + DP(8), help.y, DP(32), ih}, 20, theme.text_dim);
-    float kw = ui_text_width("?", 15, FONT_SEMIBOLD);
-    ui_text_box("Keyboard shortcuts", (Rectangle){help.x + DP(52), help.y, help.width - DP(68) - kw, ih}, 15, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 0);
-    ui_text_box("?", (Rectangle){help.x + help.width - DP(12) - kw, help.y, kw, ih}, 15, FONT_SEMIBOLD, theme.text_faint, ALIGN_RIGHT, 0);
+    float cap = DP(22);
+    Rectangle key = {help.x + help.width - DP(10) - cap, help.y + (ih - cap) / 2, cap, cap};
+    ui_text_box("Keyboard shortcuts", (Rectangle){help.x + DP(52), help.y, key.x - help.x - DP(60), ih}, 15, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 0);
+    ui_round_line(key, 5, theme.border);
+    ui_text_box("?", key, 13, FONT_SEMIBOLD, theme.text_dim, ALIGN_CENTER, 0);
 }
