@@ -493,6 +493,7 @@ void ui_toast_draw(float bottom)
     float th = lines * ui_line_height(14) + DP(20);
     Rectangle r = {ui.safe.x + (ui.safe.width - tw) / 2, bottom - th - DP(16), tw, th};
     ui_round(r, 10, theme.text);
-    ui_text_wrapped(toast_text, (Rectangle){r.x + pad, r.y + DP(10), tw - 2 * pad, 0}, 14, FONT_REGULAR, theme.bg, 1);
+    /* wrapped at the width the lines were counted at: a box fitted to one line must not wrap again on rounding */
+    ui_text_wrapped(toast_text, (Rectangle){r.x + pad, r.y + DP(10), maxw - 2 * pad, 0}, 14, FONT_REGULAR, theme.bg, 1);
     ui_redraw_in(toast_until - ui.now);
 }
