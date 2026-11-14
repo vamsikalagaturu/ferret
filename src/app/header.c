@@ -246,10 +246,6 @@ void header_draw(Rectangle r)
     right -= b;
     if (ui_icon_button(ui_id("more", 0), (Rectangle){right, cy, b, b}, "ellipsis-vertical", theme.text))
         ui_menu_open(app.menu_more, (Rectangle){right, cy, b, b});
-    if (!ui.touch) {
-        right -= b;
-        if (ui_icon_button(ui_id("help", 0), (Rectangle){right, cy, b, b}, "circle-help", theme.text)) app.help_open = 1;
-    }
     right -= b;
     if (ui_icon_button(ui_id("search", 0), (Rectangle){right, cy, b, b}, "search", theme.text)) filter_start(0);
     draw_breadcrumb((Rectangle){x + DP(4), r.y, right - x - DP(8), r.height});

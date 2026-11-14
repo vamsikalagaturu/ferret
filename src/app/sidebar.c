@@ -1,4 +1,5 @@
 #include "app.h"
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -83,4 +84,14 @@ void places_draw(Rectangle r)
                     i == current ? FONT_SEMIBOLD : FONT_REGULAR, i == current ? theme.text : theme.text_dim, ALIGN_LEFT, 0);
         y += ih;
     }
+    if (ui.touch) return;
+    Rectangle help = {r.x + DP(8), fmaxf(y + DP(12), r.y + r.height - ih - DP(8)), r.width - DP(16), ih};
+    ui_hline(r.x + DP(16), help.y - DP(6), r.width - DP(32), theme.border);
+    int state;
+    if (ui_clickable(ui_id("help", 0), help, &state)) app.help_open = 1;
+    if (state) ui_round(help, 8, state == 2 ? theme.pressed : theme.hover);
+    ui_icon("keyboard", (Rectangle){help.x + DP(8), help.y, DP(32), ih}, 20, theme.text_dim);
+    float kw = ui_text_width("?", 15, FONT_SEMIBOLD);
+    ui_text_box("Keyboard shortcuts", (Rectangle){help.x + DP(52), help.y, help.width - DP(68) - kw, ih}, 15, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 0);
+    ui_text_box("?", (Rectangle){help.x + help.width - DP(12) - kw, help.y, kw, ih}, 15, FONT_SEMIBOLD, theme.text_faint, ALIGN_RIGHT, 0);
 }
