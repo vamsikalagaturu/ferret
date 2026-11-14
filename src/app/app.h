@@ -11,6 +11,7 @@ fr_kind kind_of(const char *name, int is_dir);
 const char *kind_icon(fr_kind k);
 Color kind_color(fr_kind k);
 const char *kind_label(fr_kind k);
+const char *mime_of(const char *name, int is_dir); /* by the extension */
 
 /* ---- the folder being shown (browser.c) ---- */
 typedef enum { SORT_NAME, SORT_SIZE, SORT_DATE, SORT_KIND, SORT_EXT } fr_sort;
@@ -136,4 +137,9 @@ void ops_draw_dialogs(void);
 int ops_dialog_open(void);
 float ops_draw_jobs(Rectangle area); /* the job strip at the bottom of area; returns its height */
 void ops_poll_jobs(void);
+
+/* ---- the properties panel (properties.c), one of ops.c's dialogs ---- */
+void props_open(fr_strs *uris); /* takes the URIs */
+int props_draw(void);           /* 0 once it closed itself */
+void props_close(void);
 #endif

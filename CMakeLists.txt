@@ -71,7 +71,7 @@ target_compile_definitions(fercore PUBLIC FR_VERSION="${FR_VERSION_STRING}")
 
 if(FR_BUILD_PROGRAMS)
   enable_testing()
-  foreach(t util vfs jobs settings)
+  foreach(t util vfs jobs settings mode)
     add_executable(test_${t} tests/test_${t}.c)
     target_link_libraries(test_${t} PRIVATE fercore)
     target_compile_options(test_${t} PRIVATE ${FR_WARNINGS})
