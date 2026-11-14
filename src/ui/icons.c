@@ -76,11 +76,15 @@ void ui_icon(const char *name, Rectangle box, float size_dp, Color c)
     if (!tex.id) {
         const fr_icon_data *d = find(name);
         if (!d) {
-            fprintf(stderr, "ferret: no icon %s\n", name);
+            fprintf(stderr, "ferret: no icon %s (assets/icons/%s.svg), drawing \"file\"\n", name, name);
+#ifndef NDEBUG
+            ui_toast("Missing icon: %s", name);
+#endif
             d = find("file");
         }
         tex = render(d, px);
-        FR_PUSH(cache, ((cached_icon){d->name, px, tex}));
+        /* cached under the name asked for, so a missing one warns once, not every frame */
+        FR_PUSH(cache, ((cached_icon){name, px, tex}));
     }
     float x = roundf(box.x + (box.width - (float)px) / 2), y = roundf(box.y + (box.height - (float)px) / 2);
     DrawTexture(tex, (int)x, (int)y, c);
