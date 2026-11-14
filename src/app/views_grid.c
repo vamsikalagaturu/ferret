@@ -21,6 +21,7 @@ void grid_reveal(int v, float width)
 static int draw_tile(int v, Rectangle t, Rectangle area)
 {
     fr_item *it = browser_item(v);
+    if (!it) return 0;
     Rectangle hit = GetCollisionRec(t, area);
     int state, clicked = ui_clickable(ui_id("tile", v), hit, &state);
     int right = ui_hover(hit) && ui.rpressed;

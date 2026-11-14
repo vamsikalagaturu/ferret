@@ -192,6 +192,8 @@ static void draw_header(Rectangle h)
 static void draw_row(int v, Rectangle row, Rectangle area)
 {
     fr_item *it = browser_item(v);
+    /* a click on an earlier row may have opened another folder in this same frame */
+    if (!it) return;
     int compact = !ui.touch, state;
     Rectangle hit = GetCollisionRec(row, area);
     int clicked = ui_clickable(ui_id("row", v), hit, &state);
