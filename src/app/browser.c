@@ -87,7 +87,7 @@ static void load(const char *uri)
     int rc = fr_vfs_list(uri, &es);
     if (rc) br.error = fr_strdup(fr_vfs_error(rc));
     for (int i = 0; i < es.n; i++) {
-        fr_item it = {es.v[i], kind_of(es.v[i].name, es.v[i].is_dir), -1, 0};
+        fr_item it = {.e = es.v[i], .kind = kind_of(es.v[i].name, es.v[i].is_dir), .count = -1};
         if (same)
             for (int k = 0; k < selected.n; k++)
                 if (!strcmp(selected.v[k], it.e.name)) it.selected = 1, br.nselected++;
