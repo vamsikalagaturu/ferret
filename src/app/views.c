@@ -148,7 +148,7 @@ static cells cells_for(Rectangle row)
     if (c.kind_w) c.kind = x - c.kind_w, x = c.kind - gap;
     if (c.date_w) c.date = x - c.date_w, x = c.date - gap;
     c.size = x - c.size_w, x = c.size - gap;
-    c.name = row.x + pad + DP(28) + DP(8);
+    c.name = row.x + pad + DP(32) + DP(8);
     c.name_w = x - c.name;
     return c;
 }
@@ -204,11 +204,11 @@ static void draw_row(int v, Rectangle row, Rectangle area)
     if (!ui.touch && br.keyboard && v == br.cursor && !it->selected)
         ui_round_line((Rectangle){row.x + DP(2), row.y + DP(1), row.width - DP(4), row.height - DP(2)}, 4, ui_alpha(theme.accent, 0.5f));
 
-    float pad = DP(ui.touch ? 16 : 12), icon_w = DP(compact ? 28 : 40);
+    float pad = DP(ui.touch ? 16 : 12), icon_w = DP(compact ? 32 : 40);
     Rectangle icon = {row.x + pad, row.y, icon_w, row.height};
     Color kc = kind_color(it->kind);
     if (it->selected && ui.touch) ui_icon("square-check", icon, 24, theme.accent);
-    else ui_icon(kind_icon(it->kind), icon, compact ? 18 : 24, kc);
+    else ui_icon(kind_icon(it->kind), icon, compact ? 20 : 24, kc);
     if (it->e.is_link) ui_icon("link", (Rectangle){icon.x + icon_w - DP(14), row.y + row.height / 2, DP(12), DP(12)}, 10, theme.text_faint);
 
     char size[32] = "", date[32];
@@ -223,10 +223,10 @@ static void draw_row(int v, Rectangle row, Rectangle area)
     if (compact) {
         cells c = cells_for(row);
         editing = keys_insert_field(v, (Rectangle){c.name - DP(12), row.y + DP(3), c.name_w + DP(12), row.height - DP(6)});
-        if (!editing) ui_text_box(it->e.name, (Rectangle){c.name, row.y, c.name_w, row.height}, 14, FONT_REGULAR, name_c, ALIGN_LEFT, 1);
-        ui_text_box(size, (Rectangle){c.size, row.y, c.size_w, row.height}, 13, FONT_REGULAR, theme.text_dim, ALIGN_RIGHT, 0);
-        if (c.date_w) ui_text_box(date, (Rectangle){c.date, row.y, c.date_w, row.height}, 13, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 0);
-        if (c.kind_w) ui_text_box(kind_label(it->kind), (Rectangle){c.kind, row.y, c.kind_w, row.height}, 13, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 0);
+        if (!editing) ui_text_box(it->e.name, (Rectangle){c.name, row.y, c.name_w, row.height}, 15, FONT_REGULAR, name_c, ALIGN_LEFT, 1);
+        ui_text_box(size, (Rectangle){c.size, row.y, c.size_w, row.height}, 14, FONT_REGULAR, theme.text_dim, ALIGN_RIGHT, 0);
+        if (c.date_w) ui_text_box(date, (Rectangle){c.date, row.y, c.date_w, row.height}, 14, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 0);
+        if (c.kind_w) ui_text_box(kind_label(it->kind), (Rectangle){c.kind, row.y, c.kind_w, row.height}, 14, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 0);
     } else {
         float line1 = row.y + DP(11), line2 = row.y + DP(35);
         editing = keys_insert_field(v, (Rectangle){tx - DP(12), line1 - DP(8), tw + DP(12), DP(36)});

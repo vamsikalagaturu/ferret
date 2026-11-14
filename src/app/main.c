@@ -7,7 +7,7 @@
 
 fr_app app;
 
-float app_row_height(void) { return DP(ui.touch ? 64 : 34); }
+float app_row_height(void) { return DP(ui.touch ? 64 : 38); }
 int app_wide(void) { return !ui.touch && ui.safe.width >= DP(840); }
 
 /* ---- bottom bars ---- */

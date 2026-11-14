@@ -50,11 +50,11 @@ static int listing_load(listing *l, const char *uri)
 
 static void draw_entry(const fr_entry *e, Rectangle row)
 {
-    float pad = DP(12), icon_w = DP(28);
+    float pad = DP(12), icon_w = DP(32);
     fr_kind k = kind_of(e->name, e->is_dir);
-    ui_icon(kind_icon(k), (Rectangle){row.x + pad, row.y, icon_w, row.height}, 18, kind_color(k));
+    ui_icon(kind_icon(k), (Rectangle){row.x + pad, row.y, icon_w, row.height}, 20, kind_color(k));
     float tx = row.x + pad + icon_w + DP(8);
-    ui_text_box(e->name, (Rectangle){tx, row.y, row.x + row.width - pad - tx, row.height}, 14, FONT_REGULAR,
+    ui_text_box(e->name, (Rectangle){tx, row.y, row.x + row.width - pad - tx, row.height}, 15, FONT_REGULAR,
                 e->hidden ? theme.text_dim : theme.text, ALIGN_LEFT, 1);
     ui_hline(tx, row.y + row.height - DP(1), row.x + row.width - tx, ui_alpha(theme.border, 0.6f));
 }
