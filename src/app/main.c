@@ -279,14 +279,23 @@ static int frame(void)
         ui_text_box(chord, chip, 13, FONT_REGULAR, theme.text_dim, ALIGN_CENTER, 0);
     }
     header_draw((Rectangle){s.x, s.y, s.width, hh});
-    if (!app_wide() && app.drawer_open) {
+    /* the drawer slides: 180 ms, eased out opening and in closing */
+    static float slide;
+    float target = !app_wide() && app.drawer_open ? 1.0f : 0.0f;
+    if (slide != target) {
+        float step = (float)ui.dt / 0.18f;
+        slide = target > slide ? fminf(target, slide + step) : fmaxf(target, slide - step);
+        ui.dirty = 1;
+    }
+    if (!app_wide() && slide > 0) {
+        float e = app.drawer_open ? 1 - (1 - slide) * (1 - slide) : slide * slide;
         ui_layer(1);
-        ui_rect((Rectangle){0, 0, ui.w, ui.h}, theme.scrim);
-        float dw = fminf(DP(300), ui.safe.width * 0.85f);
-        Rectangle d = {0, 0, ui.safe.x + dw, ui.h};
+        ui_rect((Rectangle){0, 0, ui.w, ui.h}, ui_alpha(theme.scrim, theme.scrim.a / 255.0f * e));
+        float dw = fminf(DP(300), ui.safe.width * 0.85f), off = -(ui.safe.x + dw) * (1 - e);
+        Rectangle d = {off, 0, ui.safe.x + dw, ui.h};
         ui_rect(d, theme.surface);
-        places_draw((Rectangle){ui.safe.x, ui.safe.y, dw, ui.safe.height});
-        if (ui_live() && (ui.pressed || ui.rpressed) && !CheckCollisionPointRec(ui.mouse, d)) app.drawer_open = 0;
+        places_draw((Rectangle){ui.safe.x + off, ui.safe.y, dw, ui.safe.height});
+        if (app.drawer_open && ui_live() && (ui.pressed || ui.rpressed) && !CheckCollisionPointRec(ui.mouse, d)) app.drawer_open = 0;
         ui_layer(0);
     }
     draw_menus();
