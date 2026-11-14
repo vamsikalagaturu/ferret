@@ -1,0 +1,118 @@
+# Renaming in the row: r and i put the caret before the extension, A at the end, I at the start, c retypes the
+# stem and keeps the extension. Enter keeps the new name, Esc drops it.
+key /
+type notes
+key enter
+key esc
+expect cursor notes.txt
+
+key r
+expect mode INSERT
+type -r
+key enter
+expect mode NORMAL
+expect exists notes-r.txt
+expect missing notes.txt
+expect cursor notes-r.txt
+
+key i
+type -i
+key enter
+expect exists notes-r-i.txt
+expect cursor notes-r-i.txt
+
+key A
+type .bak
+key enter
+expect exists notes-r-i.txt.bak
+expect cursor notes-r-i.txt.bak
+
+key I
+type old-
+key enter
+expect exists old-notes-r-i.txt.bak
+
+key c
+type plain
+key enter
+expect exists plain.bak
+expect cursor plain.bak
+
+key f2
+type 2
+key enter
+expect exists plain2.bak
+
+# Esc keeps the old name
+key r
+type zzz
+key esc
+expect mode NORMAL
+expect exists plain2.bak
+expect cursor plain2.bak
+key c
+key esc
+expect exists plain2.bak
+key A
+type x
+key esc
+key I
+type x
+key esc
+key i
+type x
+key esc
+expect exists plain2.bak
+
+# the same name, a taken one, an empty one
+key r
+key enter
+expect mode NORMAL
+expect exists plain2.bak
+key g
+key g
+key j
+key j
+key j
+expect cursor gamma
+key r
+key backspace
+key backspace
+key backspace
+key backspace
+key backspace
+type beta
+key enter
+expect toast already exists
+expect mode INSERT
+key backspace
+key backspace
+key backspace
+key backspace
+key enter
+expect toast cannot be empty
+key esc
+expect mode NORMAL
+expect exists gamma
+
+# a folder: r puts the caret at the end, no extension
+key g
+key g
+expect cursor alpha
+key r
+type 2
+key enter
+expect exists alpha2
+expect cursor alpha2
+key l
+expect folder alpha2
+
+# renaming in the grid
+key h
+key ctrl+3
+key r
+type 3
+key enter
+expect exists alpha23
+key ctrl+1
+quit

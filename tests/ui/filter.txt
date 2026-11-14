@@ -1,0 +1,49 @@
+# / filters the folder as you type; Esc leaves the field, a second Esc drops the filter.
+key /
+type ta
+expect cursor beta
+key esc
+expect cursor beta
+key esc
+key j
+expect cursor empty
+
+key /
+type zzz
+key esc
+key esc
+expect cursor alpha
+
+# Enter in the field keeps the filter and gives the keys back to the list
+key /
+type .txt
+key enter
+expect cursor a.txt
+key j
+expect cursor notes.txt
+key esc
+expect cursor notes.txt
+key g
+key g
+expect cursor alpha
+
+# the filter goes when another folder opens
+key /
+type gam
+key enter
+key l
+expect folder gamma
+key h
+expect cursor gamma
+key G
+expect cursor zeta.md
+
+# copying out of the field
+key /
+type ph
+key ctrl+a
+key ctrl+c
+expect clipboard ph
+key esc
+key esc
+quit

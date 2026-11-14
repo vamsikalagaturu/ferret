@@ -1,0 +1,72 @@
+# a: a new row at the top to name a file, or a folder when the name ends in /; Enter makes it, Esc drops it.
+key a
+expect mode INSERT
+type todo.txt
+key enter
+expect mode NORMAL
+expect exists todo.txt
+expect cursor todo.txt
+
+key a
+type stuff/
+key enter
+expect exists stuff
+expect cursor stuff
+key l
+expect folder stuff
+key h
+
+key a
+type never.txt
+key esc
+expect mode NORMAL
+expect missing never.txt
+expect cursor alpha
+key j
+expect cursor beta
+
+# a taken name keeps the row open and says so
+key a
+type notes.txt
+key enter
+expect toast already exists
+expect mode INSERT
+key esc
+expect mode NORMAL
+
+# an empty name
+key a
+key enter
+expect toast cannot be empty
+key esc
+
+# a click elsewhere drops the row
+key a
+type clicked
+click row gamma
+expect mode NORMAL
+expect missing clicked
+
+# Ctrl+Shift+N: "New folder" ready to type over
+key ctrl+shift+n
+expect mode INSERT
+key enter
+expect exists New folder
+
+# the same in the grid and in an empty folder
+key ctrl+3
+key a
+type in-grid.md
+key enter
+expect exists in-grid.md
+dclick row empty
+key a
+type first/
+key enter
+expect exists empty/first
+key a
+type gone
+key esc
+expect cursor first
+key ctrl+1
+quit

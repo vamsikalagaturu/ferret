@@ -163,6 +163,12 @@ int ops_dialog_open(void); /* also a job's question about a name taken */
 float ops_draw_jobs(Rectangle area); /* the job strip at the bottom of area; returns its height */
 void ops_poll_jobs(void);
 
+/* ---- ferret --replay SCRIPT [FOLDER] (replay.c): a script's input between frames, checked as it goes ---- */
+int replay_load(const char *script, const char *folder); /* 0, or -1 after saying why; relative paths are FOLDER's */
+int replay_frame(void);  /* once a frame, after its input was handled: 0 when the script is done */
+void replay_capture(void); /* before the drawn frame is shown: takes a pending shot */
+int replay_status(void); /* the exit status: 0 when every expectation held */
+
 /* ---- the properties panel (properties.c), one of ops.c's dialogs ---- */
 void props_open(fr_strs *uris); /* takes the URIs */
 int props_draw(void);           /* 0 once it closed itself */

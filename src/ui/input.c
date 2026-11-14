@@ -20,6 +20,11 @@ static Vector2 drawn_mouse;
 static int left_down;
 static double last_press_t;
 static Vector2 last_press_at;
+static struct {
+    unsigned id;
+    Rectangle r;
+} clickables[1024]; /* what ui_clickable() got this frame, for ferret --replay to aim at */
+static int nclickables;
 
 static void push(event e)
 {
@@ -117,6 +122,7 @@ void ui_begin_frame(void)
     ui.layer = 0;
     ui.dirty = 0;
     ui.redraw_at = 0;
+    nclickables = 0;
     ui.mouse = drawn_mouse = plat_mouse();
 
     int k = 0, took_mouse = 0;
@@ -186,8 +192,16 @@ unsigned ui_id(const char *name, int index)
     return h ? h : 1;
 }
 
+int ui_clickable_rect(unsigned id, Rectangle *out)
+{
+    for (int i = nclickables - 1; i >= 0; i--)
+        if (clickables[i].id == id && clickables[i].r.width > 0 && clickables[i].r.height > 0) return *out = clickables[i].r, 1;
+    return 0;
+}
+
 int ui_clickable(unsigned id, Rectangle r, int *state)
 {
+    if (nclickables < (int)(sizeof clickables / sizeof *clickables)) clickables[nclickables].id = id, clickables[nclickables++].r = r;
     int over = ui_hover(r), clicked = 0;
     if (over && ui.pressed) ui.active = id;
     if (ui.active == id && ui.released) clicked = over;

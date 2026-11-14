@@ -1,0 +1,51 @@
+# Space selects and moves down; v selects a range; Esc clears.
+expect selected 0
+key space
+expect selected 1
+expect cursor beta
+key space
+expect selected 2
+key k
+key space
+expect selected 1
+key esc
+expect selected 0
+expect mode NORMAL
+
+key v
+expect mode VISUAL
+key j
+key j
+expect selected 3
+key k
+expect selected 2
+expect cursor gamma
+key G
+expect selected 7
+key v
+expect mode NORMAL
+expect selected 7
+key esc
+expect selected 0
+
+key v
+key j
+key esc
+expect selected 0
+expect mode NORMAL
+
+key ctrl+a
+expect selected 9
+key esc
+expect selected 0
+
+# a click selects one; shift+down extends
+click row beta
+expect selected 1
+key shift+down
+key shift+down
+expect selected 3
+expect cursor gamma
+key esc
+expect selected 0
+quit

@@ -1,0 +1,59 @@
+# Columns layout: needs 720dp beside the sidebar, so the interface shrinks to fit a tiled window first.
+key ctrl+-
+key ctrl+-
+key ctrl+-
+expect toast 70%
+key ctrl+2
+expect layout columns
+expect cursor alpha
+key j
+expect cursor beta
+key G
+expect cursor zeta.md
+key g
+key g
+key right
+expect folder alpha
+expect cursor sub
+key left
+expect folder .
+expect cursor alpha
+key l
+expect folder alpha
+key h
+expect folder .
+
+key j
+key enter
+expect folder beta
+key backspace
+expect folder .
+expect cursor beta
+
+click row gamma
+expect cursor gamma
+dclick row gamma
+expect folder gamma
+key left
+dclick row alpha
+expect folder alpha
+dclick row sub
+expect folder alpha/sub
+key alt+left
+expect folder alpha
+key alt+left
+expect folder .
+key alt+right
+expect folder alpha
+
+# a file under the cursor: the preview pane shows its details
+key h
+key G
+expect cursor zeta.md
+key right
+expect folder .
+shot columns.png
+key ctrl+0
+key ctrl+1
+expect layout details
+quit

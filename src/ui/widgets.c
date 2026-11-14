@@ -367,12 +367,14 @@ void ui_menu_end(void)
         int k = ui.keys[i].key;
         if (ui.keys[i].used || ui.keys[i].mods) continue;
         if (k == KEY_DOWN || k == KEY_UP) {
-            int step = k == KEY_DOWN ? 1 : -1, j = menu.hot;
+            int step = k == KEY_DOWN ? 1 : -1;
+            /* nothing lit yet: Down starts at the first item, Up at the last */
+            int j = menu.hot >= 0 ? menu.hot : step > 0 ? -1 : menu.n;
             for (int tries = 0; tries < menu.n; tries++) {
                 j = (j + step + menu.n) % menu.n;
                 if (!menu.items[j].separator) break;
             }
-            menu.hot = j, ui.keys[i].used = 1;
+            menu.hot = j, ui.keys[i].used = 1, ui.dirty = 1;
         } else if ((k == KEY_ENTER || k == KEY_KP_ENTER) && menu.hot >= 0) menu_click(menu.hot), ui.keys[i].used = 1;
         else if (k == KEY_ESCAPE || k == KEY_BACK) ui_menu_close(), ui.keys[i].used = 1;
     }
@@ -479,6 +481,8 @@ void ui_toast(const char *fmt, ...)
     toast_until = fr_now() + 3.5;
     ui.dirty = 1;
 }
+
+const char *ui_toast_shown(void) { return fr_now() < toast_until ? toast_text : ""; }
 
 void ui_toast_draw(float bottom)
 {

@@ -1,0 +1,54 @@
+# ? opens the keyboard shortcuts sheet, which takes the keys until ? or Esc or a click outside closes it.
+key ?
+key j
+expect cursor alpha
+shot help.png
+key ?
+key j
+expect cursor beta
+key ?
+key esc
+key j
+expect cursor empty
+key ?
+wheel -5
+click 4 4
+key j
+expect cursor gamma
+
+# Ctrl+= / Ctrl+- / Ctrl+0: the interface size, from 50% to 200% in steps of 10%
+key ctrl+=
+expect toast Interface size 110%
+key ctrl+=
+expect toast 120%
+key ctrl+-
+expect toast 110%
+key ctrl+0
+expect toast 100%
+key ctrl+-
+key ctrl+-
+key ctrl+-
+key ctrl+-
+key ctrl+-
+key ctrl+-
+expect toast 50%
+key ctrl+0
+key ctrl+shift+=
+expect toast 110%
+key ctrl+=
+key ctrl+=
+key ctrl+=
+key ctrl+=
+key ctrl+=
+key ctrl+=
+key ctrl+=
+key ctrl+=
+key ctrl+=
+key ctrl+=
+expect toast 200%
+shot big.png
+key j
+dclick row zeta.md
+key ctrl+0
+expect toast 100%
+quit

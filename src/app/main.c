@@ -311,11 +311,16 @@ static void between_frames(int keys)
 
 int fr_app_main(int argc, char **argv)
 {
+    int replay = argc > 2 && !strcmp(argv[1], "--replay");
+    if (replay) {
+        if (replay_load(argv[2], argc > 3 ? argv[3] : NULL)) return 1;
+        argc -= 2, argv += 2;
+    }
     plat_init_window();
     ui.user_scale = ui.text_scale = 1;
     settings_load();
     theme_load(settings.theme);
-    ui_input_init();
+    if (!replay) ui_input_init();
     fr_jobs_start(plat_wake);
     app.menu_more = ui_id("menu-more", 0), app.menu_row = ui_id("menu-row", 0), app.menu_bg = ui_id("menu-bg", 0);
     app.menu_selection = ui_id("menu-selection", 0);
@@ -343,9 +348,11 @@ int fr_app_main(int argc, char **argv)
         drawing = 1;
         int keys = frame();
         drawing = 0;
+        if (replay) replay_capture();
         EndDrawing();
         ui_end_frame();
         between_frames(keys);
+        if (replay && !replay_frame()) app.quit = 1;
         if (!ui.dirty && !ui_events_pending()) {
             double wait = 1.0;
             if (ui.redraw_at) wait = fmax(0, fmin(wait, ui.redraw_at - fr_now()));
@@ -354,5 +361,5 @@ int fr_app_main(int argc, char **argv)
     }
     fr_jobs_stop();
     plat_close_window();
-    return 0;
+    return replay ? replay_status() : 0;
 }

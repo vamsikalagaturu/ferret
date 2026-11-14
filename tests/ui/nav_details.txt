@@ -1,0 +1,83 @@
+# Details layout: cursor keys, opening by l, Enter and double click, back, forward and up.
+# The fixture shows: alpha beta empty gamma a.txt notes.txt photo.png report.tar.gz zeta.md
+key ctrl+1
+expect layout details
+expect folder .
+expect cursor alpha
+key j
+expect cursor beta
+key j
+key k
+expect cursor beta
+key down
+expect cursor empty
+key up
+expect cursor beta
+key G
+expect cursor zeta.md
+key g
+key g
+expect cursor alpha
+key n
+expect cursor beta
+key N
+key N
+expect cursor zeta.md
+
+key g
+key g
+key l
+expect folder alpha
+expect cursor sub
+key h
+expect folder .
+expect cursor alpha
+
+key j
+key enter
+expect folder beta
+key backspace
+expect folder .
+expect cursor beta
+key alt+right
+expect folder beta
+key alt+left
+expect folder .
+key alt+up
+expect folder ..
+key alt+left
+expect folder .
+
+dclick row gamma
+expect folder gamma
+expect cursor g.txt
+key h
+expect folder .
+expect cursor gamma
+
+click row alpha
+expect cursor alpha
+expect selected 1
+dclick row alpha
+expect folder alpha
+dclick row sub
+expect folder alpha/sub
+expect cursor deep.txt
+key h
+key h
+expect folder .
+expect cursor alpha
+
+dclick row empty
+expect folder empty
+key j
+key l
+expect folder empty
+key h
+expect cursor empty
+
+# a file opens in its app: replay mode opens none and says so
+dclick row zeta.md
+expect toast No app can open zeta.md
+expect folder .
+quit

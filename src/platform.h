@@ -6,6 +6,10 @@
 #include "raylib.h"
 
 int fr_app_main(int argc, char **argv); /* src/app/main.c */
+/* ferret --replay (src/app/replay.c) drives the window from a script: the pointer is the script's, and the
+ * desktop's clipboard and apps stay out of it */
+int replay_running(void);
+Vector2 replay_pointer(void);
 
 void plat_init_window(void);   /* opens the window */
 void plat_frame(void);         /* once per frame, before the frame takes its input */
