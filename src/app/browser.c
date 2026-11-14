@@ -36,10 +36,9 @@ static int cmp_items(const void *pa, const void *pb)
     case SORT_EXT: c = fr_natcmp(a->e.is_dir ? "" : fr_ext(a->e.name), b->e.is_dir ? "" : fr_ext(b->e.name)); break;
     default: break;
     }
-    if (br.desc) c = -c;
     if (!c) c = fr_natcmp(a->e.name, b->e.name);
     if (!c) c = strcmp(a->e.name, b->e.name);
-    return c;
+    return br.desc ? -c : c;
 }
 
 void browser_rebuild_view(void)

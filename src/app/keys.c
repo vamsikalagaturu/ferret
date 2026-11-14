@@ -213,6 +213,11 @@ void keys_handle(void)
         if (ui_key(KEY_UP, m)) move_cursor(br.cursor - cols, ext);
         if (app.layout == LAYOUT_GRID && ui_key(KEY_RIGHT, m)) move_cursor(br.cursor + 1, ext);
         if (app.layout == LAYOUT_GRID && ui_key(KEY_LEFT, m)) move_cursor(br.cursor - 1, ext);
+        if (app.layout == LAYOUT_COLUMNS && !m && ui_key(KEY_LEFT, 0)) browser_up();
+        if (app.layout == LAYOUT_COLUMNS && !m && ui_key(KEY_RIGHT, 0)) {
+            fr_item *it = browser_item(br.cursor);
+            if (it && it->e.is_dir) ops_open_item(it);
+        }
         if (ui_key(KEY_PAGE_DOWN, m)) move_cursor(br.cursor + page, ext);
         if (ui_key(KEY_PAGE_UP, m)) move_cursor(br.cursor - page, ext);
         if (ui_key(KEY_HOME, m)) move_cursor(0, ext);
