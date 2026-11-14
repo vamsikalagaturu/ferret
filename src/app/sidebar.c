@@ -1,5 +1,6 @@
 #include "app.h"
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -85,7 +86,13 @@ void places_draw(Rectangle r)
         y += ih;
     }
     if (ui.touch) return;
-    Rectangle help = {r.x + DP(8), fmaxf(y + DP(12), r.y + r.height - ih - DP(8)), r.width - DP(16), ih};
+    float count_h = DP(24);
+    Rectangle help = {r.x + DP(8), fmaxf(y + DP(12) + count_h, r.y + r.height - ih - DP(8)), r.width - DP(16), ih};
+    char count[96];
+    int n = snprintf(count, sizeof count, "%d %s", br.view.n, br.view.n == 1 ? "item" : "items");
+    if (br.view.n != br.items.n) n += snprintf(count + n, sizeof count - (size_t)n, " of %d", br.items.n);
+    if (br.nselected) snprintf(count + n, sizeof count - (size_t)n, ", %d selected", br.nselected);
+    ui_text_box(count, (Rectangle){r.x + DP(20), help.y - DP(6) - count_h, r.width - DP(40), count_h}, 13, FONT_REGULAR, theme.text_faint, ALIGN_LEFT, 0);
     ui_hline(r.x + DP(16), help.y - DP(6), r.width - DP(32), theme.border);
     int state;
     if (ui_clickable(ui_id("help", 0), help, &state)) app.help_open = 1;
