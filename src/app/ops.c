@@ -139,6 +139,22 @@ void ops_new_start(void)
     dlg = DLG_NEW_FOLDER;
 }
 
+void ops_share(void)
+{
+    fr_strs uris = targets();
+    size_t len = 1;
+    for (int i = 0; i < uris.n; i++) len += strlen(uris.v[i]) + 1;
+    char *paths = fr_realloc(NULL, len), *o = paths;
+    *o = 0;
+    for (int i = 0; i < uris.n; i++) {
+        const char *p = fr_uri_local(uris.v[i]);
+        if (p) o += sprintf(o, "%s%s", o == paths ? "" : "\n", p);
+    }
+    if (*paths && plat_share(paths)) ui_toast("No app can take these");
+    free(paths);
+    fr_strs_free(&uris);
+}
+
 void ops_properties(void)
 {
     fr_strs uris = targets();

@@ -499,6 +499,14 @@ int plat_open(const char *path)
     return failed ? -1 : 0;
 }
 
+int plat_share(const char *paths)
+{
+    char *r = java("share", 1, paths);
+    int failed = !r;
+    free(r);
+    return failed ? -1 : 0;
+}
+
 void plat_set_clipboard(const char *text) { free(java("setClipboard", 1, text ? text : "")); }
 
 char *plat_clipboard(void)

@@ -153,6 +153,12 @@ char *plat_clipboard(void)
 }
 
 /* Double fork so the opened app is not our child; a close-on-exec pipe tells whether exec worked. */
+int plat_share(const char *paths)
+{
+    (void)paths;
+    return -1;
+}
+
 int plat_open(const char *path)
 {
     if (replay_running()) return -1;

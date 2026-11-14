@@ -68,21 +68,36 @@ static float draw_paste_bar(Rectangle area)
 static void draw_menus(void)
 {
     if (ui_menu_begin(app.menu_more)) {
-        if (ui_menu_item("New folder", "folder-plus", -1)) ops_new_folder_start();
-        if (ui_menu_item("New file", "file-plus", -1)) ops_new_start();
-        if (ui_menu_item("Select all", "check-check", -1)) browser_select_all();
-        if (clip.uris.n && ui_menu_item("Paste", "clipboard-paste", -1)) ops_paste();
-        if (br.uri) {
-            int fav = favorite_index(br.uri) >= 0;
-            if (ui_menu_item(fav ? "Remove from favorites" : "Add to favorites", fav ? "star-off" : "star", -1)) favorite_toggle(br.uri);
+        int fav = br.uri && favorite_index(br.uri) >= 0;
+        static const char *labels[5], *icons[5];
+        enum { A_FOLDER, A_FILE, A_ALL, A_FAV, A_PASTE };
+        int ids[5], n = 0;
+        labels[n] = "Folder", icons[n] = "folder-plus", ids[n++] = A_FOLDER;
+        labels[n] = "File", icons[n] = "file-plus", ids[n++] = A_FILE;
+        labels[n] = "Select all", icons[n] = "check-check", ids[n++] = A_ALL;
+        labels[n] = fav ? "Unfavorite" : "Favorite", icons[n] = fav ? "star-off" : "star", ids[n++] = A_FAV;
+        if (clip.uris.n) labels[n] = "Paste", icons[n] = "clipboard-paste", ids[n++] = A_PASTE;
+        int a = ui_menu_segments(labels, icons, n, -1);
+        if (a >= 0) {
+            ui_menu_close();
+            switch (ids[a]) {
+            case A_FOLDER: ops_new_folder_start(); break;
+            case A_FILE: ops_new_start(); break;
+            case A_ALL: browser_select_all(); break;
+            case A_FAV:
+                if (br.uri) favorite_toggle(br.uri);
+                break;
+            default: ops_paste(); break;
+            }
         }
         ui_menu_separator();
-        if (ui_menu_heading("Sort by", "arrow-up-down", br.desc)) br.desc = !br.desc, browser_rebuild_view();
+        if (ui_menu_heading("Sort by", br.desc ? "arrow-down" : "arrow-up", br.desc ? "Descending" : "Ascending"))
+            br.desc = !br.desc, browser_rebuild_view();
         static const char *const sorts[] = {"Name", "Size", "Date", "Kind", "Type"};
         static const char *const sort_icons[] = {"arrow-down-a-z", "ruler", "calendar", "shapes", "file-type"};
         int s = ui_menu_segments(sorts, sort_icons, 5, (int)br.sort);
         if (s >= 0) br.sort = (fr_sort)s, browser_rebuild_view();
-        ui_menu_heading("Layout", NULL, 0);
+        ui_menu_heading("Layout", NULL, NULL);
         /* phones have no room for columns */
         static const char *const layouts[] = {"Details", "Columns", "Grid"}, *const touch_layouts[] = {"Details", "Grid"};
         static const char *const layout_icons[] = {"list", "columns-3", "layout-grid"}, *const touch_icons[] = {"list", "layout-grid"};
@@ -142,6 +157,7 @@ static void draw_menus(void)
         ui_menu_end();
     }
     if (ui_menu_begin(app.menu_selection)) {
+        if (ui.touch && ui_menu_item("Select all", "check-check", -1)) browser_select_all();
         if (br.nselected == 1 && ui_menu_item("Rename", "pencil", -1)) ops_rename_start();
         if (ui_menu_item("Properties", "info", -1)) ops_properties();
         if (br.uri && fr_vfs_can_trash(br.uri) && ui_menu_item("Delete permanently", "trash-2", -1)) ops_delete(1);

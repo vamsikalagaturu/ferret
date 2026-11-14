@@ -91,6 +91,35 @@ public class FerretActivity extends NativeActivity {
         });
     }
 
+    /* paths separated by '\n' to the system's share sheet; null when nothing can take them */
+    public String share(String paths) {
+        String[] list = paths.split("\n");
+        java.util.ArrayList<Uri> uris = new java.util.ArrayList<>();
+        String type = null;
+        for (String p : list) {
+            uris.add(OpenProvider.uriFor(getPackageName(), p));
+            String t = OpenProvider.mimeOf(p);
+            type = type == null || type.equals(t) ? t : "*/*";
+        }
+        Intent send = new Intent(uris.size() == 1 ? Intent.ACTION_SEND : Intent.ACTION_SEND_MULTIPLE);
+        send.setType(type);
+        if (uris.size() == 1) send.putExtra(Intent.EXTRA_STREAM, uris.get(0));
+        else send.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
+        /* the grant reaches the receiving app through the clip data */
+        ClipData clip = ClipData.newRawUri(null, uris.get(0));
+        for (int k = 1; k < uris.size(); k++) clip.addItem(new ClipData.Item(uris.get(k)));
+        send.setClipData(clip);
+        send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        return onUi(() -> {
+            try {
+                startActivity(Intent.createChooser(send, null));
+                return "1";
+            } catch (ActivityNotFoundException e) {
+                return null;
+            }
+        });
+    }
+
     /* ---- haptics ---- */
 
     public String haptic() {

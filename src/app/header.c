@@ -195,7 +195,8 @@ void header_draw(Rectangle r)
         ui_rect(r, ui_mix(theme.bg, theme.accent, 0.12f));
         if (ui_icon_button(ui_id("sel-clear", 0), btn, "x", theme.text)) browser_clear_selection();
         x += b + DP(4);
-        static const char *icons[] = {"ellipsis-vertical", "trash-2", "scissors", "copy", "check-check"};
+        /* phones share instead of selecting all here (Select all moves into the menu there) */
+        const char *icons[] = {"ellipsis-vertical", "trash-2", "scissors", "copy", ui.touch ? "share-2" : "check-check"};
         int clicked = -1;
         for (int i = 0; i < 5; i++) {
             right -= b;
@@ -208,6 +209,7 @@ void header_draw(Rectangle r)
         else if (clicked == 1) ops_delete(0);
         else if (clicked == 2) ops_copy(1);
         else if (clicked == 3) ops_copy(0);
+        else if (clicked == 4 && ui.touch) ops_share();
         else if (clicked == 4) browser_select_all();
         ui_hline(r.x, r.y + r.height - DP(1), r.width, theme.border);
         return;

@@ -329,12 +329,13 @@ void ui_menu_separator(void)
     if (menu.n < 32) menu.items[menu.n++] = (menu_item){.separator = 1};
 }
 
-int ui_menu_heading(const char *label, const char *toggle_icon, int toggled)
+int ui_menu_heading(const char *label, const char *button_icon, const char *button_label)
 {
     if (menu.n >= 32) return 0;
     menu_item *it = &menu.items[menu.n++];
-    *it = (menu_item){.separator = 2, .icon = toggle_icon, .checked = toggled};
+    *it = (menu_item){.separator = 2, .icon = button_icon, .checked = -1};
     snprintf(it->label, sizeof it->label, "%s", label);
+    snprintf(it->value, sizeof it->value, "%s", button_label ? button_label : "");
     if (menu.step == 3 && !strcmp(menu.step_label, label)) return menu.step = 0, 1;
     return 0;
 }
@@ -403,16 +404,18 @@ void ui_menu_end(void)
         if (it->separator == 2) {
             ui_text_box(it->label, (Rectangle){x + DP(16), iy + DP(4), w - DP(32), hh - DP(4)}, 12, FONT_SEMIBOLD, theme.text_faint, ALIGN_LEFT, 0);
             if (it->icon) {
-                Rectangle b = {x + w - DP(8) - DP(28), iy + (hh - DP(26)) / 2 + DP(2), DP(28), DP(26)};
+                float tw = ui_text_width(it->value, 12, FONT_SEMIBOLD), bw = tw + DP(36), bh = fminf(hh - DP(4), DP(26));
+                Rectangle b = {x + w - DP(10) - bw, iy + (hh - bh) / 2 + DP(2), bw, bh};
                 int bs;
                 if (ui_clickable(ui_id(it->label, 3), GetCollisionRec(b, menu.rect), &bs)) {
                     menu.step = 3;
                     snprintf(menu.step_label, sizeof menu.step_label, "%s", it->label);
                     ui.dirty = 1;
                 }
-                if (it->checked == 1) ui_round(b, 6, theme.selection);
-                else if (bs) ui_round(b, 6, bs == 2 ? theme.pressed : theme.hover);
-                ui_icon(it->icon, b, 16, it->checked == 1 ? theme.accent : theme.text_dim);
+                ui_round(b, 7, bs == 2 ? theme.pressed : bs ? theme.hover : theme.surface);
+                ui_round_line(b, 7, theme.border);
+                ui_icon(it->icon, (Rectangle){b.x + DP(6), b.y, DP(18), b.height}, 14, theme.accent);
+                ui_text_box(it->value, (Rectangle){b.x + DP(26), b.y, tw + DP(4), b.height}, 12, FONT_SEMIBOLD, theme.text, ALIGN_LEFT, 0);
             }
             iy += hh;
             continue;

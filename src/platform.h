@@ -23,6 +23,8 @@ int plat_touch(void);          /* a touchscreen is the pointer */
 void plat_insets(float *left, float *top, float *right, float *bottom);
 void plat_keyboard(int show);
 int plat_open(const char *path); /* in the app the system picks for it; 0 when handed over */
+/* paths separated by '\n' to the system's share sheet (Android); 0 when handed over, -1 where there is none */
+int plat_share(const char *paths);
 void plat_set_clipboard(const char *text);
 char *plat_clipboard(void); /* malloc'd, NULL for none */
 void plat_haptic(void);

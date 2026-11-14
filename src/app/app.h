@@ -158,6 +158,7 @@ void ops_new_folder_start(void);
 void ops_new_start(void); /* a file, or a folder when the name ends in "/" */
 int ops_create(const char *typed); /* makes it in the current folder; 0, or an error already shown */
 void ops_properties(void);
+void ops_share(void); /* the targets to the system's share sheet (Android) */
 void ops_draw_dialogs(void);
 int ops_dialog_open(void); /* also a job's question about a name taken */
 float ops_draw_jobs(Rectangle area); /* the job strip at the bottom of area; returns its height */
