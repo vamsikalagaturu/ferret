@@ -124,7 +124,7 @@ static float disks_draw(Rectangle r, float y, float ih, int current)
 void places_draw(Rectangle r)
 {
     ui_rect(r, theme.surface);
-    float y = r.y + DP(12), ih = DP(ui.touch ? 52 : 38);
+    float y = r.y + DP(12), ih = ui.touch ? fmaxf(DP(52), ui_line_height(15) + DP(20)) : app_row_height();
     ui_text_box("ferret", (Rectangle){r.x + DP(20), y, r.width - DP(40), DP(28)}, 20, FONT_SEMIBOLD, theme.accent, ALIGN_LEFT, 0);
     ui_text_box(FR_VERSION, (Rectangle){r.x + DP(20), y + DP(28), r.width - DP(40), DP(16)}, 12, FONT_REGULAR, theme.text_faint, ALIGN_LEFT, 1);
     y += DP(56);

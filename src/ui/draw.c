@@ -37,7 +37,7 @@ void ui_fonts_reload(void)
 
 Font ui_font(int weight, float size_dp)
 {
-    int px = (int)lroundf(DP(size_dp));
+    int px = (int)lroundf(DP(size_dp) * (ui.text_scale > 0 ? ui.text_scale : 1));
     if (px < 6) px = 6;
     for (int i = 0; i < nfonts; i++)
         if (fonts[i].weight == weight && fonts[i].px == px) return fonts[i].font;
@@ -51,7 +51,7 @@ Font ui_font(int weight, float size_dp)
     return f;
 }
 
-float ui_line_height(float size_dp) { return roundf(DP(size_dp) * 1.3f); }
+float ui_line_height(float size_dp) { return roundf(DP(size_dp) * (ui.text_scale > 0 ? ui.text_scale : 1) * 1.3f); }
 
 float ui_text_width_n(const char *s, int n, float size_dp, int weight)
 {

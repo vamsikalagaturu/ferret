@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-float header_height(void) { return DP(ui.touch ? 56 : 48); }
+float header_height(void) { return fmaxf(DP(ui.touch ? 56 : 48), ui_line_height(15) + DP(26)); }
 
 static void draw_breadcrumb(Rectangle r)
 {

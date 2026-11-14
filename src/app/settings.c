@@ -19,7 +19,7 @@ typedef struct {
     fr_sort sort;
     int desc, hidden;
     fr_layout layout;
-    float ui_scale;
+    float ui_scale, font_scale;
     fr_strs favorites;
 } state;
 
@@ -29,12 +29,15 @@ static int saved_valid;
 static double seen_at, checked_at;
 static int64_t file_mtime;
 
-static state live(void) { return (state){br.sort, br.desc, br.show_hidden, app.layout, ui.user_scale, settings.favorites}; }
+static state live(void)
+{
+    return (state){br.sort, br.desc, br.show_hidden, app.layout, ui.user_scale, ui.text_scale, settings.favorites};
+}
 
 static int differs(const state *a, const state *b)
 {
     if (a->sort != b->sort || a->desc != b->desc || a->hidden != b->hidden || a->layout != b->layout ||
-        a->ui_scale != b->ui_scale || a->favorites.n != b->favorites.n)
+        a->ui_scale != b->ui_scale || a->font_scale != b->font_scale || a->favorites.n != b->favorites.n)
         return 1;
     for (int i = 0; i < a->favorites.n; i++)
         if (strcmp(a->favorites.v[i], b->favorites.v[i])) return 1;
@@ -114,6 +117,8 @@ static void apply(const fr_toml *t)
     if ((v = fr_toml_get(t, "", "show_hidden", TOML_BOOL))) br.show_hidden = v->b;
     if ((v = fr_toml_get(t, "", "ui_scale", TOML_NUMBER)) && v->num >= UI_SCALE_MIN && v->num <= UI_SCALE_MAX)
         ui.user_scale = (float)v->num;
+    if ((v = fr_toml_get(t, "", "font_scale", TOML_NUMBER)) && v->num >= TEXT_SCALE_MIN && v->num <= TEXT_SCALE_MAX)
+        ui.text_scale = (float)v->num;
     if ((v = fr_toml_get(t, "", "favorites", TOML_STRINGS))) {
         fr_strs_free(&settings.favorites);
         for (i = 0; i < v->strs.n; i++) {
@@ -162,6 +167,8 @@ static char *settings_text(void)
     fr_toml_bool(&o, "show_hidden", br.show_hidden);
     fr_toml_comment(&o, "Interface size over the system's scale: 1.0 as the system says, 0.5 to 2.0 (Ctrl +, Ctrl -, Ctrl 0).");
     fr_toml_number(&o, "ui_scale", ui.user_scale > 0 ? ui.user_scale : 1);
+    fr_toml_comment(&o, "Text size over the interface size: 1.0 as designed, 0.7 to 2.0 (Ctrl Alt +, Ctrl Alt -, Ctrl Alt 0).");
+    fr_toml_number(&o, "font_scale", ui.text_scale > 0 ? ui.text_scale : 1);
     fr_toml_comment(&o, "Folders at the top of the sidebar, in order: paths, or URIs for other storage.");
     fr_strs shown = {0};
     for (int i = 0; i < settings.favorites.n; i++) {

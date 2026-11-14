@@ -85,7 +85,8 @@ typedef struct {
     double path_flash_at; /* the folder's path was copied then: the breadcrumb flashes */
 } fr_app;
 extern fr_app app;
-void app_zoom(int dir); /* the interface size: +1 bigger, -1 smaller, 0 the system's */
+void app_zoom(int dir);      /* the interface size: +1 bigger, -1 smaller, 0 the system's */
+void app_text_zoom(int dir); /* the text alone, the same way */
 
 float app_row_height(void);
 int app_wide(void); /* the places stay beside the files */
@@ -117,6 +118,8 @@ typedef struct {
 extern fr_settings settings;
 #define UI_SCALE_MIN 0.5
 #define UI_SCALE_MAX 2.0
+#define TEXT_SCALE_MIN 0.7
+#define TEXT_SCALE_MAX 2.0
 void settings_load(void);
 void settings_poll(void); /* saves what changed (sort, layout, hidden, favorites); reloads after a hand edit */
 int favorite_index(const char *uri); /* -1 when not a favorite */

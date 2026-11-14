@@ -7,7 +7,11 @@
 
 fr_app app;
 
-float app_row_height(void) { return DP(ui.touch ? 64 : 38); }
+/* grows with the text size so names never clip */
+float app_row_height(void)
+{
+    return ui.touch ? fmaxf(DP(64), ui_line_height(16) + ui_line_height(13) + DP(18)) : fmaxf(DP(38), ui_line_height(15) + DP(14));
+}
 int app_wide(void) { return !ui.touch && ui.safe.width >= DP(840); }
 
 /* ---- bottom bars ---- */
@@ -59,6 +63,11 @@ static void draw_menus(void)
         if (ui_menu_item(size, "zoom-in", -1)) app_zoom(1);
         if (ui_menu_item("Smaller interface", "zoom-out", -1)) app_zoom(-1);
         if (ui.user_scale != 1 && ui_menu_item("Default interface size", NULL, -1)) app_zoom(0);
+        char text[48];
+        snprintf(text, sizeof text, "Bigger text (now %d%%)", (int)lroundf(ui.text_scale * 100));
+        if (ui_menu_item(text, "a-large-small", -1)) app_text_zoom(1);
+        if (ui_menu_item("Smaller text", NULL, -1)) app_text_zoom(-1);
+        if (ui.text_scale != 1 && ui_menu_item("Default text size", NULL, -1)) app_text_zoom(0);
         if (ui_menu_item("Keyboard shortcuts", "keyboard", -1)) app.help_open = 1;
         ui_menu_separator();
         if (ui_menu_item("Refresh", "refresh-cw", -1)) browser_reload();
@@ -114,6 +123,15 @@ void app_zoom(int dir)
     ui_toast("Interface size %d%%", (int)lroundf(s * 100));
 }
 
+void app_text_zoom(int dir)
+{
+    float s = ui.text_scale > 0 ? ui.text_scale : 1;
+    s = dir > 0 ? s + 0.1f : dir < 0 ? s - 0.1f : 1;
+    s = fmaxf((float)TEXT_SCALE_MIN, fminf((float)TEXT_SCALE_MAX, roundf(s * 10) / 10));
+    ui.text_scale = s;
+    ui_toast("Text size %d%%", (int)lroundf(s * 100));
+}
+
 /* ---- the keyboard shortcuts ---- */
 
 static const char *const shortcuts[][2] = {
@@ -135,6 +153,7 @@ static const char *const shortcuts[][2] = {
     {"Ctrl+1 / 2 / 3", "details, columns, grid"},          {"m", "add or remove this folder as a favorite"},
     {"g1 .. g9", "open favorite 1 to 9"},  {"gh, g~", "home"},
     {"Ctrl+= / Ctrl+- / Ctrl+0", "bigger / smaller / default interface"},
+    {"Ctrl+Alt+= / - / 0", "bigger / smaller / default text"},
     {"F5, Ctrl+R", "refresh"},             {"?", "this list"},
     {"q, Ctrl+Q", "quit"},
 };
@@ -255,7 +274,7 @@ static void frame(void)
 int fr_app_main(int argc, char **argv)
 {
     plat_init_window();
-    ui.user_scale = 1;
+    ui.user_scale = ui.text_scale = 1;
     settings_load();
     theme_load(settings.theme);
     ui_input_init();
