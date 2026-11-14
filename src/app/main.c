@@ -85,7 +85,8 @@ static void draw_menus(void)
         ui_menu_separator();
         static const char *layouts[] = {"Details", "Columns", "Grid"};
         for (int i = 0; i < 3; i++)
-            if (ui_menu_item(layouts[i], NULL, app.layout == (fr_layout)i)) view_set_layout((fr_layout)i);
+            if (!(ui.touch && i == LAYOUT_COLUMNS) && ui_menu_item(layouts[i], NULL, app.layout == (fr_layout)i))
+                view_set_layout((fr_layout)i);
         ui_menu_separator();
         char size[48];
         snprintf(size, sizeof size, "Bigger interface (now %d%%)", (int)lroundf(ui.user_scale * 100));

@@ -261,6 +261,7 @@ static struct {
     menu_item items[32];
     int n, hot, prev_layer;
     int fresh; /* opened by this frame's click, which must not count as one outside it */
+    float scroll;
     /* the item clicked, by label: it fires in the next frame, when the items before it may have come or gone */
     int clicked;
     char clicked_label[96];
@@ -268,7 +269,7 @@ static struct {
 
 void ui_menu_open(unsigned id, Rectangle anchor)
 {
-    menu.id = id, menu.anchor = anchor, menu.clicked = 0, menu.hot = -1, menu.fresh = 1;
+    menu.id = id, menu.anchor = anchor, menu.clicked = 0, menu.hot = -1, menu.fresh = 1, menu.scroll = 0;
     ui.dirty = 1;
 }
 
@@ -335,6 +336,9 @@ void ui_menu_end(void)
     }
     Rectangle s = ui.safe;
     w = fminf(w, s.width - DP(16));
+    /* taller than the screen (a phone): the menu scrolls */
+    float full = h;
+    h = fminf(h, s.height - DP(16));
     float x = menu.anchor.x + menu.anchor.width / 2 > s.x + s.width / 2 ? menu.anchor.x + menu.anchor.width - w : menu.anchor.x;
     float y = menu.anchor.y + menu.anchor.height;
     if (y + h > s.y + s.height - DP(8) && menu.anchor.y - h > s.y + DP(8)) y = menu.anchor.y - h;
@@ -345,7 +349,10 @@ void ui_menu_end(void)
     ui_round((Rectangle){x + DP(1), y + DP(3), w, h}, 10, ui_alpha(theme.surface, 0.6f));
     ui_round(menu.rect, 10, theme.surface_hi);
     ui_round_line(menu.rect, 10, theme.border);
-    float iy = y + pad;
+    if (ui_hover(menu.rect) && ui.wheel.y) menu.scroll -= ui.wheel.y * DP(ui.touch ? 60 : 48), ui.dirty = 1;
+    menu.scroll = fmaxf(0, fminf(menu.scroll, full - h));
+    ui_clip_begin(menu.rect);
+    float iy = y + pad - menu.scroll;
     for (int i = 0; i < menu.n; i++) {
         menu_item *it = &menu.items[i];
         if (it->separator) {
@@ -354,7 +361,7 @@ void ui_menu_end(void)
             continue;
         }
         Rectangle row = {x + DP(4), iy, w - DP(8), ih};
-        int state, click = ui_clickable(ui_id("menu-item", i), row, &state);
+        int state, click = ui_clickable(ui_id("menu-item", i), GetCollisionRec(row, menu.rect), &state);
         if (state == 1) menu.hot = i;
         if (state || menu.hot == i) ui_round(row, 6, state == 2 ? theme.pressed : theme.hover);
         if (it->icon) ui_icon(it->icon, (Rectangle){x + DP(12), iy, DP(24), ih}, 18, theme.text_dim);
@@ -363,6 +370,7 @@ void ui_menu_end(void)
         if (click) menu_click(i);
         iy += ih;
     }
+    ui_clip_end();
     for (int i = 0; i < ui.nkeys; i++) {
         int k = ui.keys[i].key;
         if (ui.keys[i].used || ui.keys[i].mods) continue;
