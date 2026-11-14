@@ -371,6 +371,11 @@ void ui_menu_end(void)
         iy += ih;
     }
     ui_clip_end();
+    if (full > h) {
+        float thick = DP(ui.touch ? 3 : 4), track = h - 2 * pad, th = fmaxf(DP(32), track * h / full);
+        float ty = y + pad + (track - th) * (menu.scroll / (full - h));
+        ui_round((Rectangle){x + w - thick - DP(3), ty, thick, th}, thick / 2 / ui.scale, theme.text_faint);
+    }
     for (int i = 0; i < ui.nkeys; i++) {
         int k = ui.keys[i].key;
         if (ui.keys[i].used || ui.keys[i].mods) continue;
