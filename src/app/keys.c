@@ -75,7 +75,7 @@ int keys_mode(void) { return insert.on ? MODE_INSERT : visual ? MODE_VISUAL : MO
 
 static unsigned insert_id(void) { return ui_id("insert", 0); }
 
-/* how: 'i' caret before the extension, 'a'/'A' at the end, 'I' at the start, 'c' the stem cleared */
+/* how: 'i' caret before the extension, 'A' at the end, 'I' at the start, 'c' the stem cleared */
 static void insert_start(int how)
 {
     fr_item *it = browser_item(br.cursor);
@@ -296,9 +296,9 @@ static void command(int c)
     case K(0, 'p'): ops_paste(); break;
     case K(0, 'D'): ops_delete(0); break;
     case K(0, 'X'): ops_delete(1); break;
-    case K(0, 'r'): ops_rename_start(); break;
+    case K(0, 'a'): ops_new_folder_start(); break;
+    case K(0, 'r'): insert_start('i'); break;
     case K(0, 'i'):
-    case K(0, 'a'):
     case K(0, 'A'):
     case K(0, 'I'):
     case K(0, 'c'): insert_start(c); break;
