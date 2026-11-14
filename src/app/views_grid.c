@@ -34,6 +34,7 @@ static int draw_tile(int v, Rectangle t, Rectangle area)
     else ui_icon(kind_icon(it->kind), icon, 48, kind_color(it->kind));
     if (it->e.is_link) ui_icon("link", (Rectangle){t.x + t.width / 2 + DP(12), icon.y + DP(34), DP(14), DP(14)}, 12, theme.text_faint);
     Rectangle name = {box.x + DP(6), icon.y + icon.height + DP(6), box.width - DP(12), 2 * ui_line_height(name_size())};
+    if (keys_insert_field(v, (Rectangle){box.x + DP(2), name.y - DP(4), box.width - DP(4), DP(30)})) return ui_hover(hit);
     view_draw_name(it->e.name, name, name_size(), it->e.hidden ? theme.text_dim : theme.text);
     if (clicked) view_row_pressed(v, 0);
     else if (right) view_row_pressed(v, 1);

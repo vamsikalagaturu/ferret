@@ -205,20 +205,24 @@ static void draw_row(int v, Rectangle row, Rectangle area)
     fr_format_time(it->e.mtime, (int64_t)time(NULL), date, sizeof date);
     float tx = icon.x + icon_w + DP(compact ? 8 : 12), tw = row.x + row.width - pad - tx;
     Color name_c = it->e.hidden ? theme.text_dim : theme.text;
+    int editing;
     if (compact) {
         cells c = cells_for(row);
-        ui_text_box(it->e.name, (Rectangle){c.name, row.y, c.name_w, row.height}, 14, FONT_REGULAR, name_c, ALIGN_LEFT, 1);
+        editing = keys_insert_field(v, (Rectangle){c.name - DP(12), row.y + DP(3), c.name_w + DP(12), row.height - DP(6)});
+        if (!editing) ui_text_box(it->e.name, (Rectangle){c.name, row.y, c.name_w, row.height}, 14, FONT_REGULAR, name_c, ALIGN_LEFT, 1);
         ui_text_box(size, (Rectangle){c.size, row.y, c.size_w, row.height}, 13, FONT_REGULAR, theme.text_dim, ALIGN_RIGHT, 0);
         if (c.date_w) ui_text_box(date, (Rectangle){c.date, row.y, c.date_w, row.height}, 13, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 0);
         if (c.kind_w) ui_text_box(kind_label(it->kind), (Rectangle){c.kind, row.y, c.kind_w, row.height}, 13, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 0);
     } else {
         float line1 = row.y + DP(11), line2 = row.y + DP(35);
-        ui_text_box(it->e.name, (Rectangle){tx, line1, tw, DP(20)}, 16, FONT_REGULAR, name_c, ALIGN_LEFT, 1);
+        editing = keys_insert_field(v, (Rectangle){tx - DP(12), line1 - DP(8), tw + DP(12), DP(36)});
+        if (!editing) ui_text_box(it->e.name, (Rectangle){tx, line1, tw, DP(20)}, 16, FONT_REGULAR, name_c, ALIGN_LEFT, 1);
         float sw = ui_text_width(size, 13, FONT_REGULAR);
         ui_text_box(date, (Rectangle){tx, line2, tw - sw - DP(12), DP(18)}, 13, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 0);
         ui_text_box(size, (Rectangle){tx + tw - sw, line2, sw, DP(18)}, 13, FONT_REGULAR, theme.text_dim, ALIGN_RIGHT, 0);
     }
     ui_hline(tx, row.y + row.height - DP(1), row.x + row.width - tx, ui_alpha(theme.border, 0.6f));
+    if (editing && ui_hover(hit)) return;
     if (clicked) view_row_pressed(v, 0);
     else if (right) view_row_pressed(v, 1);
 }
