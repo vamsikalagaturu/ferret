@@ -1,4 +1,5 @@
-/thirdparty/
+/thirdparty
 /build/
 /compile_commands.json
+/.claude/
 *.apk

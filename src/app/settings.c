@@ -12,7 +12,7 @@ fr_settings settings;
 
 #define COUNT(a) ((int)(sizeof(a) / sizeof *(a)))
 /* by name, so a value this build does not know (or no longer has) is skipped */
-static const char *const sort_names[] = {[SORT_NAME] = "name", [SORT_SIZE] = "size", [SORT_DATE] = "modified", [SORT_KIND] = "kind"};
+static const char *const sort_names[] = {[SORT_NAME] = "name", [SORT_SIZE] = "size", [SORT_DATE] = "modified", [SORT_KIND] = "kind", [SORT_EXT] = "extension"};
 static const char *const layout_names[] = {[LAYOUT_DETAILS] = "details", [LAYOUT_COLUMNS] = "columns", [LAYOUT_GRID] = "grid"};
 
 typedef struct {
