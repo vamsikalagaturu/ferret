@@ -253,6 +253,7 @@ typedef struct {
     char label[96];
     const char *icon;
     int checked, separator;
+    char value[16]; /* a stepper row: "label   -  value  +" */
 } menu_item;
 
 static struct {
@@ -265,6 +266,8 @@ static struct {
     /* the item clicked, by label: it fires in the next frame, when the items before it may have come or gone */
     int clicked;
     char clicked_label[96];
+    int step; /* a stepper's - (-1) or + (1), by label, also for the next frame; the menu stays open */
+    char step_label[96];
 } menu;
 
 void ui_menu_open(unsigned id, Rectangle anchor)
@@ -292,13 +295,25 @@ int ui_menu_begin(unsigned id)
     return 1;
 }
 
+int ui_menu_stepper(const char *label, const char *icon, const char *value)
+{
+    if (menu.n >= 32) return 0;
+    menu_item *it = &menu.items[menu.n++];
+    snprintf(it->label, sizeof it->label, "%s", label);
+    snprintf(it->value, sizeof it->value, "%s", value);
+    it->icon = icon, it->checked = -1, it->separator = 0;
+    int dir = 0;
+    if (menu.step && !strcmp(menu.step_label, it->label)) dir = menu.step, menu.step = 0;
+    return dir;
+}
+
 int ui_menu_item(const char *label, const char *icon, int checked)
 {
     if (menu.n >= 32) return 0;
     int idx = menu.n++;
     menu_item *it = &menu.items[idx];
     snprintf(it->label, sizeof it->label, "%s", label);
-    it->icon = icon, it->checked = checked, it->separator = 0;
+    it->icon = icon, it->checked = checked, it->separator = 0, it->value[0] = 0;
     if (menu.clicked && !strcmp(menu.clicked_label, it->label)) {
         menu.clicked = 0;
         ui_menu_close();
@@ -331,7 +346,7 @@ void ui_menu_end(void)
         if (menu.items[i].separator) h += sh;
         else {
             h += ih;
-            w = fmaxf(w, lead + ui_text_width(menu.items[i].label, 15, FONT_REGULAR) + trail);
+            w = fmaxf(w, lead + ui_text_width(menu.items[i].label, 15, FONT_REGULAR) + (menu.items[i].value[0] ? DP(148) : trail));
         }
     }
     Rectangle s = ui.safe;
@@ -361,6 +376,34 @@ void ui_menu_end(void)
             continue;
         }
         Rectangle row = {x + DP(4), iy, w - DP(8), ih};
+        if (it->value[0]) {
+            float bw = DP(36), vw = DP(56), bx = x + w - DP(8) - 2 * bw - vw;
+            if (it->icon) ui_icon(it->icon, (Rectangle){x + DP(12), iy, DP(24), ih}, 18, theme.text_dim);
+            ui_text_box(it->label, (Rectangle){x + lead, iy, bx - x - lead, ih}, 15, FONT_REGULAR, theme.text, ALIGN_LEFT, 0);
+            Rectangle minus = {bx, iy + (ih - bw) / 2, bw, bw}, plus = {bx + bw + vw, minus.y, bw, bw};
+            for (int k = 0; k < 2; k++) {
+                Rectangle b = k ? plus : minus;
+                int bs;
+                if (ui_clickable(ui_id(it->label, k), GetCollisionRec(b, menu.rect), &bs)) {
+                    menu.step = k ? 1 : -1;
+                    snprintf(menu.step_label, sizeof menu.step_label, "%s", it->label);
+                    ui.dirty = 1;
+                }
+                if (bs) ui_round(b, 8, bs == 2 ? theme.pressed : theme.hover);
+                ui_icon(k ? "plus" : "minus", b, 18, theme.text);
+            }
+            Rectangle val = {bx + bw, iy + (ih - bw) / 2, vw, bw};
+            int vs;
+            if (ui_clickable(ui_id(it->label, 2), GetCollisionRec(val, menu.rect), &vs)) {
+                menu.step = 2;
+                snprintf(menu.step_label, sizeof menu.step_label, "%s", it->label);
+                ui.dirty = 1;
+            }
+            if (vs) ui_round(val, 8, vs == 2 ? theme.pressed : theme.hover);
+            ui_text_box(it->value, val, 14, FONT_SEMIBOLD, theme.text_dim, ALIGN_CENTER, 0);
+            iy += ih;
+            continue;
+        }
         int state, click = ui_clickable(ui_id("menu-item", i), GetCollisionRec(row, menu.rect), &state);
         if (state == 1) menu.hot = i;
         if (state || menu.hot == i) ui_round(row, 6, state == 2 ? theme.pressed : theme.hover);

@@ -88,17 +88,14 @@ static void draw_menus(void)
             if (!(ui.touch && i == LAYOUT_COLUMNS) && ui_menu_item(layouts[i], NULL, app.layout == (fr_layout)i))
                 view_set_layout((fr_layout)i);
         ui_menu_separator();
-        char size[48];
-        snprintf(size, sizeof size, "Bigger interface (now %d%%)", (int)lroundf(ui.user_scale * 100));
-        if (ui_menu_item(size, "zoom-in", -1)) app_zoom(1);
-        if (ui_menu_item("Smaller interface", "zoom-out", -1)) app_zoom(-1);
-        if (ui.user_scale != 1 && ui_menu_item("Default interface size", NULL, -1)) app_zoom(0);
-        char text[48];
-        snprintf(text, sizeof text, "Bigger text (now %d%%)", (int)lroundf(ui.text_scale * 100));
-        if (ui_menu_item(text, "a-large-small", -1)) app_text_zoom(1);
-        if (ui_menu_item("Smaller text", NULL, -1)) app_text_zoom(-1);
-        if (ui.text_scale != 1 && ui_menu_item("Default text size", NULL, -1)) app_text_zoom(0);
-        if (ui_menu_item("Keyboard shortcuts", "keyboard", -1)) app.help_open = 1;
+        char pct[16];
+        snprintf(pct, sizeof pct, "%d%%", (int)lroundf(ui.user_scale * 100));
+        int d = ui_menu_stepper("Interface", "zoom-in", pct);
+        if (d) app_zoom(d == 2 ? 0 : d);
+        snprintf(pct, sizeof pct, "%d%%", (int)lroundf(ui.text_scale * 100));
+        d = ui_menu_stepper("Text", "a-large-small", pct);
+        if (d) app_text_zoom(d == 2 ? 0 : d);
+        if (!ui.touch && ui_menu_item("Keyboard shortcuts", "keyboard", -1)) app.help_open = 1;
         ui_menu_separator();
         if (ui_menu_item("Refresh", "refresh-cw", -1)) browser_reload();
         ui_menu_end();

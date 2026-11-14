@@ -129,6 +129,8 @@ void ui_scroll_to(fr_scroll *s, float top, float bottom); /* bring [top, bottom]
 void ui_menu_open(unsigned id, Rectangle anchor);
 int ui_menu_begin(unsigned id);
 int ui_menu_item(const char *label, const char *icon, int checked); /* checked: -1 none, 0/1 a tick */
+/* "label   -  value  +" on one row; the menu stays open. -1 / 1 for - / +, 2 for a tap on the value, else 0 */
+int ui_menu_stepper(const char *label, const char *icon, const char *value);
 void ui_menu_separator(void);
 void ui_menu_end(void);
 int ui_menu_is_open(void);
