@@ -259,13 +259,23 @@ static struct {
     unsigned id;
     Rectangle anchor, rect;
     menu_item items[32];
-    int n, clicked, hot, prev_layer;
+    int n, hot, prev_layer;
     int fresh; /* opened by this frame's click, which must not count as one outside it */
+    /* the item clicked, by label: it fires in the next frame, when the items before it may have come or gone */
+    int clicked;
+    char clicked_label[96];
 } menu;
 
 void ui_menu_open(unsigned id, Rectangle anchor)
 {
-    menu.id = id, menu.anchor = anchor, menu.clicked = -1, menu.hot = -1, menu.fresh = 1;
+    menu.id = id, menu.anchor = anchor, menu.clicked = 0, menu.hot = -1, menu.fresh = 1;
+    ui.dirty = 1;
+}
+
+static void menu_click(int i)
+{
+    menu.clicked = 1;
+    snprintf(menu.clicked_label, sizeof menu.clicked_label, "%s", menu.items[i].label);
     ui.dirty = 1;
 }
 
@@ -288,8 +298,8 @@ int ui_menu_item(const char *label, const char *icon, int checked)
     menu_item *it = &menu.items[idx];
     snprintf(it->label, sizeof it->label, "%s", label);
     it->icon = icon, it->checked = checked, it->separator = 0;
-    if (menu.clicked == idx) {
-        menu.clicked = -1;
+    if (menu.clicked && !strcmp(menu.clicked_label, it->label)) {
+        menu.clicked = 0;
         ui_menu_close();
         return 1;
     }
@@ -303,6 +313,7 @@ void ui_menu_separator(void)
 
 void ui_menu_end(void)
 {
+    if (menu.clicked) menu.clicked = 0, ui_menu_close();
     if (!menu.id) {
         ui.layer = menu.prev_layer;
         return;
@@ -349,7 +360,7 @@ void ui_menu_end(void)
         if (it->icon) ui_icon(it->icon, (Rectangle){x + DP(12), iy, DP(24), ih}, 18, theme.text_dim);
         ui_text_box(it->label, (Rectangle){x + lead, iy, w - lead - trail, ih}, 15, FONT_REGULAR, theme.text, ALIGN_LEFT, 0);
         if (it->checked == 1) ui_icon("check", (Rectangle){x + w - DP(40), iy, DP(24), ih}, 18, theme.accent);
-        if (click) menu.clicked = i, ui.dirty = 1;
+        if (click) menu_click(i);
         iy += ih;
     }
     for (int i = 0; i < ui.nkeys; i++) {
@@ -362,7 +373,7 @@ void ui_menu_end(void)
                 if (!menu.items[j].separator) break;
             }
             menu.hot = j, ui.keys[i].used = 1;
-        } else if ((k == KEY_ENTER || k == KEY_KP_ENTER) && menu.hot >= 0) menu.clicked = menu.hot, ui.keys[i].used = 1, ui.dirty = 1;
+        } else if ((k == KEY_ENTER || k == KEY_KP_ENTER) && menu.hot >= 0) menu_click(menu.hot), ui.keys[i].used = 1;
         else if (k == KEY_ESCAPE || k == KEY_BACK) ui_menu_close(), ui.keys[i].used = 1;
     }
     if (!menu.fresh && (ui.pressed || ui.rpressed) && !CheckCollisionPointRec(ui.mouse, menu.rect)) {

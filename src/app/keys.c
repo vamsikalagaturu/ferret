@@ -44,7 +44,8 @@ void move_cursor(int to, int extend)
     br.keyboard = 1;
     if (extend) {
         browser_clear_selection();
-        int a = br.anchor < to ? br.anchor : to, b = br.anchor < to ? to : br.anchor;
+        int from = br.anchor >= 0 && br.anchor < br.view.n ? br.anchor : to;
+        int a = from < to ? from : to, b = from < to ? to : from;
         for (int i = a; i <= b; i++) browser_set_selected(br.view.v[i], 1);
     } else br.anchor = to;
     view_reveal(to);
@@ -149,8 +150,6 @@ static void insert_commit(void)
         free(br.focus_name);
         br.focus_name = fr_strdup(insert.text.buf);
         browser_reload();
-        free(br.focus_name);
-        br.focus_name = NULL;
         insert_stop();
     }
 }

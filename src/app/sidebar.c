@@ -4,13 +4,15 @@
 #include <stdlib.h>
 #include <string.h>
 
-void places_refresh(int now)
+static void places_refresh_now(const char *s, int now)
 {
     if (!now && ui.now - app.places_at < 3) return;
     app.places_at = ui.now;
     fr_places_free(&app.places);
     plat_places(&app.places);
 }
+
+void places_refresh(int now) { app_defer(places_refresh_now, NULL, now); }
 
 int place_of(const char *uri)
 {

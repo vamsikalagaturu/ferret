@@ -21,9 +21,8 @@ void grid_reveal(int v, float width)
 static int draw_tile(int v, Rectangle t, Rectangle area)
 {
     fr_item *it = browser_item(v);
-    if (!it) return 0;
     Rectangle hit = GetCollisionRec(t, area);
-    int state, clicked = ui_clickable(ui_id("tile", v), hit, &state);
+    int state, clicked = ui_clickable(ui_id(it->e.name, (int)ui_id("tile", 0)), hit, &state);
     int right = ui_hover(hit) && ui.rpressed;
     Rectangle box = {t.x + DP(4), t.y + DP(4), t.width - DP(8), t.height - DP(8)};
     if (it->selected) ui_round(box, 8, theme.selection);
