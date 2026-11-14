@@ -62,6 +62,115 @@ static void draw_breadcrumb(Rectangle r)
     }
     ui_clip_end();
     for (int i = 0; i < n; i++) free(segs[i].label), free(segs[i].uri);
+    Rectangle rest_r = {x, r.y, r.x + r.width - x, r.height};
+    if (rest_r.width > 0 && ui_clickable(ui_id("crumb-rest", 0), rest_r, NULL)) path_edit_start();
+}
+
+/* ---- typing a location ---- */
+
+static int editing;
+static fr_text path_field;
+
+void path_edit_start(void)
+{
+    if (!br.uri) return;
+    const char *local = fr_uri_local(br.uri);
+    const char *home = getenv("HOME");
+    size_t hl = home ? strlen(home) : 0;
+    char *shown;
+    if (local && hl > 1 && !strncmp(local, home, hl) && (local[hl] == '/' || !local[hl])) shown = fr_format("~%s/", local + hl);
+    else if (local) shown = fr_format("%s%s", local, strcmp(local, "/") ? "/" : "");
+    else shown = fr_strdup(br.uri);
+    text_set(&path_field, shown);
+    free(shown);
+    editing = 1;
+    ui.focus = ui_id("path", 0);
+    ui.dirty = 1;
+}
+
+static void path_edit_stop(void)
+{
+    editing = 0;
+    ui.focus = 0;
+    ui.nchars = 0;
+    ui.dirty = 1;
+}
+
+/* "~/x" -> "/home/u/x"; NULL for a relative path */
+static char *expand(const char *s)
+{
+    const char *home = getenv("HOME");
+    if (s[0] == '~' && (s[1] == '/' || !s[1]) && home) return fr_format("%s%s", home, s + 1);
+    return *s == '/' ? fr_strdup(s) : NULL;
+}
+
+/* Tab: complete the last segment to the longest prefix the folders there share */
+static void complete(void)
+{
+    if (strstr(path_field.buf, "://")) return;
+    char *full = expand(path_field.buf);
+    if (!full) return;
+    char *slash = strrchr(full, '/');
+    char *dir = fr_strndup(full, (size_t)(slash - full + 1)), *prefix = slash + 1;
+    char *uri = fr_uri_from_path(dir);
+    fr_entries es = {0};
+    char *best = NULL;
+    int matches = 0;
+    if (!fr_vfs_list(uri, &es))
+        for (int i = 0; i < es.n; i++) {
+            if (!es.v[i].is_dir || strncmp(es.v[i].name, prefix, strlen(prefix))) continue;
+            if (es.v[i].hidden && !*prefix) continue;
+            if (!best) best = fr_strdup(es.v[i].name);
+            else {
+                size_t k = 0;
+                while (best[k] && best[k] == es.v[i].name[k]) k++;
+                best[k] = 0;
+            }
+            matches++;
+        }
+    if (best && strlen(best) >= strlen(prefix)) {
+        size_t keep = strlen(path_field.buf) - strlen(prefix);
+        char *done = fr_format("%.*s%s%s", (int)keep, path_field.buf, best, matches == 1 ? "/" : "");
+        text_set(&path_field, done);
+        free(done);
+    }
+    free(best);
+    fr_entries_free(&es);
+    free(uri), free(dir), free(full);
+}
+
+static void path_go(void)
+{
+    char *target = NULL;
+    if (strstr(path_field.buf, "://")) target = fr_strdup(path_field.buf);
+    else {
+        char *full = expand(path_field.buf);
+        if (!full) {
+            ui_toast("Type a full path: starting with / or ~");
+            return;
+        }
+        size_t n = strlen(full);
+        while (n > 1 && full[n - 1] == '/') full[--n] = 0;
+        target = fr_uri_from_path(full);
+        free(full);
+    }
+    fr_entry e = {0};
+    int rc = fr_vfs_stat(target, &e);
+    if (rc) ui_toast("%s: %s", path_field.buf, fr_vfs_error(rc));
+    else if (e.is_dir) {
+        path_edit_stop();
+        browser_open(target, 1);
+    } else {
+        char *parent = fr_uri_parent(target);
+        path_edit_stop();
+        if (parent) {
+            br.focus_name = fr_strdup(e.name);
+            browser_open(parent, 1);
+        }
+        free(parent);
+    }
+    fr_entry_free(&e);
+    free(target);
 }
 
 void header_draw(Rectangle r)
@@ -87,6 +196,22 @@ void header_draw(Rectangle r)
         else if (clicked == 2) ops_copy(1);
         else if (clicked == 3) ops_copy(0);
         else if (clicked == 4) browser_select_all();
+        ui_hline(r.x, r.y + r.height - DP(1), r.width, theme.border);
+        return;
+    }
+    if (editing) {
+        if (ui_icon_button(ui_id("path-close", 0), btn, "x", theme.text)) {
+            path_edit_stop();
+            return;
+        }
+        x += b + DP(4);
+        Rectangle field = {x, r.y + DP(8), right - x - DP(4), r.height - DP(16)};
+        unsigned id = ui_id("path", 0);
+        ui.focus = id;
+        if (ui_key(KEY_TAB, 0)) complete();
+        int res = ui_text_field(id, &path_field, field, "Path, e.g. ~/Downloads");
+        if (res & TEXT_CANCEL) path_edit_stop();
+        else if (res & TEXT_SUBMIT) path_go();
         ui_hline(r.x, r.y + r.height - DP(1), r.width, theme.border);
         return;
     }

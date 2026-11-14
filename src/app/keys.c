@@ -1,4 +1,5 @@
 #include "app.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -131,6 +132,33 @@ static void clip_take(int cut)
     ops_copy(cut);
 }
 
+/* the current folder's path (here), else the selected items' or the cursor row's, one per line */
+static void copy_path(int here)
+{
+    fr_strs uris = {0};
+    if (here) FR_PUSH(uris, fr_strdup(br.uri));
+    else {
+        uris = browser_selected_uris();
+        fr_item *it = browser_item(br.cursor);
+        if (!uris.n && it) FR_PUSH(uris, fr_uri_join(br.uri, it->e.name));
+    }
+    size_t len = 1;
+    for (int i = 0; i < uris.n; i++) len += strlen(uris.v[i]) + 1;
+    char *text = fr_realloc(NULL, len), *o = text;
+    for (int i = 0; i < uris.n; i++) {
+        const char *p = fr_uri_local(uris.v[i]);
+        o += sprintf(o, "%s%s", i ? "\n" : "", p ? p : uris.v[i]);
+    }
+    *o = 0;
+    if (uris.n) {
+        plat_set_clipboard(text);
+        if (uris.n == 1) ui_toast("Copied %s", text);
+        else ui_toast("Copied %d paths", uris.n);
+    }
+    free(text);
+    fr_strs_free(&uris);
+}
+
 /* a pressed key that is no typed character (Ctrl/Alt combos, arrows, F-keys) cancels a pending chord */
 static int command_key(void)
 {
@@ -170,6 +198,8 @@ static void command(int c)
     case K(0, ' '): toggle_selected(); break;
     case K(0, 'v'): toggle_visual(); break;
     case K('y', 'y'): clip_take(0); break;
+    case K('y', 'p'): copy_path(1); break;
+    case K('y', 'P'): copy_path(0); break;
     case K('d', 'd'): clip_take(1); break;
     case K(0, 'p'): ops_paste(); break;
     case K(0, 'D'): ops_delete(0); break;
@@ -245,6 +275,7 @@ void keys_handle(void)
     if (ui_key(KEY_ONE, MOD_CTRL)) view_set_layout(LAYOUT_DETAILS);
     if (ui_key(KEY_TWO, MOD_CTRL)) view_set_layout(LAYOUT_COLUMNS);
     if (ui_key(KEY_THREE, MOD_CTRL)) view_set_layout(LAYOUT_GRID);
+    if (ui_key(KEY_L, MOD_CTRL)) path_edit_start();
     for (int i = 0; i < ui.nchars && !ui.focus && !ops_dialog_open() && !app.quit; i++) command(ui.chars[i]);
     ui.nchars = 0;
 }

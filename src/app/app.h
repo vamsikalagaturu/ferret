@@ -87,6 +87,7 @@ void places_draw(Rectangle r);
 /* ---- the header (header.c) ---- */
 float header_height(void);
 void header_draw(Rectangle r);
+void path_edit_start(void); /* the breadcrumb becomes a field to type a location in */
 
 /* ---- the files in the current layout (views.c) ---- */
 void view_draw(Rectangle r);
