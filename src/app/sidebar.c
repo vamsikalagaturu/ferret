@@ -193,8 +193,11 @@ void places_draw(Rectangle r)
     ui_text_box(modes[mode], (Rectangle){r.x + DP(20), help.y - DP(6) - count_h - mode_h, r.width - DP(40), mode_h}, 15, FONT_REGULAR,
                 mode == MODE_NORMAL ? theme.text_faint : theme.accent, ALIGN_LEFT, 0);
     char count[96];
-    int n = br.view.n != br.items.n ? snprintf(count, sizeof count, "%d of %d items shown", br.view.n, br.items.n)
-                                    : snprintf(count, sizeof count, "%d %s", br.view.n, br.view.n == 1 ? "item" : "items");
+    int hidden = 0;
+    for (int i = 0; !br.show_hidden && i < br.items.n; i++) hidden += br.items.v[i].e.hidden;
+    int n = br.filtering && br.filter.len ? snprintf(count, sizeof count, "%d %s", br.view.n, br.view.n == 1 ? "match" : "matches")
+                                          : snprintf(count, sizeof count, "%d %s", br.view.n, br.view.n == 1 ? "item" : "items");
+    if (hidden) n += snprintf(count + n, sizeof count - (size_t)n, ", %d hidden", hidden);
     if (br.nselected) snprintf(count + n, sizeof count - (size_t)n, ", %d selected", br.nselected);
     ui_text_box(count, (Rectangle){r.x + DP(20), help.y - DP(6) - count_h, r.width - DP(40), count_h}, 15, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 0);
     ui_hline(r.x + DP(16), help.y - DP(6), r.width - DP(32), theme.border);
