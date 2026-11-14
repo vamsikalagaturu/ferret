@@ -160,6 +160,7 @@ static void path_go(void)
         char *parent = fr_uri_parent(target);
         path_edit_stop();
         if (parent) {
+            free(br.focus_name);
             br.focus_name = fr_strdup(e.name);
             browser_open(parent, 1);
         }

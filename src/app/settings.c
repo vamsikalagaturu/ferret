@@ -254,7 +254,7 @@ int favorite_index(const char *uri)
     return -1;
 }
 
-void favorite_toggle(const char *uri)
+static void favorite_toggle_now(const char *uri, int n)
 {
     int i = favorite_index(uri);
     if (i < 0) {
@@ -265,3 +265,5 @@ void favorite_toggle(const char *uri)
     memmove(settings.favorites.v + i, settings.favorites.v + i + 1, sizeof *settings.favorites.v * (size_t)(settings.favorites.n - i - 1));
     settings.favorites.n--;
 }
+
+void favorite_toggle(const char *uri) { app_defer(favorite_toggle_now, uri, 0); }

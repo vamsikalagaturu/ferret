@@ -41,7 +41,7 @@ static int cmp_items(const void *pa, const void *pb)
     return br.desc ? -c : c;
 }
 
-void browser_rebuild_view(void)
+static void rebuild_now(const char *s, int n)
 {
     const char *keep = NULL;
     fr_item *cur = browser_item(br.cursor);
@@ -69,16 +69,28 @@ void browser_rebuild_view(void)
         br.view.v[0] = placeholder;
         br.cursor = 0;
     }
-    if (br.anchor >= br.view.n) br.anchor = br.cursor;
+    if (br.anchor < 0 || br.anchor >= br.view.n) br.anchor = br.cursor;
     free(keep_name);
     ui.dirty = 1;
+}
+
+void browser_rebuild_view(void) { app_defer(rebuild_now, NULL, 0); }
+
+static void push_placeholder(void)
+{
+    fr_item it = {.kind = KIND_OTHER, .count = -1, .placeholder = 1};
+    it.e.name = fr_strdup("");
+    FR_PUSH(br.items, it);
 }
 
 static void load(const char *uri)
 {
     fr_strs selected = {0};
-    for (int i = 0; i < br.items.n; i++)
+    int naming = 0;
+    for (int i = 0; i < br.items.n; i++) {
         if (br.items.v[i].selected) FR_PUSH(selected, fr_strdup(br.items.v[i].e.name));
+        naming |= br.items.v[i].placeholder;
+    }
     int same = br.uri && !strcmp(br.uri, uri);
     items_free();
     free(br.error);
@@ -95,19 +107,29 @@ static void load(const char *uri)
     }
     free(es.v);
     fr_strs_free(&selected);
+    if (same && naming) push_placeholder();
     br.dir_mtime = dir_mtime(uri);
     br.checked_at = ui.now;
     if (!same) {
         free(br.uri);
         br.uri = fr_strdup(uri);
     }
-    browser_rebuild_view();
+    rebuild_now(NULL, 0);
 }
 
-void browser_open(const char *uri, int push_history)
+static void reload_now(const char *s, int n)
+{
+    if (br.uri) load(br.uri);
+    free(br.focus_name);
+    br.focus_name = NULL;
+}
+
+void browser_reload(void) { app_defer(reload_now, NULL, 0); }
+
+static void open_now(const char *uri, int push_history)
 {
     if (br.uri && !strcmp(br.uri, uri)) {
-        browser_reload();
+        reload_now(NULL, 0);
         return;
     }
     char *previous = br.uri ? fr_strdup(br.uri) : NULL;
@@ -116,9 +138,7 @@ void browser_open(const char *uri, int push_history)
         fr_strs_free(&br.forward);
     }
     /* going up lands on the folder just left */
-    free(br.focus_name);
-    br.focus_name = NULL;
-    if (previous) {
+    if (!br.focus_name && previous) {
         char *parent = fr_uri_parent(previous);
         if (parent && !strcmp(parent, uri)) br.focus_name = fr_uri_name(previous);
         free(parent);
@@ -140,35 +160,38 @@ void browser_open(const char *uri, int push_history)
     free(previous);
 }
 
-void browser_reload(void)
-{
-    if (br.uri) load(br.uri);
-}
+void browser_open(const char *uri, int push_history) { app_defer(open_now, uri, push_history); }
 
-void browser_back(void)
+static void back_now(const char *s, int n)
 {
     if (!br.back.n) return;
     char *to = br.back.v[--br.back.n];
     FR_PUSH(br.forward, fr_strdup(br.uri));
-    browser_open(to, 0);
+    open_now(to, 0);
     free(to);
 }
 
-void browser_forward(void)
+void browser_back(void) { app_defer(back_now, NULL, 0); }
+
+static void forward_now(const char *s, int n)
 {
     if (!br.forward.n) return;
     char *to = br.forward.v[--br.forward.n];
     FR_PUSH(br.back, fr_strdup(br.uri));
-    browser_open(to, 0);
+    open_now(to, 0);
     free(to);
 }
 
-void browser_up(void)
+void browser_forward(void) { app_defer(forward_now, NULL, 0); }
+
+static void up_now(const char *s, int n)
 {
     char *parent = fr_uri_parent(br.uri);
-    if (parent) browser_open(parent, 1);
+    if (parent) open_now(parent, 1);
     free(parent);
 }
+
+void browser_up(void) { app_defer(up_now, NULL, 0); }
 
 /* What a command acts on: the selection when the focused row is in it (or on touch, where nothing is focused),
  * else the focused row alone, as vim's yy takes the line the cursor is on. */
@@ -195,20 +218,18 @@ void browser_flash_targets(void)
     ui.dirty = 1;
 }
 
-void browser_add_placeholder(void)
+static void add_placeholder_now(const char *s, int n)
 {
     for (int i = 0; i < br.items.n; i++)
         if (br.items.v[i].placeholder) return;
-    fr_item it;
-    memset(&it, 0, sizeof it);
-    it.e.name = fr_strdup("");
-    it.kind = KIND_OTHER, it.count = -1, it.placeholder = 1;
-    FR_PUSH(br.items, it);
-    browser_rebuild_view();
+    push_placeholder();
+    rebuild_now(NULL, 0);
     br.scroll.target = 0;
 }
 
-void browser_drop_placeholder(void)
+void browser_add_placeholder(void) { app_defer(add_placeholder_now, NULL, 0); }
+
+static void drop_placeholder_now(const char *s, int n)
 {
     for (int i = 0; i < br.items.n; i++) {
         if (!br.items.v[i].placeholder) continue;
@@ -217,10 +238,12 @@ void browser_drop_placeholder(void)
         br.items.n--;
         br.view.n = 0;
         br.cursor = -1;
-        browser_rebuild_view();
+        rebuild_now(NULL, 0);
         return;
     }
 }
+
+void browser_drop_placeholder(void) { app_defer(drop_placeholder_now, NULL, 0); }
 
 void browser_poll(void)
 {

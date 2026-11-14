@@ -47,7 +47,7 @@ typedef struct {
     char *error;        /* the listing failed */
     int64_t dir_mtime;
     double checked_at;
-    char *focus_name;   /* after a reload, the row to bring into view */
+    char *focus_name;   /* the row the next browser_open() or browser_reload() lands on; it takes it */
 } fr_browser;
 
 extern fr_browser br;
@@ -87,6 +87,10 @@ typedef struct {
 extern fr_app app;
 void app_zoom(int dir);      /* the interface size: +1 bigger, -1 smaller, 0 the system's */
 void app_text_zoom(int dir); /* the text alone, the same way */
+/* fn(s, n) now, or once the frame being drawn ends, in the order asked (s is copied): what changes the folder's
+ * items, the places, the disks, the favorites or the clipboard goes through here, so a frame never sees the lists
+ * it draws change under it, and an fr_item * stays valid until the frame ends */
+void app_defer(void (*fn)(const char *s, int n), const char *s, int n);
 
 float app_row_height(void);
 int app_wide(void); /* the places stay beside the files */
@@ -147,6 +151,7 @@ extern fr_clip clip;
 void ops_open_item(fr_item *it);
 void ops_copy(int cut);
 void ops_paste(void);
+void ops_clip_clear(void);
 void ops_delete(int permanently);
 void ops_rename_start(void);
 void ops_new_folder_start(void);
@@ -154,7 +159,7 @@ void ops_new_start(void); /* a file, or a folder when the name ends in "/" */
 int ops_create(const char *typed); /* makes it in the current folder; 0, or an error already shown */
 void ops_properties(void);
 void ops_draw_dialogs(void);
-int ops_dialog_open(void);
+int ops_dialog_open(void); /* also a job's question about a name taken */
 float ops_draw_jobs(Rectangle area); /* the job strip at the bottom of area; returns its height */
 void ops_poll_jobs(void);
 

@@ -15,7 +15,16 @@ static fr_strs dlg_uris;       /* delete: the items */
 static int dlg_permanent;
 static char dlg_message[1024], dlg_title[128];
 
-int ops_dialog_open(void) { return dlg != DLG_NONE; }
+static int job_asking(void)
+{
+    fr_job_status st[16];
+    int n = fr_jobs_list(st, 16);
+    for (int i = 0; i < n; i++)
+        if (st[i].state == JOB_ASKING) return 1;
+    return 0;
+}
+
+int ops_dialog_open(void) { return dlg != DLG_NONE || job_asking(); }
 
 static void dlg_close(void)
 {
@@ -38,7 +47,7 @@ void ops_open_item(fr_item *it)
     free(uri);
 }
 
-void ops_copy(int cut)
+static void copy_now(const char *s, int cut)
 {
     fr_strs_free(&clip.uris);
     clip.uris = browser_target_uris();
@@ -49,12 +58,20 @@ void ops_copy(int cut)
     ui_toast("%d %s %s; open a folder and paste", clip.uris.n, clip.uris.n == 1 ? "item" : "items", cut ? "cut" : "copied");
 }
 
-void ops_paste(void)
+void ops_copy(int cut) { app_defer(copy_now, NULL, cut); }
+
+static void paste_now(const char *s, int n)
 {
     if (!clip.uris.n || !br.uri) return;
     fr_job_submit(clip.cut ? JOB_MOVE : JOB_COPY, &clip.uris, br.uri);
     if (clip.cut) fr_strs_free(&clip.uris);
 }
+
+void ops_paste(void) { app_defer(paste_now, NULL, 0); }
+
+static void clip_clear_now(const char *s, int n) { fr_strs_free(&clip.uris); }
+
+void ops_clip_clear(void) { app_defer(clip_clear_now, NULL, 0); }
 
 static fr_strs targets(void) { return browser_target_uris(); }
 
@@ -151,8 +168,6 @@ static void rename_commit(void)
         free(br.focus_name);
         br.focus_name = fr_strdup(field.buf);
         browser_reload();
-        free(br.focus_name);
-        br.focus_name = NULL;
         dlg_close();
     }
     free(parent), free(to);
@@ -178,10 +193,10 @@ int ops_create(const char *typed)
         if (rc == -EEXIST) ui_toast("\"%s\" already exists here", name);
         else if (rc) ui_toast("Could not make the %s: %s", folder ? "folder" : "file", fr_vfs_error(rc));
         else {
+            browser_drop_placeholder();
+            free(br.focus_name);
             br.focus_name = fr_strdup(name);
             browser_reload();
-            free(br.focus_name);
-            br.focus_name = NULL;
         }
     }
     free(name);

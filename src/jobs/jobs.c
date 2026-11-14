@@ -471,7 +471,7 @@ void fr_jobs_stop(void)
 {
     pthread_mutex_lock(&lock);
     stopping = 1;
-    for (int i = 0; i < jobs.n; i++) jobs.v[i]->cancel = 1;
+    for (int i = 0; i < jobs.n; i++) __atomic_store_n(&jobs.v[i]->cancel, 1, __ATOMIC_RELAXED);
     pthread_cond_broadcast(&work_cond);
     pthread_mutex_unlock(&lock);
     if (started) pthread_join(worker, NULL);

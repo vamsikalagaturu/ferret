@@ -72,7 +72,8 @@ void view_row_pressed(int v, int right_click)
         br.cursor = br.anchor = v;
     } else if (mods & MOD_SHIFT) {
         browser_clear_selection();
-        int a = br.anchor < v ? br.anchor : v, b = br.anchor < v ? v : br.anchor;
+        int from = br.anchor >= 0 && br.anchor < br.view.n ? br.anchor : v;
+        int a = from < v ? from : v, b = from < v ? v : from;
         for (int i = a; i <= b; i++) browser_set_selected(br.view.v[i], 1);
         br.cursor = v;
     } else if (ui.clicks == 2 && br.cursor == v) {
@@ -192,11 +193,10 @@ static void draw_header(Rectangle h)
 static void draw_row(int v, Rectangle row, Rectangle area)
 {
     fr_item *it = browser_item(v);
-    /* a click on an earlier row may have opened another folder in this same frame */
-    if (!it) return;
     int compact = !ui.touch, state;
     Rectangle hit = GetCollisionRec(row, area);
-    int clicked = ui_clickable(ui_id("row", v), hit, &state);
+    /* by name: a reload between the press and the release may put another item at v */
+    int clicked = ui_clickable(ui_id(it->e.name, (int)ui_id("row", 0)), hit, &state);
     int right = ui_hover(hit) && ui.rpressed;
     if (it->selected) ui_rect(row, theme.selection);
     else if (state) ui_rect(row, state == 2 ? theme.pressed : theme.hover);

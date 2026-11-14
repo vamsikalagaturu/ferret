@@ -12,6 +12,35 @@ float app_row_height(void)
 {
     return ui.touch ? fmaxf(DP(64), ui_line_height(16) + ui_line_height(13) + DP(18)) : fmaxf(DP(38), ui_line_height(15) + DP(14));
 }
+
+static int drawing;
+static struct {
+    struct deferred {
+        void (*fn)(const char *s, int n);
+        char *s;
+        int n;
+    } *v;
+    int n, cap;
+} deferred;
+
+void app_defer(void (*fn)(const char *s, int n), const char *s, int n)
+{
+    if (!drawing) {
+        fn(s, n);
+        return;
+    }
+    FR_PUSH(deferred, ((struct deferred){fn, s ? fr_strdup(s) : NULL, n}));
+    ui.dirty = 1;
+}
+
+static void run_deferred(void)
+{
+    for (int i = 0; i < deferred.n; i++) {
+        deferred.v[i].fn(deferred.v[i].s, deferred.v[i].n);
+        free(deferred.v[i].s);
+    }
+    deferred.n = 0;
+}
 int app_wide(void) { return !ui.touch && ui.safe.width >= DP(840); }
 
 /* ---- bottom bars ---- */
@@ -30,7 +59,7 @@ static float draw_paste_bar(Rectangle area)
     ui_text_box(label, (Rectangle){r.x + pad + DP(40), r.y, r.width - 2 * pad - DP(48) - pw - cw - DP(8), h}, 15, FONT_REGULAR, theme.text, ALIGN_LEFT, 0);
     float bx = r.x + r.width - pad - pw;
     if (ui_button(ui_id("paste", 0), (Rectangle){bx, r.y + (h - bh) / 2, pw, bh}, "Paste here", 1)) ops_paste();
-    if (ui_button(ui_id("paste-cancel", 0), (Rectangle){bx - DP(8) - cw, r.y + (h - bh) / 2, cw, bh}, "Cancel", 0)) fr_strs_free(&clip.uris);
+    if (ui_button(ui_id("paste-cancel", 0), (Rectangle){bx - DP(8) - cw, r.y + (h - bh) / 2, cw, bh}, "Cancel", 0)) ops_clip_clear();
     return h;
 }
 
@@ -209,7 +238,8 @@ static void draw_permission(Rectangle r)
 
 /* ---- the frame ---- */
 
-static void frame(void)
+/* draws and takes the widgets' input; 1 when the keys go to the list */
+static int frame(void)
 {
     static double checked_at = -10;
     if (!app.storage_ok && ui.now - checked_at > 0.5) {
@@ -225,9 +255,8 @@ static void frame(void)
         draw_permission(ui.safe);
         if (ui_key(KEY_BACK, 0)) app.quit = 1;
         ui_redraw_in(0.5);
-        return;
+        return 0;
     }
-    if (app_wide() || app.drawer_open) places_refresh(0);
     int modal = ops_dialog_open() || ui_menu_is_open() || app.help_open;
     Rectangle s = ui.safe;
     if (app_wide()) {
@@ -263,8 +292,17 @@ static void frame(void)
     ops_draw_dialogs();
     draw_help();
     ui_toast_draw(list.y + list.height);
-    if (!modal) keys_handle();
-    else if (ui_key(KEY_BACK, 0)) ui_menu_close();
+    if (modal && ui_key(KEY_BACK, 0)) ui_menu_close();
+    return !modal;
+}
+
+/* what the frame asked for, then the keys and what changed elsewhere (jobs, disks, the folder, settings.toml) */
+static void between_frames(int keys)
+{
+    run_deferred();
+    if (keys) keys_handle();
+    if (!app.storage_ok) return;
+    if (app_wide() || app.drawer_open) places_refresh(0);
     ops_poll_jobs();
     disks_poll();
     browser_poll();
@@ -302,9 +340,12 @@ int fr_app_main(int argc, char **argv)
             scale = ui.scale;
         }
         BeginDrawing();
-        frame();
+        drawing = 1;
+        int keys = frame();
+        drawing = 0;
         EndDrawing();
         ui_end_frame();
+        between_frames(keys);
         if (!ui.dirty && !ui_events_pending()) {
             double wait = 1.0;
             if (ui.redraw_at) wait = fmax(0, fmin(wait, ui.redraw_at - fr_now()));
