@@ -97,6 +97,7 @@ int view_grid_columns(void); /* items per row in the grid layout, 1 in the other
 /* ---- settings.toml, favorites, theme overrides (settings.c) ---- */
 typedef struct {
     fr_strs favorites; /* URIs, in the order shown */
+    char *theme[THEME_ROLES]; /* [theme] values as written, NULL for roles not set */
 } fr_settings;
 extern fr_settings settings;
 void settings_load(void);

@@ -13,7 +13,12 @@ typedef struct {
     Color folder, image, video, audio, archive, document, sheet, slides, code, other;
 } fr_theme;
 extern fr_theme theme;
-void theme_load(void); /* Nord, or the desktop's colours when it publishes them */
+/* the colour roles of the desktop's colors.toml: accent, background, dark_background, ... */
+enum { THEME_ROLES = 13 };
+extern const char *const theme_roles[THEME_ROLES];
+/* Nord, then the desktop's colours when it publishes them, then overrides ("#rrggbb" per role, NULL keeps;
+ * overrides itself may be NULL) */
+void theme_load(char *const *overrides);
 
 enum { MOD_SHIFT = 1, MOD_CTRL = 2, MOD_ALT = 4, MOD_SUPER = 8 };
 
