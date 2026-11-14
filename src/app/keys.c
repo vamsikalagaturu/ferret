@@ -323,8 +323,8 @@ static void command(int c)
     case K(0, 'v'): toggle_visual(); break;
     case K('y', 'y'): clip_take(0); break;
     case K(0, '?'): app.help_open = 1; break;
-    case K('y', 'p'): copy_path(1); break;
-    case K('y', 'P'): copy_path(0); break;
+    case K('y', 'p'): copy_path(0); break;
+    case K('y', 'P'): copy_path(1); break;
     case K('d', 'd'): clip_take(1); break;
     case K(0, 'p'): ops_paste(); break;
     case K(0, 'D'): ops_delete(0); break;

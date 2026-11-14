@@ -124,7 +124,7 @@ static const char *const shortcuts[][2] = {
     {"/", "filter this folder"},           {"n / N", "next / previous row"},
     {"Space", "select and move down"},     {"v", "select a range"},
     {"Ctrl+A", "select all"},              {"Esc", "clear the selection, close"},
-    {"yy / dd / p", "copy / cut / paste"}, {"yp / yP", "copy the folder's / item's path"},
+    {"yy / dd / p", "copy / cut / paste"}, {"yp / yP", "copy the item's / folder's full path"},
     {"r, i, F2", "rename here, before the extension"}, {"A", "rename here, at the end"},
     {"I", "rename here, at the start"},    {"c", "retype the name, keep the extension"},
     {"Enter / Esc", "keep / drop the new name"},       {"a", "new file, or folder when the name ends in /"},
