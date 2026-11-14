@@ -559,6 +559,11 @@ void plat_places(fr_places *out)
 
 char *plat_home_uri(void) { return fr_uri_from_path(INTERNAL); }
 
+unsigned plat_disks_serial(void) { return 0; }
+void plat_disks(fr_disks *out) {}
+void plat_disk_request(int op, const char *id) {}
+int plat_disk_done(fr_disk_done *out) { return 0; }
+
 /* ---- entry ---- */
 
 int main(int argc, char **argv)

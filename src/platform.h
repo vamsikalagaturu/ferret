@@ -39,4 +39,37 @@ typedef struct {
 void plat_places(fr_places *out); /* the storages and standard folders, in order */
 void fr_places_free(fr_places *p);
 char *plat_home_uri(void);        /* where the window starts */
+
+/* Filesystems to mount, mounted or not (platform/linux/disks_linux.c; none on Android). Requests run in the
+ * background, and plat_wake() tells when one finished or the list changed. */
+enum { DISK_MOUNT = 1, DISK_UNMOUNT, DISK_EJECT };
+
+typedef struct {
+    char *id; /* names it in requests */
+    char *label, *device;
+    fr_strs mounts; /* none: not mounted */
+    uint64_t size;
+    int removable, locked;
+    int busy; /* the DISK_* request running on it, 0 none */
+} fr_disk;
+
+typedef struct {
+    fr_disk *v;
+    int n, cap;
+} fr_disks;
+
+typedef struct {
+    int op;
+    char *id, *label;
+    char *path;        /* DISK_MOUNT: where */
+    fr_strs unmounted; /* DISK_UNMOUNT, DISK_EJECT: the mount points that went */
+    char *error;       /* NULL: done */
+} fr_disk_done;
+
+unsigned plat_disks_serial(void); /* changes with the list or what runs */
+void plat_disks(fr_disks *out);
+void fr_disks_free(fr_disks *d);
+void plat_disk_request(int op, const char *id); /* DISK_EJECT: unmounts the drive's filesystems, then powers it off */
+int plat_disk_done(fr_disk_done *out);           /* 1 with a finished request (its strings are the caller's), 0 none */
+void fr_disk_done_free(fr_disk_done *d);
 #endif

@@ -1,4 +1,4 @@
-/* The desktop side of platform.h: GLFW through raylib (Wayland or X11), xdg-open, XDG folders and mounts. */
+/* The desktop side of platform.h: GLFW through raylib (Wayland or X11), xdg-open, XDG folders; disks are in disks_linux.c. */
 #define _GNU_SOURCE
 #include "platform.h"
 #include "vfs/vfs.h"
@@ -151,13 +151,13 @@ int plat_open(const char *path)
     return WIFEXITED(status) && WEXITSTATUS(status) == 0 && n <= 0 ? 0 : -1;
 }
 
-static void add(fr_places *p, const char *label, const char *path, const char *icon, int removable)
+static void add(fr_places *p, const char *label, const char *path, const char *icon)
 {
     struct stat st;
     if (stat(path, &st) || !S_ISDIR(st.st_mode)) return;
     for (int i = 0; i < p->n; i++)
         if (!strcmp(fr_uri_path(p->v[i].uri), path)) return;
-    FR_PUSH(*p, ((fr_place){fr_strdup(label), fr_uri_from_path(path), fr_strdup(icon), removable}));
+    FR_PUSH(*p, ((fr_place){fr_strdup(label), fr_uri_from_path(path), fr_strdup(icon), 0}));
 }
 
 /* $XDG_<NAME>_DIR from ~/.config/user-dirs.dirs ("$HOME/Downloads"), else ~/<fallback> */
@@ -186,7 +186,7 @@ void plat_places(fr_places *out)
 {
     const char *home = getenv("HOME");
     if (home) {
-        add(out, "~", home, "house", 0);
+        add(out, "~", home, "house");
         static const struct {
             const char *key, *fallback, *icon;
         } dirs[] = {{"XDG_DESKTOP_DIR", "Desktop", "monitor"},  {"XDG_DOCUMENTS_DIR", "Documents", "file-text"},
@@ -194,34 +194,15 @@ void plat_places(fr_places *out)
                     {"XDG_MUSIC_DIR", "Music", "music"},        {"XDG_VIDEOS_DIR", "Videos", "video"}};
         for (size_t i = 0; i < sizeof dirs / sizeof *dirs; i++) {
             char *p = user_dir(home, dirs[i].key, dirs[i].fallback);
-            if (strcmp(p, home)) add(out, strrchr(p, '/') + 1, p, dirs[i].icon, 0);
+            if (strcmp(p, home)) add(out, strrchr(p, '/') + 1, p, dirs[i].icon);
             free(p);
         }
         const char *data = getenv("XDG_DATA_HOME");
         char *trash = data && *data == '/' ? fr_format("%s/Trash/files", data) : fr_format("%s/.local/share/Trash/files", home);
-        add(out, "Trash", trash, "trash-2", 0);
+        add(out, "Trash", trash, "trash-2");
         free(trash);
     }
-    add(out, "/", "/", "hard-drive", 0);
-    FILE *m = fopen("/proc/self/mounts", "r");
-    char line[2048];
-    while (m && fgets(line, sizeof line, m)) {
-        char dev[512], dir[1024], type[64];
-        if (sscanf(line, "%511s %1023s %63s", dev, dir, type) != 3) continue;
-        if (strncmp(dir, "/media/", 7) && strncmp(dir, "/run/media/", 11) && strncmp(dir, "/mnt/", 5)) continue;
-        /* /proc/mounts escapes spaces as \040 */
-        char clean[1024], *o = clean;
-        for (char *c = dir; *c && o < clean + sizeof clean - 1; c++) {
-            if (c[0] == '\\' && c[1] >= '0' && c[1] <= '7' && c[2] && c[3]) {
-                *o++ = (char)((c[1] - '0') * 64 + (c[2] - '0') * 8 + (c[3] - '0'));
-                c += 3;
-            } else *o++ = *c;
-        }
-        *o = 0;
-        const char *base = strrchr(clean, '/');
-        add(out, base && base[1] ? base + 1 : clean, clean, strncmp(dev, "/dev/sd", 7) ? "hard-drive" : "usb", 1);
-    }
-    if (m) fclose(m);
+    add(out, "/", "/", "hard-drive");
 }
 
 char *plat_home_uri(void)

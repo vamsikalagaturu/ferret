@@ -21,6 +21,103 @@ int place_of(const char *uri)
     return best;
 }
 
+static const char *const disk_verbs[] = {"", "mount", "unmount", "eject"};
+static const char *const disk_busy[] = {"", "mounting...", "unmounting...", "ejecting..."};
+
+static void open_path(const char *path)
+{
+    char *uri = fr_uri_from_path(path);
+    browser_open(uri, 1);
+    free(uri);
+    app.drawer_open = 0;
+}
+
+void disks_poll(void)
+{
+    unsigned serial = plat_disks_serial();
+    if (serial != app.disks_serial) {
+        app.disks_serial = serial;
+        fr_disks_free(&app.disks);
+        plat_disks(&app.disks);
+        ui.dirty = 1;
+    }
+    fr_disk_done d;
+    while (plat_disk_done(&d)) {
+        if (d.error) ui_toast("Could not %s %s: %s", disk_verbs[d.op], d.label, d.error);
+        else if (d.op == DISK_MOUNT && d.path) open_path(d.path);
+        else if (br.uri) {
+            int inside = 0;
+            for (int i = 0; i < d.unmounted.n && !inside; i++) {
+                char *m = fr_uri_from_path(d.unmounted.v[i]);
+                inside = fr_uri_within(m, br.uri);
+                free(m);
+            }
+            if (inside) {
+                char *home = plat_home_uri();
+                browser_open(home, 1);
+                free(home);
+            }
+        }
+        fr_disk_done_free(&d);
+    }
+}
+
+static int disk_of(const char *uri)
+{
+    int best = -1;
+    size_t best_len = 0;
+    for (int i = 0; i < app.disks.n; i++)
+        for (int k = 0; k < app.disks.v[i].mounts.n; k++) {
+            char *m = fr_uri_from_path(app.disks.v[i].mounts.v[k]);
+            size_t n = strlen(m);
+            if (fr_uri_within(m, uri) && n > best_len) best = i, best_len = n;
+            free(m);
+        }
+    return best;
+}
+
+static void disks_draw(Rectangle r, float y, float ih, int current)
+{
+    if (!app.disks.n) return;
+    ui_hline(r.x + DP(16), y + DP(6), r.width - DP(32), theme.border);
+    y += DP(12);
+    ui_text_box("Disks", (Rectangle){r.x + DP(20), y, r.width - DP(40), DP(24)}, 12, FONT_SEMIBOLD, theme.text_faint, ALIGN_LEFT, 0);
+    y += DP(24);
+    for (int i = 0; i < app.disks.n; i++) {
+        const fr_disk *d = &app.disks.v[i];
+        int mounted = d->mounts.n > 0, sel = i == current, eject = mounted && !d->busy;
+        Rectangle row = {r.x + DP(8), y, r.width - DP(16), ih};
+        float bs = DP(24);
+        Rectangle btn = {row.x + row.width - bs - DP(4), y + (ih - bs) / 2, bs, bs};
+        Rectangle hit = eject ? (Rectangle){row.x, y, btn.x - row.x, ih} : row;
+        int state;
+        if (ui_clickable(ui_id("disk", i), hit, &state) && !d->busy) {
+            if (d->locked) ui_toast("Unlocking is not supported yet");
+            else if (mounted) open_path(d->mounts.v[0]);
+            else plat_disk_request(DISK_MOUNT, d->id);
+        }
+        if (sel) ui_round(row, 8, theme.selection);
+        else if (state) ui_round(row, 8, state == 2 ? theme.pressed : theme.hover);
+        ui_icon(d->locked ? "lock" : d->removable ? "usb" : "hard-drive", (Rectangle){row.x + DP(8), y, DP(32), ih}, 20,
+                sel ? theme.accent : theme.text_dim);
+        char size[32];
+        fr_format_size(d->size, size, sizeof size);
+        const char *note = d->busy ? disk_busy[d->busy] : size;
+        float right = btn.x - DP(4), nw = ui_text_width(note, 12, FONT_REGULAR);
+        ui_text_box(note, (Rectangle){right - nw, y, nw, ih}, 12, FONT_REGULAR, theme.text_faint, ALIGN_RIGHT, 0);
+        float lx = row.x + DP(52);
+        ui_text_box(d->label, (Rectangle){lx, y, right - nw - DP(8) - lx, ih}, 15, sel ? FONT_SEMIBOLD : FONT_REGULAR,
+                    sel ? theme.text : theme.text_dim, ALIGN_LEFT, 0);
+        if (eject) {
+            int bstate;
+            if (ui_clickable(ui_id("disk-eject", i), btn, &bstate)) plat_disk_request(d->removable ? DISK_EJECT : DISK_UNMOUNT, d->id);
+            if (bstate) ui_round(btn, 12, bstate == 2 ? theme.pressed : theme.hover);
+            ui_icon("eject", btn, 16, theme.text_dim);
+        }
+        y += ih;
+    }
+}
+
 void places_draw(Rectangle r)
 {
     ui_rect(r, theme.surface);
@@ -63,7 +160,8 @@ void places_draw(Rectangle r)
         y += DP(12);
     }
     fr_places *p = &app.places;
-    int current = br.uri && fav_current < 0 ? place_of(br.uri) : -1;
+    int disk_current = br.uri && fav_current < 0 ? disk_of(br.uri) : -1;
+    int current = br.uri && fav_current < 0 && disk_current < 0 ? place_of(br.uri) : -1;
     for (int i = 0; i < p->n; i++) {
         if (i && p->v[i].removable && !p->v[i - 1].removable) {
             ui_hline(r.x + DP(16), y + DP(6), r.width - DP(32), theme.border);
@@ -83,4 +181,5 @@ void places_draw(Rectangle r)
                     i == current ? FONT_SEMIBOLD : FONT_REGULAR, i == current ? theme.text : theme.text_dim, ALIGN_LEFT, 0);
         y += ih;
     }
+    disks_draw(r, y, ih, disk_current);
 }
