@@ -130,6 +130,13 @@ static void frame(void)
     list.height -= ops_draw_jobs(list);
     list.height -= draw_paste_bar(list);
     view_draw(list);
+    const char *chord = keys_pending();
+    if (*chord) {
+        float cw = ui_text_width(chord, 13, FONT_REGULAR) + DP(20), ch = DP(24);
+        Rectangle chip = {list.x + list.width - cw - DP(16), list.y + list.height - ch - DP(12), cw, ch};
+        ui_round(chip, 12, theme.surface_hi);
+        ui_text_box(chord, chip, 13, FONT_REGULAR, theme.text_dim, ALIGN_CENTER, 0);
+    }
     header_draw((Rectangle){s.x, s.y, s.width, hh});
     if (!app_wide() && app.drawer_open) {
         ui_layer(1);

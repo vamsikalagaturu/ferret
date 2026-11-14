@@ -13,7 +13,7 @@ Color kind_color(fr_kind k);
 const char *kind_label(fr_kind k);
 
 /* ---- the folder being shown (browser.c) ---- */
-typedef enum { SORT_NAME, SORT_SIZE, SORT_DATE, SORT_KIND } fr_sort;
+typedef enum { SORT_NAME, SORT_SIZE, SORT_DATE, SORT_KIND, SORT_EXT } fr_sort;
 
 typedef struct {
     fr_entry e;
@@ -106,6 +106,7 @@ void favorite_toggle(const char *uri);
 
 /* ---- keys (keys.c) ---- */
 void keys_handle(void);
+const char *keys_pending(void); /* the chord prefix waiting for its next key, "" none */
 void filter_start(int first_char);
 void filter_stop(void);
 int step_back(int quit_at_end);

@@ -102,8 +102,8 @@ void header_draw(Rectangle r)
         if (res & TEXT_CANCEL) filter_stop();
         if (res & TEXT_SUBMIT) {
             ui.focus = 0;
-            fr_item *it = browser_item(0);
-            if (br.view.n == 1 && it) ops_open_item(it);
+            ui.nchars = 0; /* the field took this frame's typing; the list must not read it as commands */
+            br.keyboard = 1;
         }
         ui_hline(r.x, r.y + r.height - DP(1), r.width, theme.border);
         return;

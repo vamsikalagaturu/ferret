@@ -33,6 +33,7 @@ static int cmp_items(const void *pa, const void *pb)
         break;
     case SORT_DATE: c = a->e.mtime < b->e.mtime ? -1 : a->e.mtime > b->e.mtime; break;
     case SORT_KIND: c = (int)a->kind - (int)b->kind; break;
+    case SORT_EXT: c = fr_natcmp(a->e.is_dir ? "" : fr_ext(a->e.name), b->e.is_dir ? "" : fr_ext(b->e.name)); break;
     default: break;
     }
     if (br.desc) c = -c;

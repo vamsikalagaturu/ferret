@@ -2,6 +2,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define K(prefix, c) ((prefix) << 8 | (c))
+
+static char pending[2]; /* the chord prefix typed so far */
+static int visual;      /* cursor moves extend the selection from the anchor */
+
 void filter_start(int first_char)
 {
     br.filtering = 1;
@@ -54,41 +59,187 @@ int step_back(int quit_at_end)
     return 1;
 }
 
+const char *keys_pending(void) { return pending; }
+
+static void set_pending(int c)
+{
+    pending[0] = (char)c;
+    ui.dirty = 1;
+}
+
+static void go(int to) { move_cursor(to, visual); }
+
+static void wrap(int by)
+{
+    if (br.view.n) go(((br.cursor + by) % br.view.n + br.view.n) % br.view.n);
+}
+
+static void open_cursor(void)
+{
+    fr_item *it = browser_item(br.cursor);
+    if (it) ops_open_item(it);
+}
+
+static void go_home(void)
+{
+    char *home = plat_home_uri();
+    if (home) browser_open(home, 1);
+    free(home);
+}
+
+static void go_favorite(int n)
+{
+    if (n <= settings.favorites.n) browser_open(settings.favorites.v[n - 1], 1);
+    else ui_toast("No favorite %d", n);
+}
+
+static void sort_by(fr_sort s)
+{
+    br.sort = s;
+    browser_rebuild_view();
+}
+
+static void toggle_hidden(void)
+{
+    br.show_hidden = !br.show_hidden;
+    browser_rebuild_view();
+}
+
+static void toggle_selected(void)
+{
+    fr_item *it = browser_item(br.cursor);
+    if (!it) return;
+    visual = 0;
+    browser_set_selected(br.view.v[br.cursor], !it->selected);
+    move_cursor(br.cursor + 1, 0);
+}
+
+static void toggle_visual(void)
+{
+    if (visual || !br.view.n) {
+        visual = 0;
+        return;
+    }
+    visual = 1;
+    br.anchor = br.cursor;
+    go(br.cursor);
+}
+
+static void clip_take(int cut)
+{
+    visual = 0;
+    ops_copy(cut);
+}
+
+/* a pressed key that is no typed character (Ctrl/Alt combos, arrows, F-keys) cancels a pending chord */
+static int command_key(void)
+{
+    for (int i = 0; i < ui.nkeys; i++) {
+        int k = ui.keys[i].key;
+        if (ui.keys[i].used || (k >= KEY_LEFT_SHIFT && k <= KEY_KB_MENU)) continue;
+        if (ui.keys[i].mods & ~MOD_SHIFT || (k >= KEY_ESCAPE && !(k >= KEY_KP_0 && k <= KEY_KP_EQUAL))) return 1;
+    }
+    return 0;
+}
+
+static void command(int c)
+{
+    int p = pending[0];
+    if (c < ' ') return;
+    if (!p && strchr("gsyd", c)) {
+        set_pending(c);
+        return;
+    }
+    if (p) set_pending(0);
+    if (c > '~') return;
+    if (p == 'g' && c >= '1' && c <= '9') {
+        go_favorite(c - '0');
+        return;
+    }
+    int cols = view_grid_columns();
+    switch (K(p, c)) {
+    case K(0, 'j'): go(br.cursor + cols); break;
+    case K(0, 'k'): go(br.cursor - cols); break;
+    case K('g', 'g'): go(0); break;
+    case K(0, 'G'): go(br.view.n - 1); break;
+    case K(0, 'h'): browser_up(); break;
+    case K(0, 'l'): open_cursor(); break;
+    case K(0, '/'): filter_start(0); break;
+    case K(0, 'n'): wrap(1); break;
+    case K(0, 'N'): wrap(-1); break;
+    case K(0, ' '): toggle_selected(); break;
+    case K(0, 'v'): toggle_visual(); break;
+    case K('y', 'y'): clip_take(0); break;
+    case K('d', 'd'): clip_take(1); break;
+    case K(0, 'p'): ops_paste(); break;
+    case K(0, 'D'): ops_delete(0); break;
+    case K(0, 'X'): ops_delete(1); break;
+    case K(0, 'r'): ops_rename_start(); break;
+    case K(0, 'a'): ops_new_folder_start(); break;
+    case K(0, '.'): toggle_hidden(); break;
+    case K(0, 'q'): app.quit = 1; break;
+    case K('g', 'h'):
+    case K('g', '~'): go_home(); break;
+    case K(0, 'm'):
+        if (br.uri) favorite_toggle(br.uri);
+        break;
+    case K('s', 'n'): sort_by(SORT_NAME); break;
+    case K('s', 's'): sort_by(SORT_SIZE); break;
+    case K('s', 'm'): sort_by(SORT_DATE); break;
+    case K('s', 'e'): sort_by(SORT_EXT); break;
+    case K(0, 'S'):
+        br.desc = !br.desc;
+        browser_rebuild_view();
+        break;
+    default: break;
+    }
+}
+
 void keys_handle(void)
 {
+    if (visual && !br.nselected) visual = 0;
     if (ui_key(KEY_BACK, 0)) step_back(1);
-    if (ui_key(KEY_ESCAPE, 0)) step_back(0);
+    if (ui_key(KEY_ESCAPE, 0)) {
+        if (pending[0]) set_pending(0);
+        else visual = 0, step_back(0);
+    }
     if (ui.focus) return;
-    int page = (int)(br.scroll.view / app_row_height()) - 1;
+    if (pending[0] && command_key()) set_pending(0);
+    int cols = view_grid_columns(), page = (int)(br.scroll.view / app_row_height()) - 1;
     if (page < 1) page = 1;
     for (int shift = 0; shift <= 1; shift++) {
-        int m = shift ? MOD_SHIFT : 0;
-        if (ui_key(KEY_DOWN, m)) move_cursor(br.cursor + 1, shift);
-        if (ui_key(KEY_UP, m)) move_cursor(br.cursor - 1, shift);
-        if (ui_key(KEY_PAGE_DOWN, m)) move_cursor(br.cursor + page, shift);
-        if (ui_key(KEY_PAGE_UP, m)) move_cursor(br.cursor - page, shift);
-        if (ui_key(KEY_HOME, m)) move_cursor(0, shift);
-        if (ui_key(KEY_END, m)) move_cursor(br.view.n - 1, shift);
+        int m = shift ? MOD_SHIFT : 0, ext = shift || visual;
+        if (ui_key(KEY_DOWN, m)) move_cursor(br.cursor + cols, ext);
+        if (ui_key(KEY_UP, m)) move_cursor(br.cursor - cols, ext);
+        if (app.layout == LAYOUT_GRID && ui_key(KEY_RIGHT, m)) move_cursor(br.cursor + 1, ext);
+        if (app.layout == LAYOUT_GRID && ui_key(KEY_LEFT, m)) move_cursor(br.cursor - 1, ext);
+        if (ui_key(KEY_PAGE_DOWN, m)) move_cursor(br.cursor + page, ext);
+        if (ui_key(KEY_PAGE_UP, m)) move_cursor(br.cursor - page, ext);
+        if (ui_key(KEY_HOME, m)) move_cursor(0, ext);
+        if (ui_key(KEY_END, m)) move_cursor(br.view.n - 1, ext);
     }
-    if (ui_key(KEY_ENTER, 0) || ui_key(KEY_KP_ENTER, 0)) {
-        fr_item *it = browser_item(br.cursor);
-        if (it) ops_open_item(it);
-    }
+    if (ui_key(KEY_D, MOD_CTRL)) go(br.cursor + (page + 1) / 2);
+    if (ui_key(KEY_U, MOD_CTRL)) go(br.cursor - (page + 1) / 2);
+    if (ui_key(KEY_ENTER, 0) || ui_key(KEY_KP_ENTER, 0)) open_cursor();
     if (ui_key(KEY_BACKSPACE, 0) || ui_key(KEY_LEFT, MOD_ALT)) browser_back();
     if (ui_key(KEY_RIGHT, MOD_ALT)) browser_forward();
     if (ui_key(KEY_UP, MOD_ALT)) browser_up();
     if (ui_key(KEY_A, MOD_CTRL)) browser_select_all();
-    if (ui_key(KEY_C, MOD_CTRL)) ops_copy(0);
-    if (ui_key(KEY_X, MOD_CTRL)) ops_copy(1);
+    if (ui_key(KEY_C, MOD_CTRL)) clip_take(0);
+    if (ui_key(KEY_X, MOD_CTRL)) clip_take(1);
     if (ui_key(KEY_V, MOD_CTRL)) ops_paste();
     if (ui_key(KEY_DELETE, 0)) ops_delete(0);
     if (ui_key(KEY_DELETE, MOD_SHIFT)) ops_delete(1);
     if (ui_key(KEY_F2, 0)) ops_rename_start();
     if (ui_key(KEY_N, MOD_CTRL | MOD_SHIFT)) ops_new_folder_start();
-    if (ui_key(KEY_H, MOD_CTRL)) br.show_hidden = !br.show_hidden, browser_rebuild_view();
+    if (ui_key(KEY_H, MOD_CTRL)) toggle_hidden();
     if (ui_key(KEY_F5, 0) || ui_key(KEY_R, MOD_CTRL)) browser_reload();
     if (ui_key(KEY_F, MOD_CTRL)) filter_start(0);
     if (ui_key(KEY_ENTER, MOD_ALT)) ops_properties();
     if (ui_key(KEY_Q, MOD_CTRL)) app.quit = 1;
-    if (!ui.touch && ui.nchars && ui.chars[0] > ' ' && ui.chars[0] != 127) filter_start(ui.chars[0]);
+    if (ui_key(KEY_ONE, MOD_CTRL)) view_set_layout(LAYOUT_DETAILS);
+    if (ui_key(KEY_TWO, MOD_CTRL)) view_set_layout(LAYOUT_COLUMNS);
+    if (ui_key(KEY_THREE, MOD_CTRL)) view_set_layout(LAYOUT_GRID);
+    for (int i = 0; i < ui.nchars && !ui.focus && !ops_dialog_open() && !app.quit; i++) command(ui.chars[i]);
+    ui.nchars = 0;
 }
