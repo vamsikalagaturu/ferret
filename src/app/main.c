@@ -38,6 +38,10 @@ static void draw_menus(void)
         if (ui_menu_item("New folder", "folder-plus", -1)) ops_new_folder_start();
         if (ui_menu_item("Select all", "check-check", -1)) browser_select_all();
         if (clip.uris.n && ui_menu_item("Paste", "clipboard-paste", -1)) ops_paste();
+        if (br.uri) {
+            int fav = favorite_index(br.uri) >= 0;
+            if (ui_menu_item(fav ? "Remove from favorites" : "Add to favorites", fav ? "star-off" : "star", -1)) favorite_toggle(br.uri);
+        }
         ui_menu_separator();
         static const char *sorts[] = {"Sort by name", "Sort by size", "Sort by date", "Sort by kind"};
         for (int i = 0; i < 4; i++)
@@ -155,12 +159,14 @@ static void frame(void)
     else if (ui_key(KEY_BACK, 0)) ui_menu_close();
     ops_poll_jobs();
     browser_poll();
+    settings_poll();
 }
 
 int fr_app_main(int argc, char **argv)
 {
     plat_init_window();
-    theme_load();
+    settings_load();
+    theme_load(settings.theme);
     ui_input_init();
     fr_jobs_start(plat_wake);
     app.menu_more = ui_id("menu-more", 0), app.menu_row = ui_id("menu-row", 0), app.menu_bg = ui_id("menu-bg", 0);
