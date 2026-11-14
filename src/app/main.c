@@ -77,12 +77,14 @@ static void draw_menus(void)
             if (ui_menu_item(fav ? "Remove from favorites" : "Add to favorites", fav ? "star-off" : "star", -1)) favorite_toggle(br.uri);
         }
         ui_menu_separator();
-        static const char *sorts[] = {"Sort by name", "Sort by size", "Sort by date", "Sort by kind", "Sort by extension"};
+        ui_menu_heading("Sort by");
+        static const char *sorts[] = {"Name", "Size", "Modified", "Kind", "Extension"};
         for (int i = 0; i < 5; i++)
             if (ui_menu_item(sorts[i], NULL, br.sort == (fr_sort)i)) br.sort = (fr_sort)i, browser_rebuild_view();
         if (ui_menu_item("Reverse order", NULL, br.desc)) br.desc = !br.desc, browser_rebuild_view();
         if (ui_menu_item("Show hidden", NULL, br.show_hidden)) br.show_hidden = !br.show_hidden, browser_rebuild_view();
         ui_menu_separator();
+        ui_menu_heading("Layout");
         static const char *layouts[] = {"Details", "Columns", "Grid"};
         for (int i = 0; i < 3; i++)
             if (!(ui.touch && i == LAYOUT_COLUMNS) && ui_menu_item(layouts[i], NULL, app.layout == (fr_layout)i))

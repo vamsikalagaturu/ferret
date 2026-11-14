@@ -252,8 +252,8 @@ void ui_scroll_to(fr_scroll *s, float top, float bottom)
 typedef struct {
     char label[96];
     const char *icon;
-    int checked, separator;
-    char value[16]; /* a stepper row: "label   -  value  +" */
+    int checked, separator; /* separator 2: a heading over the items after it */
+    char value[16];         /* a stepper row: "label   -  value  +" */
 } menu_item;
 
 static struct {
@@ -327,6 +327,13 @@ void ui_menu_separator(void)
     if (menu.n < 32) menu.items[menu.n++] = (menu_item){.separator = 1};
 }
 
+void ui_menu_heading(const char *label)
+{
+    if (menu.n >= 32) return;
+    menu.items[menu.n] = (menu_item){.separator = 2};
+    snprintf(menu.items[menu.n++].label, sizeof menu.items[0].label, "%s", label);
+}
+
 void ui_menu_end(void)
 {
     if (menu.clicked) menu.clicked = 0, ui_menu_close();
@@ -334,7 +341,7 @@ void ui_menu_end(void)
         ui.layer = menu.prev_layer;
         return;
     }
-    float ih = DP(ui.touch ? 48 : 34), sh = DP(9), pad = DP(6), w = DP(200);
+    float ih = DP(ui.touch ? 48 : 34), sh = DP(9), hh = ui_line_height(12) + DP(10), pad = DP(6), w = DP(200);
     int any_icon = 0, any_check = 0;
     for (int i = 0; i < menu.n; i++) {
         if (menu.items[i].separator) continue;
@@ -343,7 +350,7 @@ void ui_menu_end(void)
     }
     float lead = DP(16) + (any_icon ? DP(32) : 0), trail = DP(16) + (any_check ? DP(28) : 0), h = 2 * pad;
     for (int i = 0; i < menu.n; i++) {
-        if (menu.items[i].separator) h += sh;
+        if (menu.items[i].separator) h += menu.items[i].separator == 2 ? hh : sh;
         else {
             h += ih;
             w = fmaxf(w, lead + ui_text_width(menu.items[i].label, 15, FONT_REGULAR) + (menu.items[i].value[0] ? DP(148) : trail));
@@ -370,6 +377,11 @@ void ui_menu_end(void)
     float iy = y + pad - menu.scroll;
     for (int i = 0; i < menu.n; i++) {
         menu_item *it = &menu.items[i];
+        if (it->separator == 2) {
+            ui_text_box(it->label, (Rectangle){x + DP(16), iy + DP(4), w - DP(32), hh - DP(4)}, 12, FONT_SEMIBOLD, theme.text_faint, ALIGN_LEFT, 0);
+            iy += hh;
+            continue;
+        }
         if (it->separator) {
             ui_hline(x + DP(12), iy + sh / 2, w - DP(24), theme.border);
             iy += sh;
