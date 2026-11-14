@@ -1,0 +1,353 @@
+#include "app.h"
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+fr_clip clip;
+
+/* the one dialog open at a time */
+static enum { DLG_NONE, DLG_RENAME, DLG_NEW_FOLDER, DLG_DELETE, DLG_PROPERTIES, DLG_ERROR } dlg;
+static fr_text field;
+static char *dlg_uri;          /* rename: the item */
+static fr_strs dlg_uris;       /* delete: the items */
+static int dlg_permanent;
+static char dlg_message[1024], dlg_title[128];
+
+int ops_dialog_open(void) { return dlg != DLG_NONE; }
+
+static void dlg_close(void)
+{
+    dlg = DLG_NONE;
+    free(dlg_uri);
+    dlg_uri = NULL;
+    fr_strs_free(&dlg_uris);
+    ui.dirty = 1;
+}
+
+void ops_open_item(fr_item *it)
+{
+    char *uri = fr_uri_join(br.uri, it->e.name);
+    if (it->e.is_dir) browser_open(uri, 1);
+    else {
+        const char *path = fr_uri_local(uri);
+        if (!path || plat_open(path)) ui_toast("No app can open %s", it->e.name);
+    }
+    free(uri);
+}
+
+void ops_copy(int cut)
+{
+    fr_strs_free(&clip.uris);
+    clip.uris = browser_selected_uris();
+    if (!clip.uris.n) {
+        fr_item *it = browser_item(br.cursor);
+        if (it && !ui.touch) FR_PUSH(clip.uris, fr_uri_join(br.uri, it->e.name));
+    }
+    clip.cut = cut;
+    if (!clip.uris.n) return;
+    browser_clear_selection();
+    ui_toast("%d %s %s; open a folder and paste", clip.uris.n, clip.uris.n == 1 ? "item" : "items", cut ? "cut" : "copied");
+}
+
+void ops_paste(void)
+{
+    if (!clip.uris.n || !br.uri) return;
+    fr_job_submit(clip.cut ? JOB_MOVE : JOB_COPY, &clip.uris, br.uri);
+    if (clip.cut) fr_strs_free(&clip.uris);
+}
+
+static fr_strs targets(void)
+{
+    fr_strs uris = browser_selected_uris();
+    if (!uris.n) {
+        fr_item *it = browser_item(br.cursor);
+        if (it && !ui.touch) FR_PUSH(uris, fr_uri_join(br.uri, it->e.name));
+    }
+    return uris;
+}
+
+void ops_delete(int permanently)
+{
+    fr_strs uris = targets();
+    if (!uris.n) return;
+    dlg = DLG_DELETE;
+    dlg_permanent = permanently || !fr_vfs_can_trash(uris.v[0]);
+    char *first = fr_uri_name(uris.v[0]);
+    if (dlg_permanent) {
+        snprintf(dlg_title, sizeof dlg_title, "Delete %s?", uris.n == 1 ? "this item" : "these items");
+        if (uris.n == 1) snprintf(dlg_message, sizeof dlg_message, "\"%s\" will be deleted. This cannot be undone.", first);
+        else snprintf(dlg_message, sizeof dlg_message, "%d items will be deleted. This cannot be undone.", uris.n);
+    } else {
+        snprintf(dlg_title, sizeof dlg_title, "Move to the trash?");
+        if (uris.n == 1) snprintf(dlg_message, sizeof dlg_message, "\"%s\" goes to the trash.", first);
+        else snprintf(dlg_message, sizeof dlg_message, "%d items go to the trash.", uris.n);
+    }
+    free(first);
+    fr_strs_free(&dlg_uris);
+    dlg_uris = uris;
+}
+
+void ops_rename_start(void)
+{
+    fr_strs uris = targets();
+    if (uris.n != 1) {
+        fr_strs_free(&uris);
+        return;
+    }
+    fr_entry e = {0};
+    int is_dir = !fr_vfs_stat(uris.v[0], &e) && e.is_dir;
+    fr_entry_free(&e);
+    char *name = fr_uri_name(uris.v[0]);
+    text_set(&field, name);
+    text_select(&field, 0, (int)fr_stem_len(name, is_dir));
+    free(name);
+    free(dlg_uri);
+    dlg_uri = fr_strdup(uris.v[0]);
+    fr_strs_free(&uris);
+    dlg = DLG_RENAME;
+}
+
+void ops_new_folder_start(void)
+{
+    char *uri = fr_uri_free_name(br.uri, "New folder", 1), *name = fr_uri_name(uri);
+    text_set(&field, name);
+    text_select(&field, 0, field.len);
+    free(uri), free(name);
+    dlg = DLG_NEW_FOLDER;
+}
+
+static void describe_mode(uint32_t mode, char out[10])
+{
+    const char *rwx = "rwxrwxrwx";
+    for (int i = 0; i < 9; i++) out[i] = mode & (1u << (8 - i)) ? rwx[i] : '-';
+    out[9] = 0;
+}
+
+void ops_properties(void)
+{
+    fr_strs uris = targets();
+    if (!uris.n) return;
+    char *out = dlg_message;
+    size_t room = sizeof dlg_message;
+    if (uris.n == 1) {
+        fr_entry e = {0};
+        if (!fr_vfs_stat(uris.v[0], &e)) {
+            char size[32] = "", date[64], mode[10];
+            time_t t = (time_t)e.mtime;
+            struct tm tm;
+            localtime_r(&t, &tm);
+            strftime(date, sizeof date, "%Y-%m-%d %H:%M", &tm);
+            describe_mode(e.mode, mode);
+            fr_kind k = kind_of(e.name, e.is_dir);
+            snprintf(dlg_title, sizeof dlg_title, "%s", e.name);
+            const char *path = fr_uri_local(uris.v[0]);
+            if (e.is_dir) {
+                fr_entries kids = {0};
+                int rc = fr_vfs_list(uris.v[0], &kids);
+                if (!rc) snprintf(size, sizeof size, "%d items", kids.n);
+                fr_entries_free(&kids);
+            } else {
+                fr_format_size(e.size, size, sizeof size);
+                char exact[48];
+                snprintf(exact, sizeof exact, " (%llu bytes)", (unsigned long long)e.size);
+                strncat(size, exact, sizeof size - strlen(size) - 1);
+            }
+            snprintf(out, room, "Kind: %s%s\n%s%s%sModified: %s\nPermissions: %s\nLocation: %s", kind_label(k),
+                         e.is_link ? " (link)" : "", *size ? (e.is_dir ? "Contains: " : "Size: ") : "", size,
+                         *size ? "\n" : "", date, mode, path ? path : uris.v[0]);
+        }
+        fr_entry_free(&e);
+    } else {
+        uint64_t total = 0;
+        int dirs = 0;
+        for (int i = 0; i < uris.n; i++) {
+            fr_entry e = {0};
+            if (!fr_vfs_stat(uris.v[i], &e)) total += e.size, dirs += e.is_dir;
+            fr_entry_free(&e);
+        }
+        char size[32];
+        fr_format_size(total, size, sizeof size);
+        snprintf(dlg_title, sizeof dlg_title, "%d items", uris.n);
+        snprintf(out, room, "%d folders, %d files\nFiles' size: %s", dirs, uris.n - dirs, size);
+    }
+    fr_strs_free(&uris);
+    dlg = DLG_PROPERTIES;
+}
+
+static void rename_commit(void)
+{
+    char *old = fr_uri_name(dlg_uri);
+    if (!strcmp(old, field.buf)) {
+        free(old);
+        dlg_close();
+        return;
+    }
+    free(old);
+    if (!fr_name_valid(field.buf)) {
+        ui_toast("A name cannot be empty, \".\", \"..\" or contain \"/\"");
+        return;
+    }
+    char *parent = fr_uri_parent(dlg_uri), *to = fr_uri_join(parent, field.buf);
+    int rc = fr_vfs_rename(dlg_uri, to);
+    if (rc == -EEXIST) ui_toast("\"%s\" already exists here", field.buf);
+    else if (rc) ui_toast("Could not rename: %s", fr_vfs_error(rc));
+    else {
+        free(br.focus_name);
+        br.focus_name = fr_strdup(field.buf);
+        browser_reload();
+        free(br.focus_name);
+        br.focus_name = NULL;
+        dlg_close();
+    }
+    free(parent), free(to);
+}
+
+static void new_folder_commit(void)
+{
+    if (!fr_name_valid(field.buf)) {
+        ui_toast("A name cannot be empty, \".\", \"..\" or contain \"/\"");
+        return;
+    }
+    char *uri = fr_uri_join(br.uri, field.buf);
+    int rc = fr_vfs_mkdir(uri);
+    if (rc == -EEXIST) ui_toast("\"%s\" already exists here", field.buf);
+    else if (rc) ui_toast("Could not make the folder: %s", fr_vfs_error(rc));
+    else {
+        br.focus_name = fr_strdup(field.buf);
+        browser_reload();
+        free(br.focus_name);
+        br.focus_name = NULL;
+        dlg_close();
+    }
+    free(uri);
+}
+
+/* ---- jobs ---- */
+
+static int conflict_for_all;
+
+void ops_poll_jobs(void)
+{
+    static int seen_finished;
+    int f = fr_jobs_finished();
+    if (f == seen_finished) return;
+    seen_finished = f;
+    browser_reload();
+    fr_job_status st[16];
+    int n = fr_jobs_list(st, 16);
+    for (int i = 0; i < n; i++) {
+        if (st[i].state != JOB_DONE && st[i].state != JOB_CANCELLED) continue;
+        static const char *done[] = {"Copied", "Moved", "Deleted", "Moved to the trash"};
+        if (st[i].state == JOB_CANCELLED) ui_toast("Cancelled");
+        else if (st[i].failed) {
+            dlg = DLG_ERROR;
+            snprintf(dlg_title, sizeof dlg_title, "%d %s could not be done", st[i].failed, st[i].failed == 1 ? "item" : "items");
+            snprintf(dlg_message, sizeof dlg_message, "%s", st[i].error);
+        } else
+            ui_toast("%s %d %s", done[st[i].kind], st[i].items, st[i].items == 1 ? "item" : "items");
+        fr_job_dismiss(st[i].id);
+    }
+}
+
+float ops_draw_jobs(Rectangle area)
+{
+    fr_job_status st[16];
+    int n = fr_jobs_list(st, 16), active = -1, queued = 0;
+    for (int i = 0; i < n; i++) {
+        if (st[i].state == JOB_RUNNING || st[i].state == JOB_ASKING) active = i;
+        if (st[i].state == JOB_QUEUED) queued++;
+    }
+    if (active < 0) return 0;
+    fr_job_status *j = &st[active];
+
+    if (j->state == JOB_ASKING) {
+        char title[300], msg[400];
+        snprintf(title, sizeof title, "\"%s\" already exists", j->conflict);
+        snprintf(msg, sizeof msg, j->conflict_dir ? "Replacing merges the two folders: files with the same name are overwritten."
+                                                  : "Replacing overwrites the file in %s.", j->dest_name);
+        fr_dialog d = {.title = title, .message = msg, .check = "Do this for all conflicts", .checked = &conflict_for_all,
+                       .buttons = {"Skip", "Keep both", "Replace"}, .nbuttons = 3, .cancel = 0};
+        int b = ui_dialog(&d);
+        if (b >= 0) {
+            static const fr_conflict answers[] = {CONFLICT_SKIP, CONFLICT_KEEP_BOTH, CONFLICT_REPLACE};
+            fr_job_answer(j->id, answers[b], conflict_for_all);
+            conflict_for_all = 0;
+        }
+    }
+
+    float h = DP(ui.touch ? 64 : 52), pad = DP(16);
+    Rectangle r = {area.x, area.y + area.height - h, area.width, h};
+    ui_rect(r, theme.surface);
+    ui_hline(r.x, r.y, r.width, theme.border);
+    static const char *verbs[] = {"Copying", "Moving", "Deleting", "Moving to the trash"};
+    char line[640];
+    const char *what = j->items == 1 && j->current[0] ? j->current : NULL;
+    if (j->kind <= JOB_MOVE) {
+        if (what) snprintf(line, sizeof line, "%s %s to %s", verbs[j->kind], what, j->dest_name);
+        else snprintf(line, sizeof line, "%s %d items to %s", verbs[j->kind], j->items, j->dest_name);
+    } else if (what) snprintf(line, sizeof line, "%s %s", verbs[j->kind], what);
+    else snprintf(line, sizeof line, "%s %d items", verbs[j->kind], j->items);
+    if (queued) {
+        size_t l = strlen(line);
+        snprintf(line + l, sizeof line - l, " (+%d waiting)", queued);
+    }
+    float frac = j->bytes_total ? (float)((double)j->bytes_done / (double)j->bytes_total)
+                 : j->files_total ? (float)j->files_done / (float)j->files_total
+                                  : 0;
+    char pct[16];
+    snprintf(pct, sizeof pct, "%d%%", (int)(frac * 100));
+    float btn = DP(40), pw = ui_text_width(pct, 13, FONT_REGULAR);
+    Rectangle text = {r.x + pad, r.y + DP(8), r.width - 2 * pad - btn - DP(8), h / 2 - DP(4)};
+    ui_text_box(line, text, 14, FONT_REGULAR, theme.text, ALIGN_LEFT, 1);
+    Rectangle bar = {r.x + pad, r.y + h * 0.66f, text.width - pw - DP(12), DP(4)};
+    ui_progress(bar, frac, theme.accent);
+    ui_text_box(pct, (Rectangle){bar.x + bar.width + DP(12), bar.y - DP(8), pw, DP(20)}, 13, FONT_REGULAR, theme.text_dim, ALIGN_RIGHT, 0);
+    if (ui_icon_button(ui_id("job-cancel", j->id), (Rectangle){r.x + r.width - pad - btn, r.y + (h - btn) / 2, btn, btn}, "x", theme.text_dim))
+        fr_job_cancel(j->id);
+    return h;
+}
+
+/* ---- dialogs ---- */
+
+void ops_draw_dialogs(void)
+{
+    if (dlg == DLG_NONE) return;
+    int b;
+    switch (dlg) {
+    case DLG_RENAME: {
+        fr_dialog d = {.title = "Rename", .field = &field, .buttons = {"Cancel", "Rename"}, .nbuttons = 2, .cancel = 0};
+        b = ui_dialog(&d);
+        if (b == 1) rename_commit();
+        else if (b == 0) dlg_close();
+        break;
+    }
+    case DLG_NEW_FOLDER: {
+        fr_dialog d = {.title = "New folder", .field = &field, .buttons = {"Cancel", "Make"}, .nbuttons = 2, .cancel = 0};
+        b = ui_dialog(&d);
+        if (b == 1) new_folder_commit();
+        else if (b == 0) dlg_close();
+        break;
+    }
+    case DLG_DELETE: {
+        fr_dialog d = {.title = dlg_title, .message = dlg_message, .nbuttons = 2, .cancel = 0, .danger = dlg_permanent};
+        d.buttons[0] = "Cancel";
+        d.buttons[1] = dlg_permanent ? "Delete" : "Move to trash";
+        b = ui_dialog(&d);
+        if (b == 1) {
+            fr_job_submit(dlg_permanent ? JOB_DELETE : JOB_TRASH, &dlg_uris, NULL);
+            browser_clear_selection();
+            dlg_close();
+        } else if (b == 0) dlg_close();
+        break;
+    }
+    case DLG_PROPERTIES:
+    case DLG_ERROR: {
+        fr_dialog d = {.title = dlg_title, .message = dlg_message, .buttons = {"Close"}, .nbuttons = 1, .cancel = 0};
+        if (ui_dialog(&d) >= 0) dlg_close();
+        break;
+    }
+    default: break;
+    }
+}

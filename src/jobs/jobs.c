@@ -1,0 +1,530 @@
+#include "jobs.h"
+#include "vfs/vfs.h"
+#include <errno.h>
+#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+typedef struct {
+    fr_job_status st;
+    fr_strs sources;
+    char *dest;
+    int cancel;
+    fr_conflict policy; /* an answer given "for all" */
+    fr_conflict answer;
+    int answered;
+} job;
+
+static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t work_cond = PTHREAD_COND_INITIALIZER, idle_cond = PTHREAD_COND_INITIALIZER;
+static struct {
+    job **v;
+    int n, cap;
+} jobs;
+static pthread_t worker;
+static int started, stopping, next_id = 1, finished;
+static void (*wake_fn)(void);
+static double last_wake;
+
+static void wake_locked(int force)
+{
+    double now = fr_now();
+    if (wake_fn && (force || now - last_wake > 1.0 / 15)) {
+        last_wake = now;
+        wake_fn();
+    }
+}
+
+static int cancelled(job *j) { return __atomic_load_n(&j->cancel, __ATOMIC_RELAXED); }
+
+static void set_current(job *j, const char *uri)
+{
+    char *name = fr_uri_name(uri);
+    pthread_mutex_lock(&lock);
+    snprintf(j->st.current, sizeof j->st.current, "%s", name);
+    wake_locked(0);
+    pthread_mutex_unlock(&lock);
+    free(name);
+}
+
+static void fail(job *j, const char *uri, int err, const char *why)
+{
+    char *name = fr_uri_name(uri);
+    pthread_mutex_lock(&lock);
+    j->st.failed++;
+    if (!j->st.error[0]) snprintf(j->st.error, sizeof j->st.error, "%s: %s", name, why ? why : fr_vfs_error(err));
+    wake_locked(1);
+    pthread_mutex_unlock(&lock);
+    free(name);
+}
+
+static void add_progress(job *j, uint64_t bytes, int files)
+{
+    pthread_mutex_lock(&lock);
+    j->st.bytes_done += bytes;
+    j->st.files_done += files;
+    wake_locked(0);
+    pthread_mutex_unlock(&lock);
+}
+
+/* ---- walking trees ---- */
+
+static void scan(job *j, const char *uri, const fr_entry *e, uint64_t *bytes, int *files)
+{
+    (*files)++;
+    if (e->is_link || !e->is_dir) {
+        *bytes += e->size;
+        return;
+    }
+    fr_entries kids = {0};
+    if (!fr_vfs_list(uri, &kids))
+        for (int i = 0; i < kids.n && !cancelled(j); i++) {
+            char *child = fr_uri_join(uri, kids.v[i].name);
+            scan(j, child, &kids.v[i], bytes, files);
+            free(child);
+        }
+    fr_entries_free(&kids);
+}
+
+/* deletes uri and everything under it; 0 or the first error */
+static int remove_tree(job *j, const char *uri, int count)
+{
+    fr_entry e = {0};
+    int rc = fr_vfs_stat(uri, &e);
+    if (rc) return rc;
+    if (e.is_dir && !e.is_link) {
+        fr_entries kids = {0};
+        rc = fr_vfs_list(uri, &kids);
+        for (int i = 0; !rc && i < kids.n; i++) {
+            if (j && cancelled(j)) rc = -ECANCELED;
+            else {
+                char *child = fr_uri_join(uri, kids.v[i].name);
+                rc = remove_tree(j, child, count);
+                free(child);
+            }
+        }
+        fr_entries_free(&kids);
+    }
+    if (!rc) rc = fr_vfs_remove(uri);
+    if (!rc && j && count) add_progress(j, 0, 1);
+    fr_entry_free(&e);
+    return rc;
+}
+
+static int copy_file(job *j, const char *src, const fr_entry *e, const char *dst, int replace)
+{
+    int err = 0;
+    fr_stream *in = fr_vfs_open_read(src, &err);
+    if (!in) return err;
+    fr_stream *out = fr_vfs_open_write(dst, !replace, &err);
+    if (!out) {
+        in->close(in);
+        return err;
+    }
+    static char buf[256 * 1024];
+    int rc = 0;
+    for (;;) {
+        if (cancelled(j)) {
+            rc = -ECANCELED;
+            break;
+        }
+        long n = in->read(in, buf, sizeof buf);
+        if (n < 0) rc = (int)n;
+        if (n <= 0) break;
+        long w = out->write(out, buf, (size_t)n);
+        if (w < 0) {
+            rc = (int)w;
+            break;
+        }
+        add_progress(j, (uint64_t)n, 0);
+    }
+    in->close(in);
+    int closed = out->close(out);
+    if (!rc) rc = closed;
+    if (rc) fr_vfs_remove(dst);
+    else {
+        const fr_backend *b = fr_vfs_backend(dst);
+        if (b->set_mtime) b->set_mtime(dst, e->mtime);
+    }
+    return rc;
+}
+
+/* copies src (described by e) to dst; replace: what is at dst gives way, folders merge */
+static int copy_tree(job *j, const char *src, const fr_entry *e, const char *dst, int replace)
+{
+    if (cancelled(j)) return -ECANCELED;
+    set_current(j, src);
+    fr_entry there = {0};
+    int exists = !fr_vfs_stat(dst, &there), there_dir = exists && there.is_dir && !there.is_link;
+    fr_entry_free(&there);
+    int rc = 0;
+    if (exists && replace && !(e->is_dir && !e->is_link && there_dir)) {
+        rc = remove_tree(NULL, dst, 0);
+        if (rc) return fail(j, dst, rc, NULL), rc;
+        exists = 0;
+    }
+    const fr_backend *b = fr_vfs_backend(src);
+    if (e->is_link && b->copy_link && fr_uri_same_backend(src, dst)) {
+        rc = b->copy_link(src, dst);
+        if (rc) fail(j, src, rc, NULL);
+        else add_progress(j, e->size, 1);
+        return rc;
+    }
+    if (!e->is_dir) {
+        rc = copy_file(j, src, e, dst, replace);
+        if (rc && rc != -ECANCELED) fail(j, src, rc, NULL);
+        if (!rc) add_progress(j, 0, 1);
+        return rc;
+    }
+    if (!exists && (rc = fr_vfs_mkdir(dst))) return fail(j, dst, rc, NULL), rc;
+    add_progress(j, 0, 1);
+    fr_entries kids = {0};
+    if ((rc = fr_vfs_list(src, &kids))) fail(j, src, rc, NULL);
+    int first = 0;
+    for (int i = 0; i < kids.n; i++) {
+        char *from = fr_uri_join(src, kids.v[i].name), *to = fr_uri_join(dst, kids.v[i].name);
+        int r = copy_tree(j, from, &kids.v[i], to, replace);
+        free(from), free(to);
+        if (r && !first) first = r;
+        if (r == -ECANCELED) break;
+    }
+    fr_entries_free(&kids);
+    return rc ? rc : first;
+}
+
+/* moves src's contents into the folder dst, replacing what is there; src is removed when all of it moved */
+static int merge_move(job *j, const char *src, const char *dst)
+{
+    fr_entries kids = {0};
+    int rc = fr_vfs_list(src, &kids), first = 0;
+    if (rc) return fail(j, src, rc, NULL), rc;
+    for (int i = 0; i < kids.n && !cancelled(j); i++) {
+        char *from = fr_uri_join(src, kids.v[i].name), *to = fr_uri_join(dst, kids.v[i].name);
+        fr_entry there = {0};
+        int exists = !fr_vfs_stat(to, &there), r = 0;
+        if (exists && there.is_dir && !there.is_link && kids.v[i].is_dir && !kids.v[i].is_link) r = merge_move(j, from, to);
+        else {
+            if (exists) r = remove_tree(NULL, to, 0);
+            if (!r) r = fr_vfs_rename(from, to);
+            if (r) fail(j, from, r, NULL);
+        }
+        fr_entry_free(&there);
+        free(from), free(to);
+        if (r && !first) first = r;
+    }
+    fr_entries_free(&kids);
+    if (cancelled(j)) return -ECANCELED;
+    if (!first && (rc = fr_vfs_remove(src))) fail(j, src, rc, NULL), first = rc;
+    return first;
+}
+
+/* ---- conflicts ---- */
+
+static fr_conflict ask(job *j, const char *dst, int both_dirs)
+{
+    pthread_mutex_lock(&lock);
+    if (j->policy != CONFLICT_ASK) {
+        fr_conflict p = j->policy;
+        pthread_mutex_unlock(&lock);
+        return p;
+    }
+    char *name = fr_uri_name(dst);
+    snprintf(j->st.conflict, sizeof j->st.conflict, "%s", name);
+    free(name);
+    j->st.conflict_dir = both_dirs;
+    j->st.state = JOB_ASKING;
+    j->answered = 0;
+    wake_locked(1);
+    while (!j->answered && !j->cancel) pthread_cond_wait(&work_cond, &lock);
+    fr_conflict a = j->cancel ? CONFLICT_SKIP : j->answer;
+    j->st.state = JOB_RUNNING;
+    pthread_mutex_unlock(&lock);
+    return a;
+}
+
+/* Where src goes in the destination: NULL to skip it. *replace is set when what is there gives way. */
+static char *destination(job *j, const char *src, const fr_entry *e, int *replace)
+{
+    *replace = 0;
+    char *dst = fr_uri_join(j->dest, e->name);
+    if (!strcmp(dst, src)) {
+        if (j->st.kind == JOB_MOVE) return free(dst), NULL;
+        free(dst);
+        return fr_uri_free_name(j->dest, e->name, e->is_dir);
+    }
+    if (e->is_dir && !e->is_link && fr_uri_within(src, j->dest)) {
+        fail(j, src, 0, j->st.kind == JOB_MOVE ? "a folder cannot be moved into itself"
+                                               : "a folder cannot be copied into itself");
+        return free(dst), NULL;
+    }
+    fr_entry there = {0};
+    if (fr_vfs_stat(dst, &there)) return dst;
+    int both_dirs = there.is_dir && !there.is_link && e->is_dir && !e->is_link;
+    fr_entry_free(&there);
+    switch (ask(j, dst, both_dirs)) {
+    case CONFLICT_REPLACE: *replace = 1; return dst;
+    case CONFLICT_KEEP_BOTH: free(dst); return fr_uri_free_name(j->dest, e->name, e->is_dir);
+    default: free(dst); return NULL;
+    }
+}
+
+/* ---- the job kinds ---- */
+
+static void run_copy(job *j)
+{
+    fr_entry *es = fr_realloc(NULL, sizeof *es * (size_t)j->sources.n);
+    uint64_t bytes = 0;
+    int files = 0;
+    for (int i = 0; i < j->sources.n; i++) {
+        es[i] = (fr_entry){0};
+        int rc = fr_vfs_stat(j->sources.v[i], &es[i]);
+        if (rc) fail(j, j->sources.v[i], rc, NULL);
+        else scan(j, j->sources.v[i], &es[i], &bytes, &files);
+    }
+    pthread_mutex_lock(&lock);
+    j->st.bytes_total = bytes, j->st.files_total = files;
+    pthread_mutex_unlock(&lock);
+    for (int i = 0; i < j->sources.n && !cancelled(j); i++) {
+        if (!es[i].name) continue;
+        int replace;
+        char *dst = destination(j, j->sources.v[i], &es[i], &replace);
+        if (dst) copy_tree(j, j->sources.v[i], &es[i], dst, replace);
+        free(dst);
+    }
+    for (int i = 0; i < j->sources.n; i++) fr_entry_free(&es[i]);
+    free(es);
+}
+
+static void run_move(job *j)
+{
+    pthread_mutex_lock(&lock);
+    j->st.files_total = j->sources.n;
+    pthread_mutex_unlock(&lock);
+    for (int i = 0; i < j->sources.n && !cancelled(j); i++) {
+        const char *src = j->sources.v[i];
+        fr_entry e = {0};
+        int rc = fr_vfs_stat(src, &e);
+        if (rc) {
+            fail(j, src, rc, NULL);
+            continue;
+        }
+        set_current(j, src);
+        int replace;
+        char *dst = destination(j, src, &e, &replace);
+        if (dst) {
+            fr_entry there = {0};
+            int merge = replace && !fr_vfs_stat(dst, &there) && there.is_dir && !there.is_link && e.is_dir && !e.is_link;
+            fr_entry_free(&there);
+            if (merge && fr_uri_same_backend(src, dst)) rc = merge_move(j, src, dst);
+            else {
+                rc = replace && !merge ? remove_tree(NULL, dst, 0) : 0;
+                if (!rc) rc = merge ? -EXDEV : fr_vfs_rename(src, dst);
+                /* another device: copy, then delete what was copied */
+                if (rc == -EXDEV || rc == -ENOTSUP || rc == -EPROTONOSUPPORT) {
+                    uint64_t bytes = 0;
+                    int files = 0;
+                    scan(j, src, &e, &bytes, &files);
+                    pthread_mutex_lock(&lock);
+                    j->st.bytes_total += bytes;
+                    pthread_mutex_unlock(&lock);
+                    rc = copy_tree(j, src, &e, dst, replace);
+                    if (!rc && (rc = remove_tree(j, src, 0))) fail(j, src, rc, NULL);
+                } else if (rc) fail(j, src, rc, NULL);
+            }
+            if (!rc) add_progress(j, 0, 1);
+        }
+        free(dst);
+        fr_entry_free(&e);
+    }
+}
+
+static void run_delete(job *j)
+{
+    int files = 0;
+    uint64_t bytes = 0;
+    for (int i = 0; i < j->sources.n && !cancelled(j); i++) {
+        fr_entry e = {0};
+        if (!fr_vfs_stat(j->sources.v[i], &e)) scan(j, j->sources.v[i], &e, &bytes, &files);
+        fr_entry_free(&e);
+    }
+    pthread_mutex_lock(&lock);
+    j->st.files_total = files;
+    pthread_mutex_unlock(&lock);
+    for (int i = 0; i < j->sources.n && !cancelled(j); i++) {
+        set_current(j, j->sources.v[i]);
+        int rc = remove_tree(j, j->sources.v[i], 1);
+        if (rc && rc != -ECANCELED) fail(j, j->sources.v[i], rc, NULL);
+    }
+}
+
+static void run_trash(job *j)
+{
+    pthread_mutex_lock(&lock);
+    j->st.files_total = j->sources.n;
+    pthread_mutex_unlock(&lock);
+    for (int i = 0; i < j->sources.n && !cancelled(j); i++) {
+        set_current(j, j->sources.v[i]);
+        int rc = fr_vfs_trash(j->sources.v[i]);
+        if (rc) fail(j, j->sources.v[i], rc, rc == -ENOTSUP ? "cannot be moved to the trash here" : NULL);
+        else add_progress(j, 0, 1);
+    }
+}
+
+static void *work(void *arg)
+{
+    (void)arg;
+    pthread_mutex_lock(&lock);
+    while (!stopping) {
+        job *j = NULL;
+        for (int i = 0; i < jobs.n && !j; i++)
+            if (jobs.v[i]->st.state == JOB_QUEUED) j = jobs.v[i];
+        if (!j) {
+            pthread_cond_broadcast(&idle_cond);
+            pthread_cond_wait(&work_cond, &lock);
+            continue;
+        }
+        j->st.state = JOB_RUNNING;
+        wake_locked(1);
+        pthread_mutex_unlock(&lock);
+        switch (j->st.kind) {
+        case JOB_COPY: run_copy(j); break;
+        case JOB_MOVE: run_move(j); break;
+        case JOB_DELETE: run_delete(j); break;
+        case JOB_TRASH: run_trash(j); break;
+        }
+        pthread_mutex_lock(&lock);
+        j->st.state = j->cancel ? JOB_CANCELLED : JOB_DONE;
+        j->st.current[0] = 0;
+        finished++;
+        wake_locked(1);
+    }
+    pthread_mutex_unlock(&lock);
+    return NULL;
+}
+
+void fr_jobs_start(void (*wake)(void))
+{
+    pthread_mutex_lock(&lock);
+    wake_fn = wake;
+    if (!started) started = !pthread_create(&worker, NULL, work, NULL);
+    pthread_mutex_unlock(&lock);
+}
+
+static void job_free(job *j)
+{
+    fr_strs_free(&j->sources);
+    free(j->dest);
+    free(j);
+}
+
+void fr_jobs_stop(void)
+{
+    pthread_mutex_lock(&lock);
+    stopping = 1;
+    for (int i = 0; i < jobs.n; i++) jobs.v[i]->cancel = 1;
+    pthread_cond_broadcast(&work_cond);
+    pthread_mutex_unlock(&lock);
+    if (started) pthread_join(worker, NULL);
+    for (int i = 0; i < jobs.n; i++) job_free(jobs.v[i]);
+    free(jobs.v);
+    jobs.v = NULL, jobs.n = jobs.cap = 0;
+    started = stopping = 0;
+}
+
+int fr_job_submit(fr_job_kind kind, const fr_strs *sources, const char *dest_dir)
+{
+    job *j = fr_realloc(NULL, sizeof *j);
+    *j = (job){0};
+    j->sources = fr_strs_copy(sources);
+    j->dest = fr_strdup(dest_dir ? dest_dir : "");
+    j->st.kind = kind;
+    j->st.items = sources->n;
+    if (dest_dir) {
+        char *name = fr_uri_name(dest_dir);
+        snprintf(j->st.dest_name, sizeof j->st.dest_name, "%s", *name ? name : "/");
+        free(name);
+    }
+    pthread_mutex_lock(&lock);
+    j->st.id = next_id++;
+    FR_PUSH(jobs, j);
+    pthread_cond_broadcast(&work_cond);
+    int id = j->st.id;
+    pthread_mutex_unlock(&lock);
+    return id;
+}
+
+int fr_jobs_list(fr_job_status *out, int max)
+{
+    pthread_mutex_lock(&lock);
+    int n = 0;
+    for (int i = 0; i < jobs.n && n < max; i++) out[n++] = jobs.v[i]->st;
+    pthread_mutex_unlock(&lock);
+    return n;
+}
+
+static job *find(int id)
+{
+    for (int i = 0; i < jobs.n; i++)
+        if (jobs.v[i]->st.id == id) return jobs.v[i];
+    return NULL;
+}
+
+void fr_job_answer(int id, fr_conflict answer, int for_all)
+{
+    pthread_mutex_lock(&lock);
+    job *j = find(id);
+    if (j) {
+        j->answer = answer, j->answered = 1;
+        if (for_all) j->policy = answer;
+        pthread_cond_broadcast(&work_cond);
+    }
+    pthread_mutex_unlock(&lock);
+}
+
+void fr_job_cancel(int id)
+{
+    pthread_mutex_lock(&lock);
+    job *j = find(id);
+    if (j) {
+        __atomic_store_n(&j->cancel, 1, __ATOMIC_RELAXED);
+        if (j->st.state == JOB_QUEUED) j->st.state = JOB_CANCELLED, finished++;
+        pthread_cond_broadcast(&work_cond);
+    }
+    pthread_mutex_unlock(&lock);
+}
+
+void fr_job_dismiss(int id)
+{
+    pthread_mutex_lock(&lock);
+    for (int i = 0; i < jobs.n; i++) {
+        job *j = jobs.v[i];
+        if (j->st.id != id || (j->st.state != JOB_DONE && j->st.state != JOB_CANCELLED)) continue;
+        job_free(j);
+        memmove(jobs.v + i, jobs.v + i + 1, sizeof *jobs.v * (size_t)(jobs.n - i - 1));
+        jobs.n--;
+        break;
+    }
+    pthread_mutex_unlock(&lock);
+}
+
+int fr_jobs_finished(void)
+{
+    pthread_mutex_lock(&lock);
+    int n = finished;
+    pthread_mutex_unlock(&lock);
+    return n;
+}
+
+void fr_jobs_wait_idle(void)
+{
+    pthread_mutex_lock(&lock);
+    for (;;) {
+        int busy = 0;
+        for (int i = 0; i < jobs.n; i++)
+            if (jobs.v[i]->st.state <= JOB_ASKING) busy = 1;
+        if (!busy) break;
+        pthread_cond_wait(&idle_cond, &lock);
+    }
+    pthread_mutex_unlock(&lock);
+}
