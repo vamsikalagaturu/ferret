@@ -296,7 +296,7 @@ static void command(int c)
     case K(0, 'p'): ops_paste(); break;
     case K(0, 'D'): ops_delete(0); break;
     case K(0, 'X'): ops_delete(1); break;
-    case K(0, 'a'): ops_new_folder_start(); break;
+    case K(0, 'a'): ops_new_start(); break;
     case K(0, 'r'): insert_start('i'); break;
     case K(0, 'i'):
     case K(0, 'A'):

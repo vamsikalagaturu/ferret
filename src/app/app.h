@@ -137,6 +137,7 @@ void ops_paste(void);
 void ops_delete(int permanently);
 void ops_rename_start(void);
 void ops_new_folder_start(void);
+void ops_new_start(void); /* a file, or a folder when the name ends in "/" */
 void ops_properties(void);
 void ops_draw_dialogs(void);
 int ops_dialog_open(void);

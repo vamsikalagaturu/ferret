@@ -36,6 +36,7 @@ static void draw_menus(void)
 {
     if (ui_menu_begin(app.menu_more)) {
         if (ui_menu_item("New folder", "folder-plus", -1)) ops_new_folder_start();
+        if (ui_menu_item("New file", "file-plus", -1)) ops_new_start();
         if (ui_menu_item("Select all", "check-check", -1)) browser_select_all();
         if (clip.uris.n && ui_menu_item("Paste", "clipboard-paste", -1)) ops_paste();
         if (br.uri) {
@@ -84,6 +85,7 @@ static void draw_menus(void)
     }
     if (ui_menu_begin(app.menu_bg)) {
         if (ui_menu_item("New folder", "folder-plus", -1)) ops_new_folder_start();
+        if (ui_menu_item("New file", "file-plus", -1)) ops_new_start();
         if (clip.uris.n && ui_menu_item("Paste", "clipboard-paste", -1)) ops_paste();
         if (ui_menu_item("Select all", "check-check", -1)) browser_select_all();
         if (br.uri) {
@@ -125,7 +127,8 @@ static const char *const shortcuts[][2] = {
     {"yy / dd / p", "copy / cut / paste"}, {"yp / yP", "copy the folder's / item's path"},
     {"r, i, F2", "rename here, before the extension"}, {"A", "rename here, at the end"},
     {"I", "rename here, at the start"},    {"c", "retype the name, keep the extension"},
-    {"Enter / Esc", "keep / drop the new name"},       {"a, Ctrl+Shift+N", "new folder"},
+    {"Enter / Esc", "keep / drop the new name"},       {"a", "new file, or folder when the name ends in /"},
+    {"Ctrl+Shift+N", "new folder"},
     {"D, Delete", "move to the trash"},    {"X, Shift+Delete", "delete permanently"},
     {"Alt+Enter", "properties"},           {".", "show hidden files"},
     {"sn ss sm se", "sort by name, size, date, extension"}, {"S", "reverse the order"},

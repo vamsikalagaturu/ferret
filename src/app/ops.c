@@ -111,10 +111,16 @@ void ops_rename_start(void)
 
 void ops_new_folder_start(void)
 {
-    char *uri = fr_uri_free_name(br.uri, "New folder", 1), *name = fr_uri_name(uri);
-    text_set(&field, name);
-    text_select(&field, 0, field.len);
-    free(uri), free(name);
+    char *uri = fr_uri_free_name(br.uri, "New folder", 1), *name = fr_uri_name(uri), *shown = fr_format("%s/", name);
+    text_set(&field, shown);
+    text_select(&field, 0, field.len - 1);
+    free(uri), free(name), free(shown);
+    dlg = DLG_NEW_FOLDER;
+}
+
+void ops_new_start(void)
+{
+    text_set(&field, "");
     dlg = DLG_NEW_FOLDER;
 }
 
@@ -204,17 +210,27 @@ static void rename_commit(void)
     free(parent), free(to);
 }
 
+/* a name ending in "/" makes a folder, any other an empty file */
 static void new_folder_commit(void)
 {
+    int folder = field.len && field.buf[field.len - 1] == '/';
+    if (folder) field.buf[--field.len] = 0;
     if (!fr_name_valid(field.buf)) {
-        ui_toast("A name cannot be empty, \".\", \"..\" or contain \"/\"");
+        ui_toast("A name cannot be empty, \".\", \"..\" or contain \"/\" (except one at the end, for a folder)");
+        if (folder) field.buf[field.len++] = '/', field.buf[field.len] = 0;
         return;
     }
     char *uri = fr_uri_join(br.uri, field.buf);
-    int rc = fr_vfs_mkdir(uri);
-    if (rc == -EEXIST) ui_toast("\"%s\" already exists here", field.buf);
-    else if (rc) ui_toast("Could not make the folder: %s", fr_vfs_error(rc));
+    int rc = 0;
+    if (folder) rc = fr_vfs_mkdir(uri);
     else {
+        fr_stream *s = fr_vfs_open_write(uri, 1, &rc);
+        if (s) rc = s->close(s);
+    }
+    if (rc == -EEXIST) ui_toast("\"%s\" already exists here", field.buf);
+    else if (rc) ui_toast("Could not make the %s: %s", folder ? "folder" : "file", fr_vfs_error(rc));
+    if (rc && folder) field.buf[field.len++] = '/', field.buf[field.len] = 0;
+    if (!rc) {
         br.focus_name = fr_strdup(field.buf);
         browser_reload();
         free(br.focus_name);
@@ -324,7 +340,8 @@ void ops_draw_dialogs(void)
         break;
     }
     case DLG_NEW_FOLDER: {
-        fr_dialog d = {.title = "New folder", .field = &field, .buttons = {"Cancel", "Make"}, .nbuttons = 2, .cancel = 0};
+        fr_dialog d = {.title = "New file or folder", .message = "End the name with / to make a folder.", .field = &field,
+                       .buttons = {"Cancel", "Make"}, .nbuttons = 2, .cancel = 0};
         b = ui_dialog(&d);
         if (b == 1) new_folder_commit();
         else if (b == 0) dlg_close();
