@@ -77,20 +77,24 @@ static void draw_menus(void)
             if (ui_menu_item(fav ? "Remove from favorites" : "Add to favorites", fav ? "star-off" : "star", -1)) favorite_toggle(br.uri);
         }
         ui_menu_separator();
-        ui_menu_heading("Sort by");
-        static const char *sorts[] = {"Name", "Size", "Modified", "Kind", "Extension"};
-        static const char *sort_icons[] = {"arrow-down-a-z", "ruler", "calendar", "shapes", "file-type"};
-        for (int i = 0; i < 5; i++)
-            if (ui_menu_item(sorts[i], sort_icons[i], br.sort == (fr_sort)i)) br.sort = (fr_sort)i, browser_rebuild_view();
-        if (ui_menu_item("Reverse order", "arrow-up-down", br.desc)) br.desc = !br.desc, browser_rebuild_view();
-        if (ui_menu_item("Show hidden", "eye", br.show_hidden)) br.show_hidden = !br.show_hidden, browser_rebuild_view();
+        if (ui_menu_heading("Sort by", "arrow-up-down", br.desc)) br.desc = !br.desc, browser_rebuild_view();
+        static const char *const sorts[] = {"Name", "Size", "Date", "Kind", "Type"};
+        static const char *const sort_icons[] = {"arrow-down-a-z", "ruler", "calendar", "shapes", "file-type"};
+        int s = ui_menu_segments(sorts, sort_icons, 5, (int)br.sort);
+        if (s >= 0) br.sort = (fr_sort)s, browser_rebuild_view();
+        ui_menu_heading("Layout", NULL, 0);
+        /* phones have no room for columns */
+        static const char *const layouts[] = {"Details", "Columns", "Grid"}, *const touch_layouts[] = {"Details", "Grid"};
+        static const char *const layout_icons[] = {"list", "columns-3", "layout-grid"}, *const touch_icons[] = {"list", "layout-grid"};
+        if (ui.touch) {
+            int l = ui_menu_segments(touch_layouts, touch_icons, 2, app.layout == LAYOUT_GRID ? 1 : 0);
+            if (l >= 0) view_set_layout(l ? LAYOUT_GRID : LAYOUT_DETAILS);
+        } else {
+            int l = ui_menu_segments(layouts, layout_icons, 3, (int)app.layout);
+            if (l >= 0) view_set_layout((fr_layout)l);
+        }
         ui_menu_separator();
-        ui_menu_heading("Layout");
-        static const char *layouts[] = {"Details", "Columns", "Grid"};
-        static const char *layout_icons[] = {"list", "columns-3", "layout-grid"};
-        for (int i = 0; i < 3; i++)
-            if (!(ui.touch && i == LAYOUT_COLUMNS) && ui_menu_item(layouts[i], layout_icons[i], app.layout == (fr_layout)i))
-                view_set_layout((fr_layout)i);
+        if (ui_menu_item("Show hidden", "eye", br.show_hidden)) br.show_hidden = !br.show_hidden, browser_rebuild_view();
         ui_menu_separator();
         char pct[16];
         snprintf(pct, sizeof pct, "%d%%", (int)lroundf(ui.user_scale * 100));

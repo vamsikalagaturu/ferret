@@ -132,7 +132,10 @@ int ui_menu_item(const char *label, const char *icon, int checked); /* checked: 
 /* "label   -  value  +" on one row; the menu stays open. -1 / 1 for - / +, 2 for a tap on the value, else 0 */
 int ui_menu_stepper(const char *label, const char *icon, const char *value);
 void ui_menu_separator(void);
-void ui_menu_heading(const char *label); /* a small title over the items after it */
+/* a small title over the items after it, with an optional toggle button at its right: 1 when that was pressed */
+int ui_menu_heading(const char *label, const char *toggle_icon, int toggled);
+/* one row of n choices, icon over label, `selected` lit; the index picked, else -1; the menu stays open */
+int ui_menu_segments(const char *const *labels, const char *const *icons, int n, int selected);
 void ui_menu_end(void);
 int ui_menu_is_open(void);
 void ui_menu_close(void);

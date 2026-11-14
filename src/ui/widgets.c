@@ -254,6 +254,8 @@ typedef struct {
     const char *icon;
     int checked, separator; /* separator 2: a heading over the items after it */
     char value[16];         /* a stepper row: "label   -  value  +" */
+    const char *const *seg_labels, *const *seg_icons; /* a row of segments, one picked */
+    int seg_n, seg_sel;
 } menu_item;
 
 static struct {
@@ -327,11 +329,28 @@ void ui_menu_separator(void)
     if (menu.n < 32) menu.items[menu.n++] = (menu_item){.separator = 1};
 }
 
-void ui_menu_heading(const char *label)
+int ui_menu_heading(const char *label, const char *toggle_icon, int toggled)
 {
-    if (menu.n >= 32) return;
-    menu.items[menu.n] = (menu_item){.separator = 2};
-    snprintf(menu.items[menu.n++].label, sizeof menu.items[0].label, "%s", label);
+    if (menu.n >= 32) return 0;
+    menu_item *it = &menu.items[menu.n++];
+    *it = (menu_item){.separator = 2, .icon = toggle_icon, .checked = toggled};
+    snprintf(it->label, sizeof it->label, "%s", label);
+    if (menu.step == 3 && !strcmp(menu.step_label, label)) return menu.step = 0, 1;
+    return 0;
+}
+
+int ui_menu_segments(const char *const *labels, const char *const *icons, int n, int selected)
+{
+    if (menu.n >= 32 || n <= 0) return -1;
+    menu_item *it = &menu.items[menu.n++];
+    *it = (menu_item){.checked = -1, .seg_labels = labels, .seg_icons = icons, .seg_n = n, .seg_sel = selected};
+    snprintf(it->label, sizeof it->label, "%s", labels[0]);
+    if (menu.step >= 10 && !strcmp(menu.step_label, it->label)) {
+        int k = menu.step - 10;
+        menu.step = 0;
+        return k;
+    }
+    return -1;
 }
 
 void ui_menu_end(void)
@@ -341,7 +360,8 @@ void ui_menu_end(void)
         ui.layer = menu.prev_layer;
         return;
     }
-    float ih = DP(ui.touch ? 48 : 34), sh = DP(9), hh = ui_line_height(12) + DP(10), pad = DP(6), w = DP(200);
+    float ih = DP(ui.touch ? 48 : 34), sh = DP(9), hh = fmaxf(ui_line_height(12) + DP(10), DP(30)), pad = DP(6), w = DP(200);
+    float sgh = DP(24) + ui_line_height(11) + DP(14);
     int any_icon = 0, any_check = 0;
     for (int i = 0; i < menu.n; i++) {
         if (menu.items[i].separator) continue;
@@ -351,7 +371,10 @@ void ui_menu_end(void)
     float lead = DP(16) + (any_icon ? DP(32) : 0), trail = DP(16) + (any_check ? DP(28) : 0), h = 2 * pad;
     for (int i = 0; i < menu.n; i++) {
         if (menu.items[i].separator) h += menu.items[i].separator == 2 ? hh : sh;
-        else {
+        else if (menu.items[i].seg_n) {
+            h += sgh;
+            w = fmaxf(w, DP(16) + menu.items[i].seg_n * DP(64));
+        } else {
             h += ih;
             w = fmaxf(w, lead + ui_text_width(menu.items[i].label, 15, FONT_REGULAR) + (menu.items[i].value[0] ? DP(148) : trail));
         }
@@ -379,7 +402,39 @@ void ui_menu_end(void)
         menu_item *it = &menu.items[i];
         if (it->separator == 2) {
             ui_text_box(it->label, (Rectangle){x + DP(16), iy + DP(4), w - DP(32), hh - DP(4)}, 12, FONT_SEMIBOLD, theme.text_faint, ALIGN_LEFT, 0);
+            if (it->icon) {
+                Rectangle b = {x + w - DP(8) - DP(28), iy + (hh - DP(26)) / 2 + DP(2), DP(28), DP(26)};
+                int bs;
+                if (ui_clickable(ui_id(it->label, 3), GetCollisionRec(b, menu.rect), &bs)) {
+                    menu.step = 3;
+                    snprintf(menu.step_label, sizeof menu.step_label, "%s", it->label);
+                    ui.dirty = 1;
+                }
+                if (it->checked == 1) ui_round(b, 6, theme.selection);
+                else if (bs) ui_round(b, 6, bs == 2 ? theme.pressed : theme.hover);
+                ui_icon(it->icon, b, 16, it->checked == 1 ? theme.accent : theme.text_dim);
+            }
             iy += hh;
+            continue;
+        }
+        if (it->seg_n) {
+            float sx = x + DP(8), sw = (w - DP(16)) / (float)it->seg_n;
+            for (int k = 0; k < it->seg_n; k++) {
+                Rectangle b = {sx + k * sw + DP(2), iy + DP(2), sw - DP(4), sgh - DP(6)};
+                int bs, on = k == it->seg_sel;
+                if (ui_clickable(ui_id(it->label, 100 + k), GetCollisionRec(b, menu.rect), &bs)) {
+                    menu.step = 10 + k;
+                    snprintf(menu.step_label, sizeof menu.step_label, "%s", it->label);
+                    ui.dirty = 1;
+                }
+                if (on) ui_round(b, 8, theme.selection);
+                else if (bs) ui_round(b, 8, bs == 2 ? theme.pressed : theme.hover);
+                Color c = on ? theme.accent : theme.text_dim;
+                ui_icon(it->seg_icons[k], (Rectangle){b.x, b.y + DP(6), b.width, DP(22)}, 18, c);
+                ui_text_box(it->seg_labels[k], (Rectangle){b.x + DP(2), b.y + DP(30), b.width - DP(4), ui_line_height(11)}, 11,
+                            on ? FONT_SEMIBOLD : FONT_REGULAR, on ? theme.text : theme.text_dim, ALIGN_CENTER, 0);
+            }
+            iy += sgh;
             continue;
         }
         if (it->separator) {
@@ -440,7 +495,7 @@ void ui_menu_end(void)
             int j = menu.hot >= 0 ? menu.hot : step > 0 ? -1 : menu.n;
             for (int tries = 0; tries < menu.n; tries++) {
                 j = (j + step + menu.n) % menu.n;
-                if (!menu.items[j].separator) break;
+                if (!menu.items[j].separator && !menu.items[j].seg_n && !menu.items[j].value[0]) break;
             }
             menu.hot = j, ui.keys[i].used = 1, ui.dirty = 1;
         } else if ((k == KEY_ENTER || k == KEY_KP_ENTER) && menu.hot >= 0) menu_click(menu.hot), ui.keys[i].used = 1;
