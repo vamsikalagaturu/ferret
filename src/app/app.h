@@ -62,6 +62,7 @@ void browser_select_all(void);
 void browser_clear_selection(void);
 void browser_set_selected(int item, int on);
 fr_strs browser_selected_uris(void);
+fr_strs browser_target_uris(void); /* the selection if the focused row is in it, else the focused row */
 fr_item *browser_item(int view_index);
 void browser_count_some(int first, int last); /* folder item counts for the rows shown */
 void browser_add_placeholder(void);           /* an empty row at the top, under the cursor */

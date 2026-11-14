@@ -41,11 +41,7 @@ void ops_open_item(fr_item *it)
 void ops_copy(int cut)
 {
     fr_strs_free(&clip.uris);
-    clip.uris = browser_selected_uris();
-    if (!clip.uris.n) {
-        fr_item *it = browser_item(br.cursor);
-        if (it && !ui.touch) FR_PUSH(clip.uris, fr_uri_join(br.uri, it->e.name));
-    }
+    clip.uris = browser_target_uris();
     clip.cut = cut;
     if (!clip.uris.n) return;
     browser_flash_targets();
@@ -60,15 +56,7 @@ void ops_paste(void)
     if (clip.cut) fr_strs_free(&clip.uris);
 }
 
-static fr_strs targets(void)
-{
-    fr_strs uris = browser_selected_uris();
-    if (!uris.n) {
-        fr_item *it = browser_item(br.cursor);
-        if (it && !ui.touch) FR_PUSH(uris, fr_uri_join(br.uri, it->e.name));
-    }
-    return uris;
-}
+static fr_strs targets(void) { return browser_target_uris(); }
 
 void ops_delete(int permanently)
 {

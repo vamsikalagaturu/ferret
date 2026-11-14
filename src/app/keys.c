@@ -264,9 +264,7 @@ static void copy_path(int here)
         app.path_flash_at = ui.now;
     } else {
         browser_flash_targets();
-        uris = browser_selected_uris();
-        fr_item *it = browser_item(br.cursor);
-        if (!uris.n && it) FR_PUSH(uris, fr_uri_join(br.uri, it->e.name));
+        uris = browser_target_uris();
     }
     size_t len = 1;
     for (int i = 0; i < uris.n; i++) len += strlen(uris.v[i]) + 1;

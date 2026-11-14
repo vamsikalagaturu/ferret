@@ -170,13 +170,28 @@ void browser_up(void)
     free(parent);
 }
 
+/* What a command acts on: the selection when the focused row is in it (or on touch, where nothing is focused),
+ * else the focused row alone, as vim's yy takes the line the cursor is on. */
+static int use_selection(void)
+{
+    fr_item *it = browser_item(br.cursor);
+    return ui.touch || !it || it->selected;
+}
+
+fr_strs browser_target_uris(void)
+{
+    if (use_selection()) return browser_selected_uris();
+    fr_strs r = {0};
+    FR_PUSH(r, fr_uri_join(br.uri, browser_item(br.cursor)->e.name));
+    return r;
+}
+
 void browser_flash_targets(void)
 {
-    int any = 0;
-    for (int v = 0; v < br.view.n; v++)
-        if (br.items.v[br.view.v[v]].selected) br.items.v[br.view.v[v]].flash_at = ui.now, any = 1;
-    fr_item *it = browser_item(br.cursor);
-    if (!any && it) it->flash_at = ui.now;
+    if (use_selection()) {
+        for (int v = 0; v < br.view.n; v++)
+            if (br.items.v[br.view.v[v]].selected) br.items.v[br.view.v[v]].flash_at = ui.now;
+    } else browser_item(br.cursor)->flash_at = ui.now;
     ui.dirty = 1;
 }
 
@@ -200,6 +215,8 @@ void browser_drop_placeholder(void)
         fr_entry_free(&br.items.v[i].e);
         memmove(br.items.v + i, br.items.v + i + 1, sizeof *br.items.v * (size_t)(br.items.n - i - 1));
         br.items.n--;
+        br.view.n = 0;
+        br.cursor = -1;
         browser_rebuild_view();
         return;
     }
