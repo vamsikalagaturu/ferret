@@ -112,27 +112,7 @@ void app_zoom(int dir)
     ui_toast("Interface size %d%%", (int)lroundf(s * 100));
 }
 
-/* ---- the status bar and the keyboard shortcuts ---- */
-
-static float draw_status(Rectangle area)
-{
-    if (ui.touch) return 0;
-    float h = DP(28), pad = DP(12);
-    Rectangle r = {area.x, area.y + area.height - h, area.width, h};
-    ui_rect(r, theme.surface);
-    ui_hline(r.x, r.y, r.width, theme.border);
-    char text[128];
-    int n = snprintf(text, sizeof text, "%d %s", br.view.n, br.view.n == 1 ? "item" : "items");
-    if (br.nselected) n += snprintf(text + n, sizeof text - (size_t)n, ", %d selected", br.nselected);
-    if (br.filtering && br.filter.len) snprintf(text + n, sizeof text - (size_t)n, ", filtered");
-    ui_text_box(text, (Rectangle){r.x + pad, r.y, r.width / 2, h}, 13, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 0);
-    Rectangle help = {r.x + r.width - h - DP(4), r.y, h, h};
-    int state;
-    if (ui_clickable(ui_id("help", 0), help, &state)) app.help_open = !app.help_open;
-    if (state) ui_round(help, 6, state == 2 ? theme.pressed : theme.hover);
-    ui_text_box("?", help, 15, FONT_SEMIBOLD, app.help_open ? theme.accent : theme.text_dim, ALIGN_CENTER, 0);
-    return h;
-}
+/* ---- the keyboard shortcuts ---- */
 
 static const char *const shortcuts[][2] = {
     {"j / k, arrows", "down / up"},        {"h / l", "parent folder / open"},
@@ -234,7 +214,6 @@ static void frame(void)
     }
     float hh = header_height();
     Rectangle list = {s.x, s.y + hh, s.width, s.height - hh};
-    list.height -= draw_status(list);
     list.height -= ops_draw_jobs(list);
     list.height -= draw_paste_bar(list);
     view_draw(list);
