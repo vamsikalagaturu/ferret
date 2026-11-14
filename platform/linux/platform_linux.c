@@ -97,6 +97,7 @@ float plat_scale(void)
 /* Wayland reports the pointer in logical units while the framebuffer is in pixels */
 Vector2 plat_mouse(void)
 {
+    if (replay_running()) return replay_pointer();
     Vector2 m = GetMousePosition();
     if (wayland()) {
         float s = content_scale();
@@ -112,17 +113,28 @@ void plat_haptic(void) {}
 int plat_storage_granted(void) { return 1; }
 void plat_request_storage(void) {}
 
-void plat_set_clipboard(const char *text) { SetClipboardText(text); }
+static char *replay_clipboard;
+
+void plat_set_clipboard(const char *text)
+{
+    if (!replay_running()) {
+        SetClipboardText(text);
+        return;
+    }
+    free(replay_clipboard);
+    replay_clipboard = fr_strdup(text);
+}
 
 char *plat_clipboard(void)
 {
-    const char *s = GetClipboardText();
+    const char *s = replay_running() ? replay_clipboard : GetClipboardText();
     return s && *s ? fr_strdup(s) : NULL;
 }
 
 /* Double fork so the opened app is not our child; a close-on-exec pipe tells whether exec worked. */
 int plat_open(const char *path)
 {
+    if (replay_running()) return -1;
     int fds[2];
     if (pipe2(fds, O_CLOEXEC)) return -1;
     pid_t pid = fork();

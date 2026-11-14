@@ -70,6 +70,8 @@ int ui_hover(Rectangle r);
 unsigned ui_id(const char *name, int index);
 /* press inside, release inside: 1. *state gets 1 hovered, 2 held */
 int ui_clickable(unsigned id, Rectangle r, int *state);
+/* where ui_clickable(id) was this frame, the last one with that id; 0 when it was not */
+int ui_clickable_rect(unsigned id, Rectangle *out);
 
 /* ---- drawing (draw.c) ---- */
 enum { FONT_REGULAR, FONT_SEMIBOLD };
@@ -144,6 +146,7 @@ int ui_dialog(const fr_dialog *d);
 
 void ui_toast(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void ui_toast_draw(float bottom);
+const char *ui_toast_shown(void); /* the toast showing now, "" none */
 
 void ui_progress(Rectangle r, float fraction, Color c);
 #endif

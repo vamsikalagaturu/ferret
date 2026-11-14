@@ -1,0 +1,57 @@
+# D and Delete move to the trash ($XDG_DATA_HOME/Trash, inside the runner's scratch directory), X and
+# Shift+Delete delete; each asks first, Enter confirms and Esc cancels.
+key G
+expect cursor zeta.md
+key D
+key esc
+expect exists zeta.md
+key D
+key enter
+expect missing zeta.md
+expect exists ../data/Trash/files/zeta.md
+expect exists ../data/Trash/info/zeta.md.trashinfo
+expect toast Moved to the trash 1 item
+
+key g
+key g
+key delete
+key enter
+expect missing alpha
+expect exists ../data/Trash/files/alpha/sub/deep.txt
+expect cursor beta
+
+key X
+key esc
+expect exists beta
+key X
+key enter
+expect missing beta
+expect missing ../data/Trash/files/beta
+expect toast Deleted 1 item
+
+key G
+expect cursor report.tar.gz
+key shift+delete
+key enter
+expect missing report.tar.gz
+
+# a selection of two, the cursor in it
+key g
+key g
+key v
+key j
+expect selected 2
+expect cursor gamma
+key X
+key enter
+expect missing empty
+expect missing gamma
+expect selected 0
+
+# the trash place in the sidebar lists what went there
+click place Trash
+expect folder ../data/Trash/files
+expect cursor alpha
+key l
+expect folder ../data/Trash/files/alpha
+quit

@@ -1,0 +1,101 @@
+# yp copies the cursor row's full path, yP the folder's; Ctrl+L types a location (Tab completes, Enter goes,
+# Esc leaves). The copied paths are checked by pasting them into the location field.
+key j
+expect cursor beta
+key y
+key p
+expect toast Copied /
+expect toast /tree/beta
+key ctrl+l
+key ctrl+a
+key ctrl+v
+key enter
+expect folder beta
+
+key y
+key P
+expect toast /tree/beta
+key h
+key ctrl+l
+key ctrl+a
+key ctrl+v
+key enter
+expect folder beta
+
+# a file's path opens its folder with the cursor on it
+key h
+key G
+key y
+key p
+key g
+key g
+key l
+expect folder alpha
+key ctrl+l
+key ctrl+a
+key ctrl+v
+key enter
+expect folder .
+expect cursor zeta.md
+
+# two selected rows: both paths
+key G
+key space
+key k
+key space
+key y
+key p
+expect toast Copied 2 paths
+key esc
+
+# Tab completion; the field starts with the folder's path
+key ctrl+l
+type al
+key tab
+type s
+key tab
+key enter
+expect folder alpha/sub
+
+key ctrl+l
+key backspace
+key backspace
+key backspace
+key backspace
+type x
+key tab
+expect folder alpha/sub
+key esc
+expect folder alpha/sub
+key ctrl+l
+key shift+left
+key shift+left
+key shift+left
+key shift+left
+key shift+left
+key shift+left
+key shift+left
+key shift+left
+key shift+left
+key shift+left
+type ga
+key tab
+key enter
+expect folder gamma
+key alt+left
+expect folder alpha/sub
+
+# a path that is not there, then a relative one
+key ctrl+l
+type nope
+key enter
+expect toast nope
+key esc
+key ctrl+l
+key ctrl+a
+type relative
+key enter
+expect toast Type a full path
+key esc
+expect folder alpha/sub
+quit

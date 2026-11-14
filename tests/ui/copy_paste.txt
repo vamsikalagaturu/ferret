@@ -1,0 +1,97 @@
+# yy / dd / p, Ctrl+C / Ctrl+V, and the dialog for a name taken in the destination.
+# notes.txt is in the root and in beta, with different contents.
+key /
+type notes
+key enter
+expect cursor notes.txt
+key y
+key y
+expect toast 1 item copied
+key esc
+
+# no conflict: a copy into alpha
+dclick row alpha
+expect folder alpha
+key p
+expect exists alpha/notes.txt
+expect exists notes.txt
+expect toast Copied 1 item
+
+# a conflict answered with Esc: skip, the file in beta stays
+key h
+key j
+key l
+expect folder beta
+key p
+expect cursor b1.txt
+key esc
+expect exists beta/notes.txt
+expect missing beta/notes (2).txt
+
+# answered with Enter: replace
+key p
+key enter
+expect exists beta/notes.txt
+expect toast Copied 1 item
+
+# dd moves: the source goes
+key h
+expect folder .
+key G
+expect cursor zeta.md
+key d
+key d
+expect toast 1 item cut
+key g
+key g
+key l
+expect folder alpha
+key p
+expect exists alpha/zeta.md
+expect missing zeta.md
+
+# a selection of two, by Ctrl+C / Ctrl+V, into a folder that has neither
+key h
+key G
+key k
+key space
+key space
+expect selected 2
+key ctrl+c
+expect toast 2 items copied
+expect selected 0
+key g
+key g
+key j
+key j
+key l
+expect folder empty
+key ctrl+v
+expect exists empty/photo.png
+expect exists empty/report.tar.gz
+expect toast Copied 2 items
+
+# the same two again: two conflicts, each skipped
+key ctrl+v
+key esc
+key esc
+expect exists empty/photo.png
+expect missing empty/photo (2).png
+
+# Ctrl+X on a folder, pasted into another
+key h
+expect folder .
+key g
+key g
+key j
+key j
+key j
+expect cursor gamma
+key ctrl+x
+key g
+key g
+key l
+key ctrl+v
+expect exists alpha/gamma/g.txt
+expect missing gamma
+quit

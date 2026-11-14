@@ -254,11 +254,16 @@ static void frame(void)
 
 int fr_app_main(int argc, char **argv)
 {
+    int replay = argc > 2 && !strcmp(argv[1], "--replay");
+    if (replay) {
+        if (replay_load(argv[2], argc > 3 ? argv[3] : NULL)) return 1;
+        argc -= 2, argv += 2;
+    }
     plat_init_window();
     ui.user_scale = 1;
     settings_load();
     theme_load(settings.theme);
-    ui_input_init();
+    if (!replay) ui_input_init();
     fr_jobs_start(plat_wake);
     app.menu_more = ui_id("menu-more", 0), app.menu_row = ui_id("menu-row", 0), app.menu_bg = ui_id("menu-bg", 0);
     app.menu_selection = ui_id("menu-selection", 0);
@@ -284,6 +289,7 @@ int fr_app_main(int argc, char **argv)
         }
         BeginDrawing();
         frame();
+        if (replay && !replay_frame()) app.quit = 1;
         EndDrawing();
         ui_end_frame();
         if (!ui.dirty && !ui_events_pending()) {
@@ -294,5 +300,5 @@ int fr_app_main(int argc, char **argv)
     }
     fr_jobs_stop();
     CloseWindow();
-    return 0;
+    return replay ? replay_status() : 0;
 }

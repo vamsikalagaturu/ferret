@@ -1,0 +1,53 @@
+# Grid layout: tiles; j/k move a whole row (the column count depends on the window), arrows one tile.
+key ctrl+3
+expect layout grid
+expect cursor alpha
+key right
+expect cursor beta
+key right
+key left
+expect cursor beta
+key left
+expect cursor alpha
+key j
+key k
+expect cursor alpha
+key G
+expect cursor zeta.md
+key g
+key g
+expect cursor alpha
+key l
+expect folder alpha
+key h
+expect folder .
+expect cursor alpha
+
+key right
+key enter
+expect folder beta
+key backspace
+expect folder .
+
+click row gamma
+expect cursor gamma
+expect selected 1
+dclick row gamma
+expect folder gamma
+key h
+dclick row alpha
+expect folder alpha
+dclick row sub
+expect folder alpha/sub
+key alt+up
+key alt+up
+expect folder .
+wheel -3
+wheel 3
+dclick row empty
+expect folder empty
+key h
+shot grid.png
+key ctrl+1
+expect layout details
+quit

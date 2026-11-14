@@ -1,0 +1,60 @@
+# m adds or removes the folder shown as a favorite; g1..g9 open them; they are sidebar rows and are saved.
+key ctrl+-
+key ctrl+-
+key ctrl+-
+key g
+key 1
+expect toast No favorite 1
+expect folder .
+dclick row alpha
+key m
+key h
+dclick row beta
+key m
+key h
+expect folder .
+key g
+key 1
+expect folder alpha
+key g
+key 2
+expect folder beta
+key g
+key 3
+expect toast No favorite 3
+expect folder beta
+
+click place alpha
+expect folder alpha
+click place beta
+expect folder beta
+click place ~
+expect folder ../home
+key alt+left
+expect folder beta
+wait 120
+expect exists ../config/ferret/settings.toml
+
+# m again removes it; the next one moves up to g1
+key m
+key g
+key 1
+expect folder alpha
+key g
+key 2
+expect toast No favorite 2
+
+# a right click on a favorite removes it
+rclick place alpha
+expect toast Removed alpha
+key g
+key 1
+expect toast No favorite 1
+
+# the key g waits for the next one: g then Esc, then 1 types nothing
+key g
+key esc
+key 1
+expect folder alpha
+key ctrl+0
+quit

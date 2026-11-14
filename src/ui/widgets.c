@@ -469,6 +469,8 @@ void ui_toast(const char *fmt, ...)
     ui.dirty = 1;
 }
 
+const char *ui_toast_shown(void) { return fr_now() < toast_until ? toast_text : ""; }
+
 void ui_toast_draw(float bottom)
 {
     if (ui.now >= toast_until || !toast_text[0]) return;

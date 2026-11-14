@@ -1,0 +1,100 @@
+# Right-click menus: on a row, on the empty space below the rows, opened and closed by Esc, by a click outside
+# and by another right click; arrows and Enter pick an item. While a menu is open the list takes no keys.
+# "-40 -120": the list's empty space near the bottom right, above the paste bar and the toasts.
+rclick row a.txt
+expect cursor a.txt
+expect selected 1
+key j
+expect cursor a.txt
+key esc
+key j
+expect cursor notes.txt
+
+# a click outside closes it and does nothing else
+rclick row beta
+expect cursor beta
+click row zeta.md
+expect cursor beta
+key j
+expect cursor empty
+
+# a right click elsewhere moves the menu there
+rclick row gamma
+rclick row photo.png
+expect cursor photo.png
+key esc
+key k
+expect cursor notes.txt
+
+# Open, the first item of a folder's menu
+rclick row alpha
+key down
+key enter
+expect folder alpha
+key h
+
+# Copy from a row's menu, Paste from the empty space's menu
+rclick row a.txt
+key down
+key down
+key enter
+expect toast 1 item copied
+dclick row beta
+expect folder beta
+rclick -40 -120
+key j
+expect cursor b1.txt
+key esc
+rclick -40 -120
+key down
+key down
+key down
+key enter
+expect exists beta/a.txt
+key h
+
+# Properties, the last item, from a row's menu (Up from no highlight); Enter there changes nothing; Esc closes
+rclick row notes.txt
+key up
+shot menu-up.png
+key enter
+shot properties.png
+key j
+expect cursor notes.txt
+key enter
+expect exists notes.txt
+key esc
+key j
+expect cursor photo.png
+
+# New folder from the empty space's menu: "New folder" is selected, typing replaces it
+rclick -40 -120
+key down
+key enter
+expect mode INSERT
+type from-menu
+key enter
+expect exists from-menu
+
+# Rename from a row's menu opens the rename dialog
+rclick row from-menu
+key down
+key down
+key down
+key down
+key enter
+key end
+type -2
+key enter
+expect exists from-menu-2
+
+# the same menus in the grid
+key ctrl+3
+rclick row zeta.md
+expect cursor zeta.md
+key esc
+rclick -40 -120
+key esc
+key j
+key ctrl+1
+quit

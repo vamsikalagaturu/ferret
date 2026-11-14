@@ -1,0 +1,72 @@
+# File operations in the columns layout, where the parent and preview panes keep listings of their own.
+key ctrl+-
+key ctrl+-
+key ctrl+-
+key ctrl+2
+expect layout columns
+
+# rename the folder being previewed
+expect cursor alpha
+key r
+type -x
+key enter
+expect exists alpha-x/sub
+expect cursor alpha-x
+key l
+expect folder alpha-x
+expect cursor sub
+key h
+
+# trash and delete the folder being previewed
+key j
+expect cursor beta
+key D
+key enter
+expect missing beta
+key g
+key g
+key X
+key enter
+expect missing alpha-x
+
+# new file and folder rows, kept and dropped
+key a
+type col-new.txt
+key enter
+expect exists col-new.txt
+key a
+type col-dir/
+key enter
+expect exists col-dir
+key l
+expect folder col-dir
+key a
+type dropped
+key esc
+expect missing col-dir/dropped
+key h
+expect cursor col-dir
+
+# filter, then cut a file and paste it into a folder from inside the filtered list
+key /
+type zeta
+key enter
+expect cursor zeta.md
+key d
+key d
+key esc
+dclick row gamma
+expect folder gamma
+key p
+expect exists gamma/zeta.md
+expect missing zeta.md
+
+# going up through the parent pane, then the preview of a file
+key left
+expect folder .
+key left
+key right
+expect folder .
+key ctrl+0
+key ctrl+1
+quit
