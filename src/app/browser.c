@@ -163,7 +163,13 @@ void browser_poll(void)
 {
     if (!br.uri || ui.now - br.checked_at < 1.5) return;
     br.checked_at = ui.now;
-    if (dir_mtime(br.uri) != br.dir_mtime) browser_reload();
+    int64_t t = dir_mtime(br.uri);
+    /* the folder went away (a disk ejected or unmounted, deleted elsewhere): home, quietly */
+    if (t < 0 && br.dir_mtime >= 0) {
+        char *home = plat_home_uri();
+        browser_open(home, 0);
+        free(home);
+    } else if (t != br.dir_mtime) browser_reload();
 }
 
 fr_item *browser_item(int view_index)
