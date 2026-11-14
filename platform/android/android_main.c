@@ -473,6 +473,9 @@ void plat_wait(double seconds)
 
 void plat_wake(void) { ALooper_wake(GetAndroidApp()->looper); }
 
+/* the looper outlives the window, so a late wake-up is harmless here */
+void plat_close_window(void) { CloseWindow(); }
+
 float plat_scale(void) { return GetWindowScaleDPI().x; }
 
 Vector2 plat_mouse(void) { return GetMousePosition(); }

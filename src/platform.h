@@ -10,7 +10,8 @@ int fr_app_main(int argc, char **argv); /* src/app/main.c */
 void plat_init_window(void);   /* opens the window */
 void plat_frame(void);         /* once per frame, before the frame takes its input */
 void plat_wait(double seconds); /* sleeps until input, plat_wake() or the timeout */
-void plat_wake(void);          /* any thread */
+void plat_wake(void);          /* any thread; does nothing once the window is closed */
+void plat_close_window(void);  /* closes the window; later plat_wake() calls are dropped */
 float plat_scale(void);        /* pixels per dp */
 Vector2 plat_mouse(void);      /* the pointer in framebuffer pixels */
 int plat_touch(void);          /* a touchscreen is the pointer */

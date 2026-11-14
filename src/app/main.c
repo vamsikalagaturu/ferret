@@ -353,6 +353,6 @@ int fr_app_main(int argc, char **argv)
         }
     }
     fr_jobs_stop();
-    CloseWindow();
+    plat_close_window();
     return 0;
 }

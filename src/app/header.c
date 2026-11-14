@@ -9,32 +9,35 @@ float header_height(void) { return fmaxf(DP(ui.touch ? 56 : 48), ui_line_height(
 static void draw_breadcrumb(Rectangle r)
 {
     if (!br.uri) return;
-    struct {
+    typedef struct {
         char *label, *uri;
-    } segs[64];
-    int n = 0;
+        float width;
+    } seg;
+    struct {
+        seg *v;
+        int n, cap;
+    } segs = {0};
     const char *rest = fr_uri_path(br.uri), *end_of_uri = br.uri + strlen(br.uri);
     if (rest < br.uri || rest > end_of_uri) rest = end_of_uri;
-    if (fr_uri_local(br.uri)) segs[n].label = fr_strdup("/");
-    else segs[n].label = fr_strndup(br.uri, (size_t)(rest - br.uri));
-    segs[n++].uri = fr_strndup(br.uri, (size_t)(rest - br.uri) + 1);
-    while (*rest && n < 64) {
+    char *root = fr_uri_local(br.uri) ? fr_strdup("/") : fr_strndup(br.uri, (size_t)(rest - br.uri));
+    FR_PUSH(segs, ((seg){root, fr_strndup(br.uri, (size_t)(rest - br.uri) + 1), 0}));
+    while (*rest) {
         while (*rest == '/') rest++;
         if (!*rest) break;
         const char *end = strchr(rest, '/');
         if (!end) end = rest + strlen(rest);
-        segs[n].label = fr_strndup(rest, (size_t)(end - rest));
-        segs[n++].uri = fr_strndup(br.uri, (size_t)(end - br.uri));
+        FR_PUSH(segs, ((seg){fr_strndup(rest, (size_t)(end - rest)), fr_strndup(br.uri, (size_t)(end - br.uri)), 0}));
         rest = end;
     }
-    float sep = DP(20), total = 0, widths[64];
+    int n = segs.n;
+    float sep = DP(20), total = 0;
     for (int i = 0; i < n; i++) {
-        widths[i] = ui_text_width(segs[i].label, 15, i == n - 1 ? FONT_SEMIBOLD : FONT_REGULAR) + DP(12);
-        total += widths[i] + (i ? sep : 0);
+        segs.v[i].width = ui_text_width(segs.v[i].label, 15, i == n - 1 ? FONT_SEMIBOLD : FONT_REGULAR) + DP(12);
+        total += segs.v[i].width + (i ? sep : 0);
     }
     int first = 0;
     float dots = ui_text_width("...", 15, FONT_REGULAR) + DP(12) + sep;
-    while (first < n - 1 && total + (first ? dots : 0) > r.width) total -= widths[first] + sep, first++;
+    while (first < n - 1 && total + (first ? dots : 0) > r.width) total -= segs.v[first].width + sep, first++;
     float x = r.x;
     ui_clip_begin(r);
     if (first) {
@@ -47,17 +50,18 @@ static void draw_breadcrumb(Rectangle r)
             x += sep;
         }
         int last = i == n - 1;
-        float w = fminf(widths[i], r.x + r.width - x);
-        Rectangle seg = {x, r.y + DP(8), w, r.height - DP(16)};
+        float w = fminf(segs.v[i].width, r.x + r.width - x);
+        Rectangle box = {x, r.y + DP(8), w, r.height - DP(16)};
         int state;
-        if (ui_clickable(ui_id("crumb", i), seg, &state) && !last) browser_open(segs[i].uri, 1);
-        if (state && !last) ui_round(seg, 6, state == 2 ? theme.pressed : theme.hover);
-        ui_text_box(segs[i].label, (Rectangle){x + DP(6), r.y, w - DP(12), r.height}, 15, last ? FONT_SEMIBOLD : FONT_REGULAR,
+        if (ui_clickable(ui_id("crumb", i), box, &state) && !last) browser_open(segs.v[i].uri, 1);
+        if (state && !last) ui_round(box, 6, state == 2 ? theme.pressed : theme.hover);
+        ui_text_box(segs.v[i].label, (Rectangle){x + DP(6), r.y, w - DP(12), r.height}, 15, last ? FONT_SEMIBOLD : FONT_REGULAR,
                     last ? theme.text : theme.text_dim, ALIGN_LEFT, 0);
         x += w;
     }
     ui_clip_end();
-    for (int i = 0; i < n; i++) free(segs[i].label), free(segs[i].uri);
+    for (int i = 0; i < n; i++) free(segs.v[i].label), free(segs.v[i].uri);
+    free(segs.v);
     Rectangle rest_r = {x, r.y, r.x + r.width - x, r.height};
     if (rest_r.width > 0 && ui_clickable(ui_id("crumb-rest", 0), rest_r, NULL)) path_edit_start();
 }
@@ -104,6 +108,11 @@ static char *expand(const char *s)
 static void complete(void)
 {
     if (strstr(path_field.buf, "://")) return;
+    const char *typed_slash = strrchr(path_field.buf, '/');
+    if (!typed_slash) {
+        if (!strcmp(path_field.buf, "~")) text_set(&path_field, "~/");
+        return;
+    }
     char *full = expand(path_field.buf);
     if (!full) return;
     char *slash = strrchr(full, '/');
@@ -125,7 +134,7 @@ static void complete(void)
             matches++;
         }
     if (best && strlen(best) >= strlen(prefix)) {
-        size_t keep = strlen(path_field.buf) - strlen(prefix);
+        size_t keep = (size_t)(typed_slash - path_field.buf) + 1;
         char *done = fr_format("%.*s%s%s", (int)keep, path_field.buf, best, matches == 1 ? "/" : "");
         text_set(&path_field, done);
         free(done);

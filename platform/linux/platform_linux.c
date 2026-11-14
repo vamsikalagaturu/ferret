@@ -4,6 +4,7 @@
 #include "vfs/vfs.h"
 #include <fcntl.h>
 #include <math.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -46,6 +47,10 @@ static void adopt_framebuffer_size(void)
     if (raylib_size) raylib_size(w, fw, fh);
 }
 
+/* worker threads (jobs, properties, disks) wake the window; none may reach GLFW once it is gone */
+static pthread_mutex_t wake_lock = PTHREAD_MUTEX_INITIALIZER;
+static int window_alive;
+
 void plat_init_window(void)
 {
     SetTraceLogLevel(LOG_ERROR);
@@ -59,6 +64,9 @@ void plat_init_window(void)
         exit(1);
     }
     SetExitKey(KEY_NULL);
+    pthread_mutex_lock(&wake_lock);
+    window_alive = 1;
+    pthread_mutex_unlock(&wake_lock);
     int hz = GetMonitorRefreshRate(GetCurrentMonitor());
     SetTargetFPS(hz >= 30 ? hz : 60);
     if (wayland()) adopt_framebuffer_size();
@@ -76,7 +84,20 @@ void plat_frame(void)
 }
 
 void plat_wait(double seconds) { glfwWaitEventsTimeout(seconds); }
-void plat_wake(void) { glfwPostEmptyEvent(); }
+void plat_wake(void)
+{
+    pthread_mutex_lock(&wake_lock);
+    if (window_alive) glfwPostEmptyEvent();
+    pthread_mutex_unlock(&wake_lock);
+}
+
+void plat_close_window(void)
+{
+    pthread_mutex_lock(&wake_lock);
+    window_alive = 0;
+    pthread_mutex_unlock(&wake_lock);
+    CloseWindow();
+}
 
 /* Wayland's content scale; on X11 the content scale when set (Xft.dpi), else the monitor's physical DPI over 96
  * in quarter steps */
