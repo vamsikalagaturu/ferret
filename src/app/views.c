@@ -23,6 +23,16 @@ void view_set_layout(fr_layout layout)
     ui.dirty = 1;
 }
 
+#define FLASH_S 0.6
+
+void view_flash(const fr_item *it, Rectangle r)
+{
+    double t = ui.now - it->flash_at;
+    if (!it->flash_at || t >= FLASH_S) return;
+    ui_rect(r, ui_alpha(theme.accent, 0.4f * (float)(1 - t / FLASH_S)));
+    ui_redraw_in(1.0 / 60);
+}
+
 int view_grid_columns(void) { return layout_in_effect() == LAYOUT_GRID ? grid_columns_for(shown_w) : 1; }
 
 void view_reveal(int v)
@@ -188,6 +198,7 @@ static void draw_row(int v, Rectangle row, Rectangle area)
     int right = ui_hover(hit) && ui.rpressed;
     if (it->selected) ui_rect(row, theme.selection);
     else if (state) ui_rect(row, state == 2 ? theme.pressed : theme.hover);
+    view_flash(it, row);
     if (!ui.touch && br.keyboard && v == br.cursor && !it->selected)
         ui_round_line((Rectangle){row.x + DP(2), row.y + DP(1), row.width - DP(4), row.height - DP(2)}, 4, ui_alpha(theme.accent, 0.5f));
 
@@ -203,6 +214,7 @@ static void draw_row(int v, Rectangle row, Rectangle area)
         if (it->count >= 0) snprintf(size, sizeof size, it->count == 1 ? "1 item" : "%d items", it->count);
     } else fr_format_size(it->e.size, size, sizeof size);
     fr_format_time(it->e.mtime, (int64_t)time(NULL), date, sizeof date);
+    if (it->placeholder) size[0] = date[0] = 0;
     float tx = icon.x + icon_w + DP(compact ? 8 : 12), tw = row.x + row.width - pad - tx;
     Color name_c = it->e.hidden ? theme.text_dim : theme.text;
     int editing;

@@ -27,6 +27,7 @@ static int draw_tile(int v, Rectangle t, Rectangle area)
     Rectangle box = {t.x + DP(4), t.y + DP(4), t.width - DP(8), t.height - DP(8)};
     if (it->selected) ui_round(box, 8, theme.selection);
     else if (state) ui_round(box, 8, state == 2 ? theme.pressed : theme.hover);
+    view_flash(it, box);
     if (!ui.touch && br.keyboard && v == br.cursor && !it->selected) ui_round_line(box, 8, ui_alpha(theme.accent, 0.5f));
 
     Rectangle icon = {t.x, box.y + DP(6), t.width, DP(52)};

@@ -248,6 +248,12 @@ void header_draw(Rectangle r)
         ui_menu_open(app.menu_more, (Rectangle){right, cy, b, b});
     right -= b;
     if (ui_icon_button(ui_id("search", 0), (Rectangle){right, cy, b, b}, "search", theme.text)) filter_start(0);
-    draw_breadcrumb((Rectangle){x + DP(4), r.y, right - x - DP(8), r.height});
+    Rectangle crumbs = {x + DP(4), r.y, right - x - DP(8), r.height};
+    double flash = ui.now - app.path_flash_at;
+    if (app.path_flash_at && flash < 0.6) {
+        ui_round((Rectangle){crumbs.x, r.y + DP(6), crumbs.width, r.height - DP(12)}, 6, ui_alpha(theme.accent, 0.4f * (float)(1 - flash / 0.6)));
+        ui_redraw_in(1.0 / 60);
+    }
+    draw_breadcrumb(crumbs);
     ui_hline(r.x, r.y + r.height - DP(1), r.width, theme.border);
 }

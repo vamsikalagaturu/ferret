@@ -13,6 +13,7 @@ static struct {
     int on;
     int seen;   /* a layout drew the field since the last keys_handle */
     int result; /* what the field returned since then */
+    int creating; /* naming a new file or folder in the placeholder row; else renaming uri */
     char *uri;
     fr_text text;
 } insert;
@@ -88,6 +89,24 @@ static void insert_start(int how)
     free(insert.uri);
     insert.uri = fr_uri_join(br.uri, it->e.name);
     insert.on = insert.seen = 1;
+    insert.creating = 0;
+    ui.focus = insert_id();
+    view_reveal(br.cursor);
+    ui.dirty = 1;
+}
+
+void keys_new_start(const char *typed)
+{
+    if (!br.uri) return;
+    visual = 0;
+    browser_clear_selection();
+    browser_add_placeholder();
+    text_set(&insert.text, typed);
+    size_t n = strlen(typed);
+    text_select(&insert.text, 0, (int)(n && typed[n - 1] == '/' ? n - 1 : n));
+    free(insert.uri);
+    insert.uri = NULL;
+    insert.on = insert.seen = insert.creating = 1;
     ui.focus = insert_id();
     view_reveal(br.cursor);
     ui.dirty = 1;
@@ -96,6 +115,8 @@ static void insert_start(int how)
 static void insert_stop(void)
 {
     insert.on = 0;
+    if (insert.creating) browser_drop_placeholder();
+    insert.creating = 0;
     free(insert.uri);
     insert.uri = NULL;
     if (ui.focus == insert_id()) ui.focus = 0;
@@ -104,6 +125,10 @@ static void insert_stop(void)
 
 static void insert_commit(void)
 {
+    if (insert.creating) {
+        if (!ops_create(insert.text.buf)) insert.creating = 0, insert_stop();
+        return;
+    }
     char *old = fr_uri_name(insert.uri);
     int same = !strcmp(old, insert.text.buf);
     free(old);
@@ -134,10 +159,17 @@ int keys_insert_field(int v, Rectangle r)
 {
     if (!insert.on || v != br.cursor) return 0;
     fr_item *it = browser_item(v);
-    char *uri = it ? fr_uri_join(br.uri, it->e.name) : NULL;
-    int same = uri && !strcmp(uri, insert.uri);
-    free(uri);
-    if (!same) return 0;
+    if (insert.creating) {
+        if (!it || !it->placeholder) return 0;
+        int folder = insert.text.len && insert.text.buf[insert.text.len - 1] == '/';
+        it->e.is_dir = folder;
+        it->kind = folder ? KIND_FOLDER : insert.text.len ? kind_of(insert.text.buf, 0) : KIND_OTHER;
+    } else {
+        char *uri = it ? fr_uri_join(br.uri, it->e.name) : NULL;
+        int same = uri && insert.uri && !strcmp(uri, insert.uri);
+        free(uri);
+        if (!same) return 0;
+    }
     insert.seen = 1;
     insert.result |= ui_text_field(insert_id(), &insert.text, r, NULL);
     return 1;
@@ -227,8 +259,11 @@ static void clip_take(int cut)
 static void copy_path(int here)
 {
     fr_strs uris = {0};
-    if (here) FR_PUSH(uris, fr_strdup(br.uri));
-    else {
+    if (here) {
+        FR_PUSH(uris, fr_strdup(br.uri));
+        app.path_flash_at = ui.now;
+    } else {
+        browser_flash_targets();
         uris = browser_selected_uris();
         fr_item *it = browser_item(br.cursor);
         if (!uris.n && it) FR_PUSH(uris, fr_uri_join(br.uri, it->e.name));
@@ -296,7 +331,7 @@ static void command(int c)
     case K(0, 'p'): ops_paste(); break;
     case K(0, 'D'): ops_delete(0); break;
     case K(0, 'X'): ops_delete(1); break;
-    case K(0, 'a'): ops_new_start(); break;
+    case K(0, 'a'): keys_new_start(""); break;
     case K(0, 'r'): insert_start('i'); break;
     case K(0, 'i'):
     case K(0, 'A'):
@@ -366,7 +401,7 @@ void keys_handle(void)
         if (ui.touch) ops_rename_start();
         else insert_start('i');
     }
-    if (ui_key(KEY_N, MOD_CTRL | MOD_SHIFT)) ops_new_folder_start();
+    if (ui_key(KEY_N, MOD_CTRL | MOD_SHIFT)) keys_new_start("New folder/");
     if (ui_key(KEY_H, MOD_CTRL)) toggle_hidden();
     if (ui_key(KEY_F5, 0) || ui_key(KEY_R, MOD_CTRL)) browser_reload();
     if (ui_key(KEY_F, MOD_CTRL)) filter_start(0);

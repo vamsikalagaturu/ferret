@@ -48,8 +48,13 @@ void browser_rebuild_view(void)
     char *keep_name = cur ? fr_strdup(cur->e.name) : NULL;
     keep = br.focus_name ? br.focus_name : keep_name;
     br.view.n = 0;
+    int placeholder = -1;
     for (int i = 0; i < br.items.n; i++) {
         fr_item *it = &br.items.v[i];
+        if (it->placeholder) {
+            placeholder = i;
+            continue;
+        }
         if (it->e.hidden && !br.show_hidden) continue;
         if (br.filtering && br.filter.len && !fr_contains_nocase(it->e.name, br.filter.buf)) continue;
         FR_PUSH(br.view, i);
@@ -58,6 +63,12 @@ void browser_rebuild_view(void)
     br.cursor = br.view.n ? 0 : -1;
     for (int i = 0; keep && i < br.view.n; i++)
         if (!strcmp(br.items.v[br.view.v[i]].e.name, keep)) br.cursor = i;
+    if (placeholder >= 0) {
+        FR_PUSH(br.view, 0);
+        memmove(br.view.v + 1, br.view.v, sizeof *br.view.v * (size_t)(br.view.n - 1));
+        br.view.v[0] = placeholder;
+        br.cursor = 0;
+    }
     if (br.anchor >= br.view.n) br.anchor = br.cursor;
     free(keep_name);
     ui.dirty = 1;
@@ -159,8 +170,45 @@ void browser_up(void)
     free(parent);
 }
 
+void browser_flash_targets(void)
+{
+    int any = 0;
+    for (int v = 0; v < br.view.n; v++)
+        if (br.items.v[br.view.v[v]].selected) br.items.v[br.view.v[v]].flash_at = ui.now, any = 1;
+    fr_item *it = browser_item(br.cursor);
+    if (!any && it) it->flash_at = ui.now;
+    ui.dirty = 1;
+}
+
+void browser_add_placeholder(void)
+{
+    for (int i = 0; i < br.items.n; i++)
+        if (br.items.v[i].placeholder) return;
+    fr_item it;
+    memset(&it, 0, sizeof it);
+    it.e.name = fr_strdup("");
+    it.kind = KIND_OTHER, it.count = -1, it.placeholder = 1;
+    FR_PUSH(br.items, it);
+    browser_rebuild_view();
+    br.scroll.target = 0;
+}
+
+void browser_drop_placeholder(void)
+{
+    for (int i = 0; i < br.items.n; i++) {
+        if (!br.items.v[i].placeholder) continue;
+        fr_entry_free(&br.items.v[i].e);
+        memmove(br.items.v + i, br.items.v + i + 1, sizeof *br.items.v * (size_t)(br.items.n - i - 1));
+        br.items.n--;
+        browser_rebuild_view();
+        return;
+    }
+}
+
 void browser_poll(void)
 {
+    for (int i = 0; i < br.items.n; i++)
+        if (br.items.v[i].placeholder) return;
     if (!br.uri || ui.now - br.checked_at < 1.5) return;
     br.checked_at = ui.now;
     int64_t t = dir_mtime(br.uri);

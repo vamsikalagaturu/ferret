@@ -48,6 +48,7 @@ void ops_copy(int cut)
     }
     clip.cut = cut;
     if (!clip.uris.n) return;
+    browser_flash_targets();
     browser_clear_selection();
     ui_toast("%d %s %s; open a folder and paste", clip.uris.n, clip.uris.n == 1 ? "item" : "items", cut ? "cut" : "copied");
 }
@@ -112,6 +113,10 @@ void ops_rename_start(void)
 
 void ops_new_folder_start(void)
 {
+    if (!ui.touch) {
+        keys_new_start("New folder/");
+        return;
+    }
     char *uri = fr_uri_free_name(br.uri, "New folder", 1), *name = fr_uri_name(uri), *shown = fr_format("%s/", name);
     text_set(&field, shown);
     text_select(&field, 0, field.len - 1);
@@ -121,6 +126,10 @@ void ops_new_folder_start(void)
 
 void ops_new_start(void)
 {
+    if (!ui.touch) {
+        keys_new_start("");
+        return;
+    }
     text_set(&field, "");
     dlg = DLG_NEW_FOLDER;
 }
@@ -162,33 +171,38 @@ static void rename_commit(void)
 }
 
 /* a name ending in "/" makes a folder, any other an empty file */
+int ops_create(const char *typed)
+{
+    size_t n = strlen(typed);
+    int folder = n && typed[n - 1] == '/';
+    char *name = fr_strndup(typed, folder ? n - 1 : n);
+    int rc = -EINVAL;
+    if (!fr_name_valid(name)) ui_toast("A name cannot be empty, \".\", \"..\" or contain \"/\" (except one at the end, for a folder)");
+    else {
+        char *uri = fr_uri_join(br.uri, name);
+        rc = 0;
+        if (folder) rc = fr_vfs_mkdir(uri);
+        else {
+            fr_stream *s = fr_vfs_open_write(uri, 1, &rc);
+            if (s) rc = s->close(s);
+        }
+        free(uri);
+        if (rc == -EEXIST) ui_toast("\"%s\" already exists here", name);
+        else if (rc) ui_toast("Could not make the %s: %s", folder ? "folder" : "file", fr_vfs_error(rc));
+        else {
+            br.focus_name = fr_strdup(name);
+            browser_reload();
+            free(br.focus_name);
+            br.focus_name = NULL;
+        }
+    }
+    free(name);
+    return rc;
+}
+
 static void new_folder_commit(void)
 {
-    int folder = field.len && field.buf[field.len - 1] == '/';
-    if (folder) field.buf[--field.len] = 0;
-    if (!fr_name_valid(field.buf)) {
-        ui_toast("A name cannot be empty, \".\", \"..\" or contain \"/\" (except one at the end, for a folder)");
-        if (folder) field.buf[field.len++] = '/', field.buf[field.len] = 0;
-        return;
-    }
-    char *uri = fr_uri_join(br.uri, field.buf);
-    int rc = 0;
-    if (folder) rc = fr_vfs_mkdir(uri);
-    else {
-        fr_stream *s = fr_vfs_open_write(uri, 1, &rc);
-        if (s) rc = s->close(s);
-    }
-    if (rc == -EEXIST) ui_toast("\"%s\" already exists here", field.buf);
-    else if (rc) ui_toast("Could not make the %s: %s", folder ? "folder" : "file", fr_vfs_error(rc));
-    if (rc && folder) field.buf[field.len++] = '/', field.buf[field.len] = 0;
-    if (!rc) {
-        br.focus_name = fr_strdup(field.buf);
-        browser_reload();
-        free(br.focus_name);
-        br.focus_name = NULL;
-        dlg_close();
-    }
-    free(uri);
+    if (!ops_create(field.buf)) dlg_close();
 }
 
 /* ---- jobs ---- */
