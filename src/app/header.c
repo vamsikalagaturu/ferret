@@ -19,8 +19,15 @@ static void draw_breadcrumb(Rectangle r)
     } segs = {0};
     const char *rest = fr_uri_path(br.uri), *end_of_uri = br.uri + strlen(br.uri);
     if (rest < br.uri || rest > end_of_uri) rest = end_of_uri;
-    char *root = fr_uri_local(br.uri) ? fr_strdup("/") : fr_strndup(br.uri, (size_t)(rest - br.uri));
-    FR_PUSH(segs, ((seg){root, fr_strndup(br.uri, (size_t)(rest - br.uri) + 1), 0}));
+    /* a phone's /storage/emulated/0 means nothing to its user: there the path starts at the place it is in */
+    int p = ui.touch ? place_of(br.uri) : -1;
+    if (p >= 0) {
+        FR_PUSH(segs, ((seg){fr_strdup(app.places.v[p].label), fr_strdup(app.places.v[p].uri), 0}));
+        rest = br.uri + strlen(app.places.v[p].uri);
+    } else {
+        char *root = fr_uri_local(br.uri) ? fr_strdup("/") : fr_strndup(br.uri, (size_t)(rest - br.uri));
+        FR_PUSH(segs, ((seg){root, fr_strndup(br.uri, (size_t)(rest - br.uri) + 1), 0}));
+    }
     while (*rest) {
         while (*rest == '/') rest++;
         if (!*rest) break;
