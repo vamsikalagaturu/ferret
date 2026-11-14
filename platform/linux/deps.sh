@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Fetches the sources pinned in platform/versions.sh into thirdparty/ and builds raylib (GLFW with Wayland and
 # X11) into $FR_LINUX_OUT (default ~/.cache/ferret/linux). build.sh sources this file first.
+# Separate worktrees build side by side with their own FR_LINUX_OUT.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

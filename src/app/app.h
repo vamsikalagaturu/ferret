@@ -92,6 +92,17 @@ void header_draw(Rectangle r);
 void view_draw(Rectangle r);
 void view_set_layout(fr_layout layout);
 void view_reveal(int v); /* scroll so view row v shows */
+int view_grid_columns(void); /* items per row in the grid layout, 1 in the others */
+
+/* ---- settings.toml, favorites, theme overrides (settings.c) ---- */
+typedef struct {
+    fr_strs favorites; /* URIs, in the order shown */
+} fr_settings;
+extern fr_settings settings;
+void settings_load(void);
+void settings_poll(void); /* saves what changed (sort, layout, hidden, favorites); reloads after a hand edit */
+int favorite_index(const char *uri); /* -1 when not a favorite */
+void favorite_toggle(const char *uri);
 
 /* ---- keys (keys.c) ---- */
 void keys_handle(void);

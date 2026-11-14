@@ -9,6 +9,8 @@ void view_set_layout(fr_layout layout)
     ui.dirty = 1;
 }
 
+int view_grid_columns(void) { return 1; }
+
 void view_reveal(int v)
 {
     float rh = app_row_height();
