@@ -242,6 +242,7 @@ static void frame(void)
     if (!modal) keys_handle();
     else if (ui_key(KEY_BACK, 0)) ui_menu_close();
     ops_poll_jobs();
+    disks_poll();
     browser_poll();
     settings_poll();
 }

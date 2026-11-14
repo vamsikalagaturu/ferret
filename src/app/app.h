@@ -71,6 +71,8 @@ typedef struct {
     int drawer_open;
     fr_places places;
     double places_at;
+    fr_disks disks;
+    unsigned disks_serial;
     fr_layout layout;
     unsigned menu_more, menu_row, menu_bg, menu_selection;
     int help_open; /* the keyboard shortcuts sheet */
@@ -85,6 +87,7 @@ int app_wide(void); /* the places stay beside the files */
 void places_refresh(int now);
 int place_of(const char *uri); /* the place holding uri, -1 none */
 void places_draw(Rectangle r);
+void disks_poll(void); /* takes the disks' list and finished requests */
 
 /* ---- the header (header.c) ---- */
 float header_height(void);
