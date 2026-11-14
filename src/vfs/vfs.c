@@ -89,6 +89,12 @@ int fr_vfs_can_trash(const char *uri)
     return b && b->trash;
 }
 
+int fr_vfs_set_mode(const char *uri, uint32_t mode)
+{
+    BACKEND_OR(uri, -EPROTONOSUPPORT);
+    return b->set_mode ? b->set_mode(uri, mode & 07777) : -ENOTSUP;
+}
+
 const char *fr_vfs_error(int err)
 {
     switch (-err) {

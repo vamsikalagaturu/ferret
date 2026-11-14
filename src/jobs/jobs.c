@@ -14,6 +14,7 @@ typedef struct {
     fr_conflict policy; /* an answer given "for all" */
     fr_conflict answer;
     int answered;
+    uint32_t mode_set, mode_clear;
 } job;
 
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
@@ -371,6 +372,53 @@ static void run_trash(job *j)
     }
 }
 
+static void chmod_tree(job *j, const char *uri, const fr_entry *e, int top)
+{
+    if (cancelled(j)) return;
+    if (e->is_link) {
+        add_progress(j, 0, 1);
+        return;
+    }
+    set_current(j, uri);
+    int folder = e->is_dir;
+    uint32_t mode = fr_mode_edit(e->mode, j->mode_set, j->mode_clear, folder && !top);
+    int rc;
+    if (folder) {
+        /* the owner keeps reading and searching the folder until what is inside is done */
+        if ((e->mode & 0500) != 0500 || (mode & 0500) != 0500) fr_vfs_set_mode(uri, mode | 0500);
+        fr_entries kids = {0};
+        if ((rc = fr_vfs_list(uri, &kids))) fail(j, uri, rc, NULL);
+        for (int i = 0; i < kids.n && !cancelled(j); i++) {
+            char *child = fr_uri_join(uri, kids.v[i].name);
+            chmod_tree(j, child, &kids.v[i], 0);
+            free(child);
+        }
+        fr_entries_free(&kids);
+    }
+    if ((rc = fr_vfs_set_mode(uri, mode))) fail(j, uri, rc, NULL);
+    else add_progress(j, 0, 1);
+}
+
+static void run_chmod(job *j)
+{
+    int files = 0;
+    uint64_t bytes = 0;
+    fr_entry *es = fr_realloc(NULL, sizeof *es * (size_t)j->sources.n);
+    for (int i = 0; i < j->sources.n; i++) {
+        es[i] = (fr_entry){0};
+        int rc = fr_vfs_stat(j->sources.v[i], &es[i]);
+        if (rc) fail(j, j->sources.v[i], rc, NULL);
+        else if (!cancelled(j)) scan(j, j->sources.v[i], &es[i], &bytes, &files);
+    }
+    pthread_mutex_lock(&lock);
+    j->st.files_total = files;
+    pthread_mutex_unlock(&lock);
+    for (int i = 0; i < j->sources.n && !cancelled(j); i++)
+        if (es[i].name) chmod_tree(j, j->sources.v[i], &es[i], 1);
+    for (int i = 0; i < j->sources.n; i++) fr_entry_free(&es[i]);
+    free(es);
+}
+
 static void *work(void *arg)
 {
     (void)arg;
@@ -392,6 +440,7 @@ static void *work(void *arg)
         case JOB_MOVE: run_move(j); break;
         case JOB_DELETE: run_delete(j); break;
         case JOB_TRASH: run_trash(j); break;
+        case JOB_CHMOD: run_chmod(j); break;
         }
         pthread_mutex_lock(&lock);
         j->st.state = j->cancel ? JOB_CANCELLED : JOB_DONE;
@@ -432,7 +481,7 @@ void fr_jobs_stop(void)
     started = stopping = 0;
 }
 
-int fr_job_submit(fr_job_kind kind, const fr_strs *sources, const char *dest_dir)
+static job *job_new(fr_job_kind kind, const fr_strs *sources, const char *dest_dir)
 {
     job *j = fr_realloc(NULL, sizeof *j);
     *j = (job){0};
@@ -445,6 +494,11 @@ int fr_job_submit(fr_job_kind kind, const fr_strs *sources, const char *dest_dir
         snprintf(j->st.dest_name, sizeof j->st.dest_name, "%s", *name ? name : "/");
         free(name);
     }
+    return j;
+}
+
+static int job_queue(job *j)
+{
     pthread_mutex_lock(&lock);
     j->st.id = next_id++;
     FR_PUSH(jobs, j);
@@ -452,6 +506,18 @@ int fr_job_submit(fr_job_kind kind, const fr_strs *sources, const char *dest_dir
     int id = j->st.id;
     pthread_mutex_unlock(&lock);
     return id;
+}
+
+int fr_job_submit(fr_job_kind kind, const fr_strs *sources, const char *dest_dir)
+{
+    return job_queue(job_new(kind, sources, dest_dir));
+}
+
+int fr_job_submit_chmod(const fr_strs *sources, uint32_t set, uint32_t clear)
+{
+    job *j = job_new(JOB_CHMOD, sources, NULL);
+    j->mode_set = set & 07777, j->mode_clear = clear & 07777;
+    return job_queue(j);
 }
 
 int fr_jobs_list(fr_job_status *out, int max)

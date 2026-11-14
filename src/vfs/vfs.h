@@ -40,6 +40,7 @@ typedef struct {
     int (*set_mtime)(const char *uri, int64_t mtime);
     int (*copy_link)(const char *from, const char *to); /* recreates a symlink */
     int (*free_space)(const char *uri, uint64_t *free_bytes, uint64_t *total_bytes);
+    int (*set_mode)(const char *uri, uint32_t mode); /* the permission bits (07777), of a symlink's target */
 } fr_backend;
 
 const fr_backend *fr_vfs_backend(const char *uri);
@@ -54,7 +55,25 @@ int fr_vfs_rename(const char *from, const char *to);
 int fr_vfs_remove(const char *uri);
 int fr_vfs_trash(const char *uri); /* -ENOTSUP where there is no trash */
 int fr_vfs_can_trash(const char *uri);
+int fr_vfs_set_mode(const char *uri, uint32_t mode); /* -ENOTSUP where the storage has no permissions */
 const char *fr_vfs_error(int err);
+
+/* ---- permission bits and trees (vfs_tree.c) ---- */
+void fr_mode_rwx(uint32_t mode, char out[10]);  /* "rwxr-sr-t", as ls -l writes them */
+void fr_mode_octal(uint32_t mode, char out[6]); /* "0755", "4755" */
+/* old with the bits in clear taken away and those in set added; a folder inside a tree being changed also gets
+ * execute (search) wherever it gets read, so what is below it stays reachable */
+uint32_t fr_mode_edit(uint32_t old, uint32_t set, uint32_t clear, int folder_inside);
+
+typedef struct {
+    uint64_t bytes;  /* of the files; links are not followed */
+    int64_t files;   /* everything that is not a folder, links included */
+    int64_t folders;
+    int64_t unreadable; /* folders that could not be listed */
+} fr_tree_count;
+/* adds uri and everything under it to c, which another thread may read meanwhile (__atomic loads); stops early once
+ * *cancel is set */
+void fr_vfs_measure(const char *uri, fr_tree_count *c, const int *cancel);
 
 void fr_entry_free(fr_entry *e);
 void fr_entries_free(fr_entries *e);

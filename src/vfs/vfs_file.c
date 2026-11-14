@@ -166,6 +166,8 @@ static int file_free_space(const char *uri, uint64_t *free_bytes, uint64_t *tota
     return 0;
 }
 
+static int file_set_mode(const char *uri, uint32_t mode) { return chmod(fr_uri_path(uri), (mode_t)mode) ? -errno : 0; }
+
 #ifdef __ANDROID__
 #define file_trash NULL
 #else
@@ -186,4 +188,5 @@ const fr_backend fr_backend_file = {
     .set_mtime = file_set_mtime,
     .copy_link = file_copy_link,
     .free_space = file_free_space,
+    .set_mode = file_set_mode,
 };

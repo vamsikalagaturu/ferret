@@ -19,6 +19,7 @@ int ops_dialog_open(void) { return dlg != DLG_NONE; }
 
 static void dlg_close(void)
 {
+    if (dlg == DLG_PROPERTIES) props_close();
     dlg = DLG_NONE;
     free(dlg_uri);
     dlg_uri = NULL;
@@ -124,61 +125,11 @@ void ops_new_start(void)
     dlg = DLG_NEW_FOLDER;
 }
 
-static void describe_mode(uint32_t mode, char out[10])
-{
-    const char *rwx = "rwxrwxrwx";
-    for (int i = 0; i < 9; i++) out[i] = mode & (1u << (8 - i)) ? rwx[i] : '-';
-    out[9] = 0;
-}
-
 void ops_properties(void)
 {
     fr_strs uris = targets();
     if (!uris.n) return;
-    char *out = dlg_message;
-    size_t room = sizeof dlg_message;
-    if (uris.n == 1) {
-        fr_entry e = {0};
-        if (!fr_vfs_stat(uris.v[0], &e)) {
-            char size[32] = "", date[64], mode[10];
-            time_t t = (time_t)e.mtime;
-            struct tm tm;
-            localtime_r(&t, &tm);
-            strftime(date, sizeof date, "%Y-%m-%d %H:%M", &tm);
-            describe_mode(e.mode, mode);
-            fr_kind k = kind_of(e.name, e.is_dir);
-            snprintf(dlg_title, sizeof dlg_title, "%s", e.name);
-            const char *path = fr_uri_local(uris.v[0]);
-            if (e.is_dir) {
-                fr_entries kids = {0};
-                int rc = fr_vfs_list(uris.v[0], &kids);
-                if (!rc) snprintf(size, sizeof size, "%d items", kids.n);
-                fr_entries_free(&kids);
-            } else {
-                fr_format_size(e.size, size, sizeof size);
-                char exact[48];
-                snprintf(exact, sizeof exact, " (%llu bytes)", (unsigned long long)e.size);
-                strncat(size, exact, sizeof size - strlen(size) - 1);
-            }
-            snprintf(out, room, "Kind: %s%s\n%s%s%sModified: %s\nPermissions: %s\nLocation: %s", kind_label(k),
-                         e.is_link ? " (link)" : "", *size ? (e.is_dir ? "Contains: " : "Size: ") : "", size,
-                         *size ? "\n" : "", date, mode, path ? path : uris.v[0]);
-        }
-        fr_entry_free(&e);
-    } else {
-        uint64_t total = 0;
-        int dirs = 0;
-        for (int i = 0; i < uris.n; i++) {
-            fr_entry e = {0};
-            if (!fr_vfs_stat(uris.v[i], &e)) total += e.size, dirs += e.is_dir;
-            fr_entry_free(&e);
-        }
-        char size[32];
-        fr_format_size(total, size, sizeof size);
-        snprintf(dlg_title, sizeof dlg_title, "%d items", uris.n);
-        snprintf(out, room, "%d folders, %d files\nFiles' size: %s", dirs, uris.n - dirs, size);
-    }
-    fr_strs_free(&uris);
+    props_open(&uris);
     dlg = DLG_PROPERTIES;
 }
 
@@ -255,9 +206,10 @@ void ops_poll_jobs(void)
     int n = fr_jobs_list(st, 16);
     for (int i = 0; i < n; i++) {
         if (st[i].state != JOB_DONE && st[i].state != JOB_CANCELLED) continue;
-        static const char *done[] = {"Copied", "Moved", "Deleted", "Moved to the trash"};
+        static const char *done[] = {"Copied", "Moved", "Deleted", "Moved to the trash", "Changed the permissions of"};
         if (st[i].state == JOB_CANCELLED) ui_toast("Cancelled");
         else if (st[i].failed) {
+            if (dlg == DLG_PROPERTIES) props_close();
             dlg = DLG_ERROR;
             snprintf(dlg_title, sizeof dlg_title, "%d %s could not be done", st[i].failed, st[i].failed == 1 ? "item" : "items");
             snprintf(dlg_message, sizeof dlg_message, "%s", st[i].error);
@@ -297,7 +249,7 @@ float ops_draw_jobs(Rectangle area)
     Rectangle r = {area.x, area.y + area.height - h, area.width, h};
     ui_rect(r, theme.surface);
     ui_hline(r.x, r.y, r.width, theme.border);
-    static const char *verbs[] = {"Copying", "Moving", "Deleting", "Moving to the trash"};
+    static const char *verbs[] = {"Copying", "Moving", "Deleting", "Moving to the trash", "Changing the permissions of"};
     char line[640];
     const char *what = j->items == 1 && j->current[0] ? j->current : NULL;
     if (j->kind <= JOB_MOVE) {
@@ -360,6 +312,8 @@ void ops_draw_dialogs(void)
         break;
     }
     case DLG_PROPERTIES:
+        if (!props_draw()) dlg_close();
+        break;
     case DLG_ERROR: {
         fr_dialog d = {.title = dlg_title, .message = dlg_message, .buttons = {"Close"}, .nbuttons = 1, .cancel = 0};
         if (ui_dialog(&d) >= 0) dlg_close();
