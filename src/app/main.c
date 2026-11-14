@@ -49,6 +49,10 @@ static void draw_menus(void)
         if (ui_menu_item("Reverse order", NULL, br.desc)) br.desc = !br.desc, browser_rebuild_view();
         if (ui_menu_item("Show hidden", NULL, br.show_hidden)) br.show_hidden = !br.show_hidden, browser_rebuild_view();
         ui_menu_separator();
+        static const char *layouts[] = {"Details", "Columns", "Grid"};
+        for (int i = 0; i < 3; i++)
+            if (ui_menu_item(layouts[i], NULL, app.layout == (fr_layout)i)) view_set_layout((fr_layout)i);
+        ui_menu_separator();
         if (ui_menu_item("Refresh", "refresh-cw", -1)) browser_reload();
         ui_menu_end();
     }

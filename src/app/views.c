@@ -1,23 +1,41 @@
-#include "app.h"
+#include "views.h"
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <time.h>
+
+/* The layout in effect and the grid's columns depend on the width view_draw last had. */
+static float shown_w;
+static char *shown_uri;
+static int reveal_pending;
+
+static fr_layout layout_in_effect(void)
+{
+    if (app.layout == LAYOUT_COLUMNS && (ui.touch || shown_w < DP(720))) return LAYOUT_DETAILS;
+    return app.layout;
+}
 
 void view_set_layout(fr_layout layout)
 {
     app.layout = layout;
+    reveal_pending = 1;
     ui.dirty = 1;
 }
 
-int view_grid_columns(void) { return 1; }
+int view_grid_columns(void) { return layout_in_effect() == LAYOUT_GRID ? grid_columns_for(shown_w) : 1; }
 
 void view_reveal(int v)
 {
+    if (layout_in_effect() == LAYOUT_GRID) {
+        grid_reveal(v, shown_w);
+        return;
+    }
     float rh = app_row_height();
     ui_scroll_to(&br.scroll, v * rh, (v + 1) * rh);
 }
 
-static void row_pressed(int v, int right_click)
+void view_row_pressed(int v, int right_click)
 {
     fr_item *it = browser_item(v);
     if (!it) return;
@@ -59,13 +77,117 @@ static void row_pressed(int v, int right_click)
     }
 }
 
-static void draw_row(int v, Rectangle row, int compact)
+void view_background_input(Rectangle r)
+{
+    if (ui.touch || !ui_hover(r)) return;
+    if (ui.pressed && !(IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_LEFT_SHIFT))) browser_clear_selection();
+    if (ui.rpressed) ui_menu_open(app.menu_bg, (Rectangle){ui.mouse.x, ui.mouse.y, 0, 0});
+}
+
+/* ---- names on up to two lines ---- */
+
+static int is_break(char c) { return c == ' ' || c == '-' || c == '_'; }
+
+void view_draw_name(const char *s, Rectangle r, float size_dp, Color c)
+{
+    float lh = ui_line_height(size_dp);
+    int n = (int)strlen(s);
+    int stops[512], nstops = 0;
+    if (ui_text_width_n(s, n, size_dp, FONT_REGULAR) <= r.width || n >= (int)(sizeof stops / sizeof *stops)) {
+        ui_text_box(s, (Rectangle){r.x, r.y, r.width, lh}, size_dp, FONT_REGULAR, c, ALIGN_CENTER, 1);
+        return;
+    }
+    for (int i = 0; i < n; i = fr_utf8_next(s, n, i)) stops[nstops++] = i;
+    stops[nstops++] = n;
+    int lo = 0, hi = nstops - 1; /* stops[lo] fits, stops[hi] does not */
+    while (hi - lo > 1) {
+        int mid = (lo + hi) / 2;
+        if (ui_text_width_n(s, stops[mid], size_dp, FONT_REGULAR) <= r.width) lo = mid;
+        else hi = mid;
+    }
+    int k = stops[lo];
+    for (int i = k; i > k / 2; i--)
+        if (is_break(s[i - 1])) {
+            k = i;
+            break;
+        }
+    if (k <= 0) k = stops[1];
+    char line[512];
+    int len = k;
+    while (len > 0 && s[len - 1] == ' ') len--;
+    memcpy(line, s, (size_t)len);
+    line[len] = 0;
+    ui_text_box(line, (Rectangle){r.x, r.y, r.width, lh}, size_dp, FONT_REGULAR, c, ALIGN_CENTER, 0);
+    const char *rest = s + k;
+    while (*rest == ' ') rest++;
+    ui_text_box(rest, (Rectangle){r.x, r.y + lh, r.width, lh}, size_dp, FONT_REGULAR, c, ALIGN_CENTER, 1);
+}
+
+/* ---- details ---- */
+
+typedef struct {
+    float name, name_w, size, size_w, date, date_w, kind, kind_w;
+} cells;
+
+/* Header and rows share these; narrow lists drop Kind, then Modified. */
+static cells cells_for(Rectangle row)
+{
+    float pad = DP(12), gap = DP(16), x = row.x + row.width - pad;
+    cells c = {0};
+    c.kind_w = row.width >= DP(640) ? DP(110) : 0;
+    c.date_w = row.width >= DP(480) ? DP(120) : 0;
+    c.size_w = DP(80);
+    if (c.kind_w) c.kind = x - c.kind_w, x = c.kind - gap;
+    if (c.date_w) c.date = x - c.date_w, x = c.date - gap;
+    c.size = x - c.size_w, x = c.size - gap;
+    c.name = row.x + pad + DP(28) + DP(8);
+    c.name_w = x - c.name;
+    return c;
+}
+
+static void draw_header(Rectangle h)
+{
+    cells c = cells_for(h);
+    float gap = DP(16);
+    struct {
+        const char *label;
+        fr_sort sort;
+        float x, w;
+        int right;
+    } cols[] = {{"Name", SORT_NAME, c.name, c.name_w, 0},
+                {"Size", SORT_SIZE, c.size, c.size_w, 1},
+                {"Modified", SORT_DATE, c.date, c.date_w, 0},
+                {"Kind", SORT_KIND, c.kind, c.kind_w, 0}};
+    for (int i = 0; i < 4; i++) {
+        if (cols[i].w <= 0) continue;
+        Rectangle hit = {cols[i].x - gap / 2, h.y, cols[i].w + gap, h.height};
+        if (i == 0) hit.width += hit.x - h.x, hit.x = h.x;
+        int state;
+        if (ui_clickable(ui_id("sort", i), hit, &state)) {
+            if (br.sort == cols[i].sort) br.desc = !br.desc;
+            else br.sort = cols[i].sort, br.desc = 0;
+            browser_rebuild_view();
+        }
+        if (state) ui_rect(hit, state == 2 ? theme.pressed : theme.hover);
+        int on = br.sort == cols[i].sort;
+        float lw = ui_text_width(cols[i].label, 13, FONT_SEMIBOLD), iw = DP(16);
+        float lx = cols[i].right ? cols[i].x + cols[i].w - lw : cols[i].x;
+        ui_text_box(cols[i].label, (Rectangle){lx, h.y, lw, h.height}, 13, FONT_SEMIBOLD, on ? theme.text : theme.text_dim, ALIGN_LEFT, 0);
+        if (on) {
+            Rectangle ib = {cols[i].right ? lx - iw - DP(2) : lx + lw + DP(2), h.y, iw, h.height};
+            ui_icon(br.desc ? "chevron-down" : "chevron-up", ib, 14, theme.text_dim);
+        }
+    }
+    ui_hline(h.x, h.y + h.height - DP(1), h.width, theme.border);
+}
+
+static void draw_row(int v, Rectangle row, Rectangle area)
 {
     fr_item *it = browser_item(v);
-    int state;
-    unsigned id = ui_id("row", v);
-    int clicked = ui_clickable(id, row, &state);
-    int right = ui_hover(row) && ui.rpressed;
+    int compact = !ui.touch, state;
+    Rectangle hit = GetCollisionRec(row, area);
+    int clicked = ui_clickable(ui_id("row", v), hit, &state);
+    int right = ui_hover(hit) && ui.rpressed;
     if (it->selected) ui_rect(row, theme.selection);
     else if (state) ui_rect(row, state == 2 ? theme.pressed : theme.hover);
     if (!ui.touch && br.keyboard && v == br.cursor && !it->selected)
@@ -86,11 +208,11 @@ static void draw_row(int v, Rectangle row, int compact)
     float tx = icon.x + icon_w + DP(compact ? 8 : 12), tw = row.x + row.width - pad - tx;
     Color name_c = it->e.hidden ? theme.text_dim : theme.text;
     if (compact) {
-        float date_w = row.width > DP(560) ? DP(120) : 0, size_w = DP(90);
-        float name_w = tw - size_w - date_w - DP(8);
-        ui_text_box(it->e.name, (Rectangle){tx, row.y, name_w, row.height}, 14, FONT_REGULAR, name_c, ALIGN_LEFT, 1);
-        ui_text_box(size, (Rectangle){tx + name_w, row.y, size_w, row.height}, 13, FONT_REGULAR, theme.text_dim, ALIGN_RIGHT, 0);
-        if (date_w) ui_text_box(date, (Rectangle){tx + name_w + size_w, row.y, date_w, row.height}, 13, FONT_REGULAR, theme.text_dim, ALIGN_RIGHT, 0);
+        cells c = cells_for(row);
+        ui_text_box(it->e.name, (Rectangle){c.name, row.y, c.name_w, row.height}, 14, FONT_REGULAR, name_c, ALIGN_LEFT, 1);
+        ui_text_box(size, (Rectangle){c.size, row.y, c.size_w, row.height}, 13, FONT_REGULAR, theme.text_dim, ALIGN_RIGHT, 0);
+        if (c.date_w) ui_text_box(date, (Rectangle){c.date, row.y, c.date_w, row.height}, 13, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 0);
+        if (c.kind_w) ui_text_box(kind_label(it->kind), (Rectangle){c.kind, row.y, c.kind_w, row.height}, 13, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 0);
     } else {
         float line1 = row.y + DP(11), line2 = row.y + DP(35);
         ui_text_box(it->e.name, (Rectangle){tx, line1, tw, DP(20)}, 16, FONT_REGULAR, name_c, ALIGN_LEFT, 1);
@@ -99,11 +221,11 @@ static void draw_row(int v, Rectangle row, int compact)
         ui_text_box(size, (Rectangle){tx + tw - sw, line2, sw, DP(18)}, 13, FONT_REGULAR, theme.text_dim, ALIGN_RIGHT, 0);
     }
     ui_hline(tx, row.y + row.height - DP(1), row.x + row.width - tx, ui_alpha(theme.border, 0.6f));
-    if (clicked) row_pressed(v, 0);
-    else if (right) row_pressed(v, 1);
+    if (clicked) view_row_pressed(v, 0);
+    else if (right) view_row_pressed(v, 1);
 }
 
-static void draw_empty(Rectangle r, const char *icon, const char *title, const char *detail, int retry)
+void view_draw_empty(Rectangle r, const char *icon, const char *title, const char *detail, int retry)
 {
     float cy = r.y + r.height * 0.3f;
     ui_icon(icon, (Rectangle){r.x, cy, r.width, DP(56)}, 48, theme.text_faint);
@@ -115,9 +237,17 @@ static void draw_empty(Rectangle r, const char *icon, const char *title, const c
     }
 }
 
-static void draw_details(Rectangle r)
+int view_draw_folder_state(Rectangle r)
 {
-    int compact = !ui.touch;
+    if (br.error) view_draw_empty(r, "triangle-alert", "This folder cannot be shown", br.error, 1);
+    else if (!br.view.n && br.filtering && br.filter.len) view_draw_empty(r, "search", "Nothing matches", NULL, 0);
+    else if (!br.view.n) view_draw_empty(r, "folder-open", "Empty folder", br.items.n ? "Only hidden items are here" : NULL, 0);
+    else return 0;
+    return 1;
+}
+
+void view_list_draw(Rectangle r)
+{
     float rh = app_row_height(), content = br.view.n * rh + DP(ui.touch ? 96 : 24);
     ui_scroll(ui_id("list", 0), &br.scroll, r, content);
     int first = (int)(br.scroll.offset / rh), last = (int)((br.scroll.offset + r.height) / rh);
@@ -126,30 +256,41 @@ static void draw_details(Rectangle r)
     ui_clip_begin(r);
     for (int v = first; v <= last; v++) {
         Rectangle row = {r.x, roundf(r.y + v * rh - br.scroll.offset), r.width, rh};
-        draw_row(v, row, compact);
+        draw_row(v, row, r);
     }
     ui_clip_end();
     Rectangle below = {r.x, r.y + (last + 1) * rh - br.scroll.offset, r.width, 0};
     below.height = r.y + r.height - below.y;
-    if (below.height > 0 && ui_hover(below)) {
-        if (ui.pressed && !ui.touch && !(IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_LEFT_SHIFT))) browser_clear_selection();
-        if (ui.rpressed && !ui.touch) ui_menu_open(app.menu_bg, (Rectangle){ui.mouse.x, ui.mouse.y, 0, 0});
+    if (below.height > 0) view_background_input(below);
+}
+
+static void draw_details(Rectangle r)
+{
+    if (!ui.touch) {
+        float hh = DP(30);
+        draw_header((Rectangle){r.x, r.y, r.width, hh});
+        r.y += hh, r.height -= hh;
     }
+    view_list_draw(r);
 }
 
 void view_draw(Rectangle r)
 {
     ui_rect(r, theme.bg);
-    if (br.error) {
-        draw_empty(r, "triangle-alert", "This folder cannot be shown", br.error, 1);
-        return;
+    shown_w = r.width;
+    if (!br.uri || !shown_uri || strcmp(shown_uri, br.uri)) {
+        free(shown_uri);
+        shown_uri = br.uri ? fr_strdup(br.uri) : NULL;
+        reveal_pending = 1;
     }
-    if (!br.view.n) {
-        if (br.filtering && br.filter.len) draw_empty(r, "search", "Nothing matches", NULL, 0);
-        else draw_empty(r, "folder-open", "Empty folder", br.items.n ? "Only hidden items are here" : NULL, 0);
-        return;
+    if (reveal_pending && br.cursor >= 0) {
+        view_reveal(br.cursor);
+        br.scroll.offset = br.scroll.target;
     }
-    switch (app.layout) {
-    default: draw_details(r); break;
-    }
+    reveal_pending = 0;
+    fr_layout layout = layout_in_effect();
+    if (layout == LAYOUT_COLUMNS) columns_draw(r);
+    else if (view_draw_folder_state(r)) return;
+    else if (layout == LAYOUT_GRID) grid_draw(r);
+    else draw_details(r);
 }
