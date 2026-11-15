@@ -331,6 +331,7 @@ static int frame(void)
 static void between_frames(int keys)
 {
     run_deferred();
+    thumbs_poll();
     if (keys) keys_handle();
     if (!app.storage_ok) return;
     if (app_wide() || app.drawer_open) places_refresh(0);
@@ -353,6 +354,7 @@ int fr_app_main(int argc, char **argv)
     theme_load(settings.theme);
     if (!replay) ui_input_init();
     fr_jobs_start(plat_wake);
+    thumbs_start();
     app.menu_more = ui_id("menu-more", 0), app.menu_row = ui_id("menu-row", 0), app.menu_bg = ui_id("menu-bg", 0);
     app.menu_selection = ui_id("menu-selection", 0);
     char *start = NULL;
@@ -391,6 +393,7 @@ int fr_app_main(int argc, char **argv)
         }
     }
     fr_jobs_stop();
+    thumbs_stop();
     plat_close_window();
     return replay ? replay_status() : 0;
 }

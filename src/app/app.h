@@ -114,6 +114,14 @@ int view_grid_columns(void); /* items per row in the grid layout, 1 in the other
 void view_flash(const fr_item *it, Rectangle r); /* the yank flash over a row or tile */
 void browser_flash_targets(void); /* flashes the selected rows, else the cursor row */
 
+/* ---- image thumbnails (thumbnails.c) ---- */
+void thumbs_start(void);
+void thumbs_stop(void); /* before the window closes */
+void thumbs_poll(void); /* between frames: asks for what the frame lacked, uploads what is ready */
+int thumbs_busy(void);
+/* its thumbnail fitted in box, aspect kept: 1 drawn, 0 not ready yet, -1 it has none */
+int thumb_draw(const fr_item *it, Rectangle box);
+
 /* ---- settings.toml, favorites, theme overrides (settings.c) ---- */
 typedef struct {
     fr_strs favorites; /* URIs, in the order shown */

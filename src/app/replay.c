@@ -7,7 +7,8 @@
  *                     tile of the folder shown), "place LABEL" (a sidebar row: a place or a favorite)
  *   wheel DY, wait FRAMES, shot FILE.png, quit
  *   expect folder|cursor|selected|exists|missing|mode|clipboard|layout|toast VALUE
- * Between commands the window runs until it is idle: nothing to redraw, no queued input, no job running.
+ * Between commands the window runs until it is idle: nothing to redraw, no queued input, no job running, no
+ * thumbnail being made.
  * Relative paths start at FOLDER. Failures go to stderr as SCRIPT:LINE: ...; the exit status is 1 after any. */
 #define _GNU_SOURCE
 #include "app.h"
@@ -288,7 +289,7 @@ void replay_capture(void)
 
 int replay_frame(void)
 {
-    int idle = !ui.dirty && !ui_events_pending() && !jobs_busy();
+    int idle = !ui.dirty && !ui_events_pending() && !jobs_busy() && !thumbs_busy();
     ui.dirty = 1;
     if (rp.wait > 0) return rp.wait--, 1;
     if (!idle && ++rp.settling < IDLE_FRAMES_MAX) return 1;
