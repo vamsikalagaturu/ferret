@@ -44,12 +44,30 @@ key g
 key 2
 expect toast No favorite 2
 
-# a right click on a favorite removes it
+# a right click on a favorite opens its menu (positions at this zoom): Esc keeps it, Move down, Remove
+key h
+dclick row beta
+key M
+key h
 rclick place alpha
-expect toast Removed alpha
+key esc
 key g
 key 1
-expect toast No favorite 1
+expect folder alpha
+rclick place alpha
+click 141 146
+key g
+key 1
+expect folder beta
+key g
+key 2
+expect folder alpha
+rclick place alpha
+click 160 203
+expect toast Removed alpha
+key g
+key 2
+expect toast No favorite 2
 
 # the key g waits for the next one: g then Esc, then 1 types nothing
 key g

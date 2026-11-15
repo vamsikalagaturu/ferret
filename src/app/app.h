@@ -225,6 +225,10 @@ int favorite_index(const char *uri); /* -1 when not a favorite */
 void favorite_toggle(const char *uri);
 int server_index(const char *uri); /* -1 when not in the Network section */
 void server_set(const char *uri, int on); /* adds it to the Network section, or takes it out */
+void favorite_move(const char *uri, int by); /* one place up (-1) or down (+1) */
+void server_move(const char *uri, int by);
+void place_menu_open(const char *uri, int server); /* the sidebar's right-click menu on a favorite or saved server */
+void place_menu_draw(void);
 void recent_visit(const char *uri); /* a folder listed after it was opened: to the front of the recent ones */
 void recent_pick(void);             /* the recent folders in a list to go to one */
 void theme_apply(void);             /* the scheme (the system's, for SCHEME_SYSTEM) and [theme] into the colours */

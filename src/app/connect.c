@@ -173,10 +173,7 @@ float network_draw(Rectangle r, float y, float ih)
         const char *uri = settings.servers.v[i];
         Rectangle row = {r.x + DP(8), y, r.width - DP(16), ih};
         char *label = fr_net_label(uri);
-        if (ui_hover(row) && ui.rpressed && ui_live()) {
-            ui_toast("Removed %s from the sidebar", label);
-            server_set(uri, 0);
-        }
+        if (ui_hover(row) && ui.rpressed && ui_live()) place_menu_open(uri, 1);
         int state, sel = i == current;
         if (ui_clickable(ui_id("server", i), row, &state)) {
             browser_open(uri, 1);

@@ -498,3 +498,20 @@ static void server_set_now(const char *uri, int on)
 }
 
 void server_set(const char *uri, int on) { app_defer(server_set_now, uri, on); }
+
+static void strs_move(fr_strs *s, const char *uri, int by)
+{
+    for (int i = 0; i < s->n; i++)
+        if (!strcmp(s->v[i], uri)) {
+            int j = i + by;
+            if (j < 0 || j >= s->n) return;
+            char *t = s->v[i];
+            s->v[i] = s->v[j], s->v[j] = t;
+            return;
+        }
+}
+
+static void favorite_move_now(const char *uri, int by) { strs_move(&settings.favorites, uri, by); }
+static void server_move_now(const char *uri, int by) { strs_move(&settings.servers, uri, by); }
+void favorite_move(const char *uri, int by) { app_defer(favorite_move_now, uri, by); }
+void server_move(const char *uri, int by) { app_defer(server_move_now, uri, by); }

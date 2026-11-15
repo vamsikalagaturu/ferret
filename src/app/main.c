@@ -191,6 +191,7 @@ static void draw_menus(void)
         if (ui_menu_item("Refresh", "refresh-cw", -1)) browser_reload();
         ui_menu_end();
     }
+    place_menu_draw();
     if (ui_menu_begin(app.menu_row)) {
         fr_item *it = browser_item(br.cursor);
         if (br.nselected == 1 && it && ui_menu_item("Open", "external-link", -1)) ops_open_item(it);

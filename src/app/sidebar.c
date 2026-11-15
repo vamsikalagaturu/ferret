@@ -1,4 +1,5 @@
 #include "app.h"
+#include "net/net.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -100,6 +101,55 @@ static int disk_of(const char *uri)
 }
 
 /* the disks view's row: "Manage disks" heading the disks, "Storage" after the places where there is no disk manager */
+static struct {
+    unsigned id;
+    char *uri;
+    int server;
+} place_menu;
+
+void place_menu_open(const char *uri, int server)
+{
+    if (!place_menu.id) place_menu.id = ui_id("menu-place", 0);
+    free(place_menu.uri);
+    place_menu.uri = fr_strdup(uri);
+    place_menu.server = server;
+    ui_menu_open(place_menu.id, (Rectangle){ui.mouse.x, ui.mouse.y, 0, 0});
+}
+
+void place_menu_draw(void)
+{
+    if (!place_menu.id || !ui_menu_begin(place_menu.id)) return;
+    const char *uri = place_menu.uri;
+    int server = place_menu.server, i = server ? server_index(uri) : favorite_index(uri), n = server ? settings.servers.n : settings.favorites.n;
+    if (i < 0) {
+        ui_menu_end();
+        return;
+    }
+    if (ui_menu_item("Open", "folder-open", -1)) {
+        dview_close();
+        browser_open(uri, 1);
+        app.drawer_open = 0;
+    }
+    if (!ui.touch && ui_menu_item("Open in a new tab", "plus", -1)) tab_new(uri, 1);
+    if (app_split() && ui_menu_item("Open in the other pane", "columns-2", -1)) {
+        dview_close();
+        pane_switch();
+        browser_open(uri, 1);
+    }
+    ui_menu_separator();
+    if (i > 0 && ui_menu_item("Move up", "arrow-up", -1)) server ? server_move(uri, -1) : favorite_move(uri, -1);
+    if (i < n - 1 && ui_menu_item("Move down", "arrow-down", -1)) server ? server_move(uri, 1) : favorite_move(uri, 1);
+    if (n > 1) ui_menu_separator();
+    if (ui_menu_item(server ? "Remove from the sidebar" : "Remove from favorites", server ? "trash" : "star-off", -1)) {
+        char *name = server ? fr_net_label(uri) : fr_uri_name(uri);
+        ui_toast(server ? "Removed %s from the sidebar" : "Removed %s from favorites", *name ? name : uri);
+        free(name);
+        if (server) server_set(uri, 0);
+        else favorite_toggle(uri);
+    }
+    ui_menu_end();
+}
+
 static float manage_row(Rectangle r, float y, float ih)
 {
     Rectangle row = {r.x + DP(8), y, r.width - DP(16), ih};
@@ -196,13 +246,7 @@ void places_draw(Rectangle r)
         int state;
         char *name = fr_uri_name(uri);
         if (!*name) free(name), name = fr_strdup(fr_uri_local(uri) ? "/" : uri);
-        if (ui_hover(row) && ui.rpressed) {
-            ui_toast("Removed %s from favorites", name);
-            favorite_toggle(uri);
-            free(name);
-            ui.dirty = 1;
-            break;
-        }
+        if (ui_hover(row) && ui.rpressed && ui_live()) place_menu_open(uri, 0);
         if (ui_clickable(ui_id("favorite", i), row, &state)) {
             dview_close();
             browser_open(uri, 1);
