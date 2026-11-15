@@ -188,9 +188,9 @@ static void draw_menus(void)
         if (ui_menu_item("Show hidden", "eye", br.show_hidden)) br.show_hidden = !br.show_hidden, browser_rebuild_view();
         if (!ui.touch && ui_menu_item("Show git status", "list-checks", settings.git_status)) settings.git_status = !settings.git_status;
         if (link_here() && ui_menu_item("Paste as link", "link", -1)) links_paste(-1);
-        if (ui_menu_item("Find duplicates below", "file-stack", -1)) dupes_start();
-        if (br.dupes && br.view.n && ui_menu_item("Select all but the first of each group", "list-checks", -1)) dupes_select_copies();
-        if (ui_menu_item(sizes_running() ? "Stop measuring folders" : "Measure the folders' sizes", "ruler", -1)) sizes_measure(1);
+        if (ui_menu_item("Find duplicate files", "file-stack", -1)) dupes_start();
+        if (br.dupes && br.view.n && ui_menu_item("Select extra copies", "list-checks", -1)) dupes_select_copies();
+        if (ui_menu_item(sizes_running() ? "Stop calculating sizes" : "Show folder sizes", "ruler", -1)) sizes_measure(1);
         if (ui_menu_item("Bookmarks", "bookmark", -1)) bookmarks_panel_open();
         if (settings.recent.n > 1 && ui_menu_item("Recent folders", "history", -1)) recent_pick();
         if (ops_clip_history_count() && ui_menu_item("Paste from history", "clipboard-paste", -1)) ops_clip_history();
@@ -223,7 +223,7 @@ static void draw_menus(void)
         if (app_split() && ui_menu_item("Move to the other pane", "scissors", -1)) ops_to_other_pane(1);
         if (!ui.touch && br.uri && fr_uri_local(br.uri) && ui_menu_item("Copy as link", "link", -1)) links_yank();
         if (it && it->e.is_dir && br.nselected <= 1 && ui_menu_item("Open in a new tab", "plus", -1)) view_open_in_tab(br.cursor);
-        if (it && it->e.is_dir && ui_menu_item(sizes_running() ? "Stop measuring folders" : "Measure the size", "ruler", -1)) sizes_measure(0);
+        if (it && it->e.is_dir && ui_menu_item(sizes_running() ? "Stop calculating sizes" : "Show folder size", "ruler", -1)) sizes_measure(0);
         if (br.nselected == 1 && ui_menu_item("Rename", "pencil", -1)) ops_rename_start();
         rename_items();
         if (br.results && br.nselected == 1 && ui_menu_item("Show in folder", "folder-open", -1)) search_reveal();
@@ -328,8 +328,8 @@ static const char *const shortcuts[][2] = {
     {"g-", "recent folders (the last 20)"},
     {"m<key>", "bookmark this folder as key (a letter or digit)"}, {"'<key>", "go to that bookmark"},
     {"''", "back to the folder shown before"}, {"\"<key>", "remove that bookmark"},
-    {"dc", "folder sizes: the targets', else all shown (again: stop)"},
-    {"fd", "find duplicate files below this folder"}, {"fD", "in the duplicates: select all but the first of each group"},
+    {"dc", "show folder sizes: the selected ones, else all (again: stop)"},
+    {"fd", "find duplicate files (here and in subfolders)"}, {"fD", "in the duplicates: select the extra copies (one of each kept)"},
     {"Ctrl+= / Ctrl+- / Ctrl+0", "bigger / smaller / default interface"},
     {"Ctrl+Alt+= / - / 0", "bigger / smaller / default text"},
     {"F5, Ctrl+R", "refresh (Ctrl+R in the split view)"}, {"gd", "disks (the disk manager)"},

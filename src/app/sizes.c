@@ -135,7 +135,7 @@ void sizes_measure(int all)
     task *running = task_of(br.id);
     if (running) {
         __atomic_store_n(&running->d->cancel, 1, __ATOMIC_RELAXED);
-        ui_toast("Stopped measuring");
+        ui_toast("Stopped calculating sizes");
         ui.dirty = 1;
         return;
     }

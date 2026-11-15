@@ -77,7 +77,7 @@ type from-menu
 key enter
 expect exists from-menu
 
-# Rename from a folder's menu (Open, Copy, Cut, Copy as link, Open in a new tab, Measure the size, Rename) opens the
+# Rename from a folder's menu (Open, Copy, Cut, Copy as link, Open in a new tab, Show folder size, Rename) opens the
 # rename dialog
 rclick row from-menu
 key down
