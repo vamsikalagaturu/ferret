@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Publishes the version in CMakeLists.txt's project() as GitHub release vX.Y.Z of vamsikalagaturu/ferret, which the
 # apps' updater reads (src/net/release.h): release builds (FR_RELEASE=1) for Linux and Android, the tag on the commit
-# built, and the assets ferret-linux-x86_64 and ferret.apk. Run on a clean main that is pushed.
+# built, and the assets ferret-linux-x86_64 and ferret.apk. .github/workflows/release.yml runs it once CI passed on
+# main; by hand, only on a clean main that is pushed.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

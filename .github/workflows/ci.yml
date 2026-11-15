@@ -1,0 +1,66 @@
+# Every PR into main, and main itself (the release workflow waits for this one): the Linux build with
+# AddressSanitizer and the unit tests, and the Android APK. The UI replay tests need a display and stay local.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build pkg-config \
+            libssl-dev libcurl4-openssl-dev libexpat1-dev zlib1g-dev libbz2-dev liblzma-dev libzstd-dev \
+            libsystemd-dev libsecret-1-dev libusb-1.0-0-dev libmtp-dev \
+            libwayland-dev libxkbcommon-dev wayland-protocols libx11-dev libxrandr-dev libxinerama-dev \
+            libxcursor-dev libxi-dev libgl1-mesa-dev
+      - name: Cache third-party builds
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ferret/linux
+          key: linux-${{ hashFiles('platform/versions.sh', 'platform/linux/deps.sh') }}
+      - name: Build and unit tests
+        run: platform/linux/build.sh debug
+
+  android:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: SDK packages
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;28.2.13676358" "build-tools;36.1.0" "platforms;android-36.1" >/dev/null
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build
+      - name: Cache third-party builds
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ferret/android
+            !~/.cache/ferret/android/debug.keystore
+            !~/.cache/ferret/android/out
+          key: android-${{ hashFiles('platform/versions.sh', 'platform/android/deps.sh') }}
+      - name: Build
+        run: platform/android/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ferret-apk
+          path: ~/.cache/ferret/android/out/ferret.apk
+          retention-days: 7
