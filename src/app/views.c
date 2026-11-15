@@ -227,6 +227,7 @@ static void draw_row(int v, Rectangle row, Rectangle area)
     int right = ui_hover(hit) && ui.rpressed;
     if (it->selected) ui_rect(row, theme.selection);
     else if (state) ui_rect(row, state == 2 ? theme.pressed : theme.hover);
+    marks_tint(it, row, 0);
     view_flash(it, row);
     if (!ui.touch && br.keyboard && v == br.cursor && !it->selected)
         ui_round_line((Rectangle){row.x + DP(2), row.y + DP(1), row.width - DP(4), row.height - DP(2)}, 4, ui_alpha(theme.accent, 0.5f));
@@ -247,12 +248,13 @@ static void draw_row(int v, Rectangle row, Rectangle area)
     fr_format_time(it->e.mtime, (int64_t)time(NULL), date, sizeof date);
     if (it->placeholder) size[0] = date[0] = 0;
     float tx = icon.x + icon_w + DP(compact ? 8 : 12), tw = row.x + row.width - pad - tx;
-    Color name_c = it->e.hidden ? theme.text_dim : theme.text;
+    Color name_c = marks_dimmed(it) ? theme.text_faint : it->e.hidden ? theme.text_dim : theme.text;
     int editing;
     if (compact) {
         cells c = cells_for(row);
         editing = keys_insert_field(v, (Rectangle){c.name - DP(12), row.y + DP(3), c.name_w + DP(12), row.height - DP(6)});
-        if (!editing) ui_text_box(it->e.name, (Rectangle){c.name, row.y, c.name_w, row.height}, 15, FONT_REGULAR, name_c, ALIGN_LEFT, 1);
+        float marks_w = editing ? 0 : marks_chips(it, (Rectangle){c.name, row.y, c.name_w, row.height}, c.name_w / 2);
+        if (!editing) ui_text_box(it->e.name, (Rectangle){c.name, row.y, c.name_w - marks_w, row.height}, 15, FONT_REGULAR, name_c, ALIGN_LEFT, 1);
         ui_text_box(size, (Rectangle){c.size, row.y, c.size_w, row.height}, 14, FONT_REGULAR, theme.text_dim, ALIGN_RIGHT, 0);
         if (c.date_w) ui_text_box(date, (Rectangle){c.date, row.y, c.date_w, row.height}, 14, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 0);
         if (c.kind_w) ui_text_box(kind_label(it->kind), (Rectangle){c.kind, row.y, c.kind_w, row.height}, 14, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 0);

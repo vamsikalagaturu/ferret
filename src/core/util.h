@@ -54,4 +54,7 @@ int fr_utf8_decode(const char *s, int len, int i, int *cp);
 int fr_utf8_encode(int cp, char out[4]);
 
 double fr_now(void); /* monotonic seconds */
+
+/* to as seen from the folder from_dir, both absolute: "/a/b", "/a/c/d" -> "../c/d"; "." when they are the same */
+char *fr_path_relative(const char *from_dir, const char *to);
 #endif

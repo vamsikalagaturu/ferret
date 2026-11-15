@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include "jobs.h"
 #include "vfs/vfs.h"
 #include "vfs/vfs_archive.h"
@@ -6,6 +7,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 typedef struct {
     fr_job_status st;
@@ -15,9 +18,9 @@ typedef struct {
     fr_conflict policy; /* an answer given "for all" */
     fr_conflict answer;
     int answered;
-    uint32_t mode_set, mode_clear;
-    int flag; /* JOB_EXTRACT: each into a folder of its own; JOB_CREATE: a folder */
-    fr_steps todo; /* JOB_STEPS */
+    fr_perm_change perm; /* JOB_CHMOD */
+    int flag; /* JOB_EXTRACT: each into a folder of its own; JOB_CREATE: a folder; JOB_LINK: relative */
+    fr_steps todo; /* JOB_STEPS, JOB_SYNC */
     /* the worker's alone until the job is done; then the window's, through fr_job_take_log */
     fr_steps log;
 } job;
@@ -259,7 +262,7 @@ static char *destination(job *j, const char *src, const fr_entry *e, int *replac
         free(dst);
         return fr_uri_free_name(j->dest, e->name, e->is_dir);
     }
-    if (e->is_dir && !e->is_link && fr_uri_within(src, j->dest)) {
+    if (e->is_dir && !e->is_link && j->st.kind != JOB_LINK && fr_uri_within(src, j->dest)) {
         fail(j, src, 0, j->st.kind == JOB_MOVE ? "a folder cannot be moved into itself"
                                                : "a folder cannot be copied into itself");
         return free(dst), NULL;
@@ -745,6 +748,23 @@ static void run_trash(job *j)
     }
 }
 
+/* the owner and group of a file on this device as the job asks; 0, or -1 after saying why */
+static int chown_one(job *j, const char *uri)
+{
+    const fr_perm_change *c = &j->perm;
+    if (c->uid < 0 && c->gid < 0) return 0;
+    const char *path = fr_uri_local(uri);
+    struct stat st;
+    if (!path) return fail(j, uri, -ENOTSUP, "the owner is changed only for files on this device"), -1;
+    if (lstat(path, &st)) return fail(j, uri, -errno, NULL), -1;
+    uid_t uid = c->uid >= 0 ? (uid_t)c->uid : st.st_uid;
+    gid_t gid = c->gid >= 0 ? (gid_t)c->gid : st.st_gid;
+    if (uid == st.st_uid && gid == st.st_gid) return 0;
+    if (lchown(path, uid, gid)) return fail(j, uri, -errno, NULL), -1;
+    fr_steps_add_chown(&j->log, uri, (uint32_t)st.st_uid, (uint32_t)st.st_gid, (uint32_t)uid, (uint32_t)gid);
+    return 0;
+}
+
 static void chmod_tree(job *j, const char *uri, const fr_entry *e, int top)
 {
     if (cancelled(j)) return;
@@ -754,9 +774,9 @@ static void chmod_tree(job *j, const char *uri, const fr_entry *e, int top)
     }
     set_current(j, uri);
     int folder = e->is_dir;
-    uint32_t mode = fr_mode_edit(e->mode, j->mode_set, j->mode_clear, folder && !top);
+    uint32_t mode = fr_perm_mode(&j->perm, e->mode, folder, top);
     int rc;
-    if (folder) {
+    if (folder && j->perm.recursive) {
         /* the owner keeps reading and searching the folder until what is inside is done */
         if ((e->mode & 0500) != 0500 || (mode & 0500) != 0500) fr_vfs_set_mode(uri, mode | 0500);
         fr_entries kids = {0};
@@ -768,11 +788,11 @@ static void chmod_tree(job *j, const char *uri, const fr_entry *e, int top)
         }
         fr_entries_free(&kids);
     }
-    if ((rc = fr_vfs_set_mode(uri, mode))) fail(j, uri, rc, NULL);
-    else {
-        if (mode != e->mode) fr_steps_add_chmod(&j->log, uri, e->mode, mode);
-        add_progress(j, 0, 1);
-    }
+    if (mode == (e->mode & 07777) && !(folder && j->perm.recursive && (e->mode & 0500) != 0500)) rc = 0;
+    else if ((rc = fr_vfs_set_mode(uri, mode))) fail(j, uri, rc, NULL);
+    else if (mode != (e->mode & 07777)) fr_steps_add_chmod(&j->log, uri, e->mode & 07777, mode);
+    /* after the bits: a chown by anyone but root takes setuid and setgid away, as chown(2) says */
+    if (!rc && !chown_one(j, uri)) add_progress(j, 0, 1);
 }
 
 static void run_chmod(job *j)
@@ -784,6 +804,7 @@ static void run_chmod(job *j)
         es[i] = (fr_entry){0};
         int rc = fr_vfs_stat(j->sources.v[i], &es[i]);
         if (rc) fail(j, j->sources.v[i], rc, NULL);
+        else if (!j->perm.recursive) files++;
         else if (!cancelled(j)) scan(j, j->sources.v[i], &es[i], &bytes, &files);
     }
     pthread_mutex_lock(&lock);
@@ -836,6 +857,180 @@ static int remove_empty(const char *uri)
     return rc ? rc : fr_vfs_remove(uri);
 }
 
+/* ---- replacing with a copy, links ---- */
+
+/* what is at dst out of the way: to the trash where there is one (*trashed), else deleted */
+static int put_aside(const char *dst, int *trashed)
+{
+    *trashed = 0;
+    if (!fr_vfs_can_trash(dst)) return remove_tree(NULL, dst, 0);
+    int rc = fr_vfs_trash(dst);
+    *trashed = !rc;
+    return rc;
+}
+
+/* src copied over dst, what was there put aside first and back again when the copy fails; reports its failure */
+static int replace_with_copy(job *j, const char *src, const char *dst, int *trashed)
+{
+    *trashed = 0;
+    fr_entry e = {0};
+    int rc = fr_vfs_stat(src, &e);
+    if (rc) return fail(j, src, rc, NULL), rc;
+    if (fr_vfs_exists(dst) && (rc = put_aside(dst, trashed))) {
+        fail(j, dst, rc, NULL);
+        fr_entry_free(&e);
+        return rc;
+    }
+    rc = copy_tree(j, src, &e, dst, 0);
+    fr_entry_free(&e);
+    if (rc && *trashed) {
+        remove_tree(NULL, dst, 0);
+        if (!fr_vfs_untrash(dst)) *trashed = 0;
+    }
+    return rc;
+}
+
+/* takes back replace_with_copy(): the copy at dst into the trash under a name of its own (so that what the trash
+ * gives back for dst is what was there before), and that back at dst */
+static int unreplace(job *j, const char *src, const char *dst)
+{
+    char *parent = fr_uri_parent(dst), *name = fr_uri_name(dst), *hidden = fr_format(".%s.ferret-undone", name);
+    char *aside = parent ? fr_uri_free_name(parent, hidden, 0) : NULL;
+    int rc = aside ? fr_vfs_rename(dst, aside) : -EINVAL;
+    if (!rc && (rc = fr_vfs_untrash(dst))) fr_vfs_rename(aside, dst);
+    if (rc) fail(j, dst, rc, NULL);
+    else if (fr_vfs_trash(aside)) fail(j, aside, 0, "the copy could not go to the trash; it is still there");
+    free(parent), free(name), free(hidden), free(aside);
+    return rc;
+}
+
+static int make_link(const char *link_uri, const char *target)
+{
+    const char *path = fr_uri_local(link_uri);
+    if (!path) return -ENOTSUP;
+    return symlink(target, path) ? -errno : 0;
+}
+
+/* only while link_uri is still a link to target */
+static int remove_link(const char *link_uri, const char *target)
+{
+    const char *path = fr_uri_local(link_uri);
+    if (!path) return -ENOTSUP;
+    char buf[4096];
+    ssize_t n = readlink(path, buf, sizeof buf - 1);
+    if (n < 0) return -errno;
+    buf[n] = 0;
+    if (target && strcmp(buf, target)) return -EEXIST;
+    return unlink(path) ? -errno : 0;
+}
+
+static void run_sync(job *j)
+{
+    uint64_t bytes = 0;
+    int files = 0;
+    for (int i = 0; i < j->todo.n && !cancelled(j); i++) {
+        const fr_step *s = &j->todo.v[i];
+        fr_entry e = {0};
+        if (s->kind == STEP_TRASH) files++;
+        else if (!fr_vfs_stat(s->a, &e)) scan(j, s->a, &e, &bytes, &files);
+        fr_entry_free(&e);
+    }
+    pthread_mutex_lock(&lock);
+    j->st.bytes_total = bytes, j->st.files_total = files;
+    pthread_mutex_unlock(&lock);
+    for (int i = 0; i < j->todo.n && !cancelled(j); i++) {
+        const fr_step *s = &j->todo.v[i];
+        int trashed = 0, rc;
+        if (s->kind == STEP_TRASH) {
+            set_current(j, s->a);
+            rc = put_aside(s->a, &trashed);
+            if (rc) fail(j, s->a, rc, NULL);
+            else {
+                if (trashed) fr_steps_add(&j->log, STEP_TRASH, s->a, NULL);
+                add_progress(j, 0, 1);
+            }
+            continue;
+        }
+        set_current(j, s->a);
+        char *dst = fr_strdup(s->b);
+        int replace = s->kind == STEP_REPLACED;
+        fr_entry e = {0}, there = {0};
+        if ((rc = fr_vfs_stat(s->a, &e))) {
+            fail(j, s->a, rc, NULL);
+            free(dst);
+            continue;
+        }
+        /* a copy that finds its name taken since the comparison asks, as any copy does */
+        if (!replace && !fr_vfs_stat(dst, &there)) {
+            int both_dirs = there.is_dir && !there.is_link && e.is_dir && !e.is_link;
+            switch (ask(j, dst, both_dirs)) {
+            case CONFLICT_REPLACE: replace = 1; break;
+            case CONFLICT_KEEP_BOTH: {
+                char *parent = fr_uri_parent(dst);
+                free(dst);
+                dst = fr_uri_free_name(parent, e.name, e.is_dir);
+                free(parent);
+                break;
+            }
+            default: free(dst), dst = NULL; break;
+            }
+        }
+        fr_entry_free(&there);
+        if (dst && replace) {
+            if (!replace_with_copy(j, s->a, dst, &trashed) && trashed) fr_steps_add(&j->log, STEP_REPLACED, s->a, dst);
+        } else if (dst && !copy_tree(j, s->a, &e, dst, 0))
+            fr_steps_add(&j->log, STEP_COPIED, s->a, dst);
+        fr_entry_free(&e);
+        free(dst);
+    }
+}
+
+static void run_link(job *j)
+{
+    pthread_mutex_lock(&lock);
+    j->st.files_total = j->sources.n;
+    pthread_mutex_unlock(&lock);
+    const char *dir = fr_uri_local(j->dest);
+    if (!dir) {
+        fail(j, j->dest, -ENOTSUP, "links are made only in folders on this device");
+        return;
+    }
+    /* the kernel follows a relative link from the folder it is really in */
+    char *real_dir = realpath(dir, NULL);
+    for (int i = 0; i < j->sources.n && !cancelled(j); i++) {
+        const char *src = j->sources.v[i], *path = fr_uri_local(src);
+        set_current(j, src);
+        fr_entry e = {0};
+        int rc = path ? fr_vfs_stat(src, &e) : -ENOTSUP;
+        if (rc) {
+            fail(j, src, rc, rc == -ENOTSUP ? "links are made only to files on this device" : NULL);
+            continue;
+        }
+        int replace, trashed = 0;
+        char *dst = destination(j, src, &e, &replace), *target = NULL;
+        if (dst && replace && (rc = put_aside(dst, &trashed))) fail(j, dst, rc, NULL);
+        else if (dst) {
+            if (trashed) fr_steps_add(&j->log, STEP_TRASH, dst, NULL);
+            if (j->flag) {
+                char *parent = fr_strdup(path), *slash = strrchr(parent, '/');
+                if (slash) *slash = 0;
+                char *real_parent = realpath(*parent ? parent : "/", NULL);
+                char *full = fr_format("%s/%s", real_parent ? real_parent : parent, slash ? slash + 1 : path);
+                target = fr_path_relative(real_dir ? real_dir : dir, full);
+                free(parent), free(real_parent), free(full);
+            } else target = fr_strdup(path);
+            if ((rc = make_link(dst, target))) fail(j, dst, rc, NULL);
+            else {
+                fr_steps_add(&j->log, STEP_LINKED, dst, target);
+                add_progress(j, 0, 1);
+            }
+        }
+        free(dst), free(target);
+        fr_entry_free(&e);
+    }
+    free(real_dir);
+}
+
 static void run_steps(job *j)
 {
     pthread_mutex_lock(&lock);
@@ -859,6 +1054,25 @@ static void run_steps(job *j)
         case STEP_REMOVED: rc = remove_empty(s->a); break;
         case STEP_CHMOD: rc = fr_vfs_set_mode(s->a, s->mode); break;
         case STEP_COPIED: break;
+        case STEP_REPLACED: {
+            int trashed;
+            if ((rc = replace_with_copy(j, s->a, s->b, &trashed))) continue;
+            if (!trashed) {
+                add_progress(j, 0, 1);
+                continue;
+            }
+            break;
+        }
+        case STEP_UNREPLACED:
+            if ((rc = unreplace(j, s->a, s->b))) continue;
+            break;
+        case STEP_LINKED: rc = make_link(s->a, s->b); break;
+        case STEP_UNLINKED: rc = remove_link(s->a, s->b); break;
+        case STEP_CHOWN: {
+            const char *path = fr_uri_local(s->a);
+            rc = !path ? -ENOTSUP : lchown(path, (uid_t)s->uid, (gid_t)s->gid) ? -errno : 0;
+            break;
+        }
         }
         if (rc) {
             fail(j, s->a, rc, rc == -ENOTSUP && s->kind == STEP_TRASH ? "there is no trash here" : NULL);
@@ -898,6 +1112,8 @@ static void *work(void *arg)
         case JOB_RENAME: run_rename(j); break;
         case JOB_CREATE: run_create(j); break;
         case JOB_STEPS: run_steps(j); break;
+        case JOB_SYNC: run_sync(j); break;
+        case JOB_LINK: run_link(j); break;
         }
         pthread_mutex_lock(&lock);
         j->st.state = j->cancel ? JOB_CANCELLED : JOB_DONE;
@@ -974,8 +1190,31 @@ int fr_job_submit(fr_job_kind kind, const fr_strs *sources, const char *dest_dir
 
 int fr_job_submit_chmod(const fr_strs *sources, uint32_t set, uint32_t clear)
 {
+    fr_perm_change c = {.set = set, .clear = clear, .recursive = 1, .uid = -1, .gid = -1};
+    return fr_job_submit_perms(sources, &c);
+}
+
+int fr_job_submit_perms(const fr_strs *sources, const fr_perm_change *c)
+{
     job *j = job_new(JOB_CHMOD, sources, NULL);
-    j->mode_set = set & 07777, j->mode_clear = clear & 07777;
+    j->perm = *c;
+    j->perm.set &= 07777, j->perm.clear &= 07777;
+    return job_queue(j);
+}
+
+int fr_job_submit_sync(const fr_steps *plan, const char *dest_dir)
+{
+    fr_strs none = {0};
+    job *j = job_new(JOB_SYNC, &none, dest_dir);
+    j->todo = fr_steps_copy(plan);
+    j->st.items = plan->n;
+    return job_queue(j);
+}
+
+int fr_job_submit_link(const fr_strs *sources, const char *dest_dir, int relative)
+{
+    job *j = job_new(JOB_LINK, sources, dest_dir);
+    j->flag = relative;
     return job_queue(j);
 }
 

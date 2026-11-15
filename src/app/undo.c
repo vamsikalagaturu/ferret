@@ -85,6 +85,8 @@ static char *label_for(const fr_job_status *st, const fr_steps *log)
         break;
     case JOB_CREATE: label = fr_format("made %s", first); break;
     case JOB_STEPS: label = fr_format("renamed %d %s", renamed(log), renamed(log) == 1 ? "item" : "items"); break;
+    case JOB_SYNC: label = fr_format("synced %s to %s", what, st->dest_name); break;
+    case JOB_LINK: label = fr_format("made links to %s in %s", what, st->dest_name); break;
     default: break;
     }
     free(first), free(what);
