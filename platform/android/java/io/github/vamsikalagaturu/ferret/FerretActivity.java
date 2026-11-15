@@ -10,6 +10,8 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.Settings;
+import android.security.keystore.KeyGenParameterSpec;
+import android.security.keystore.KeyProperties;
 import android.text.InputType;
 import android.view.HapticFeedbackConstants;
 import android.view.View;
@@ -20,12 +22,22 @@ import android.view.inputmethod.BaseInputConnection;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.InputMethodManager;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.security.KeyStore;
+import java.util.Properties;
 import java.util.concurrent.Callable;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
+import javax.crypto.Cipher;
+import javax.crypto.KeyGenerator;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.GCMParameterSpec;
 
 /* The native window plus what only Java can reach: the all-files permission, opening files in other apps, the soft
- * keyboard's text, the clipboard, haptics and the system bar insets. Called from the native thread
+ * keyboard's text, the clipboard, haptics, the system bar insets and the Android Keystore (server passwords). Called from the native thread
  * (android_main.c); every public method takes and returns strings, null meaning "no" or "nothing". */
 public class FerretActivity extends NativeActivity {
     /* NativeActivity drops intents delivered to a running instance (launchMode singleTask) */
@@ -111,6 +123,22 @@ public class FerretActivity extends NativeActivity {
         });
     }
 
+    /* path in an app picked from the system's chooser, every time; null when no app takes it */
+    public String openWith(String path) {
+        Uri uri = OpenProvider.uriFor(getPackageName(), path);
+        Intent view = new Intent(Intent.ACTION_VIEW);
+        view.setDataAndType(uri, OpenProvider.mimeOf(path));
+        view.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        return onUi(() -> {
+            try {
+                startActivity(Intent.createChooser(view, null));
+                return "1";
+            } catch (ActivityNotFoundException e) {
+                return null;
+            }
+        });
+    }
+
     /* paths separated by '\n' to the system's share sheet; null when nothing can take them */
     public String share(String paths) {
         String[] list = paths.split("\n");
@@ -138,6 +166,84 @@ public class FerretActivity extends NativeActivity {
                 return null;
             }
         });
+    }
+
+    /* ---- server passwords ---- */
+
+    /* One file in the app's private storage holds the remembered servers (server key -> "user\npassword"), sealed
+     * with AES-GCM under a key that lives in the Android Keystore and never leaves it. */
+    private static final String SECRET_KEY = "ferret-servers";
+
+    private File secretsFile() { return new File(getFilesDir(), "servers.sealed"); }
+
+    private SecretKey secretKey() throws Exception {
+        KeyStore ks = KeyStore.getInstance("AndroidKeyStore");
+        ks.load(null);
+        if (ks.containsAlias(SECRET_KEY)) return (SecretKey) ks.getKey(SECRET_KEY, null);
+        KeyGenerator g = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore");
+        g.init(new KeyGenParameterSpec.Builder(SECRET_KEY, KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
+            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+            .setKeySize(256)
+            .build());
+        return g.generateKey();
+    }
+
+    /* the file is the 12-byte IV, then the ciphertext of the Properties text */
+    private Properties readSecrets() throws Exception {
+        Properties p = new Properties();
+        File f = secretsFile();
+        if (!f.exists()) return p;
+        byte[] all = java.nio.file.Files.readAllBytes(f.toPath());
+        if (all.length < 12) return p;
+        Cipher c = Cipher.getInstance("AES/GCM/NoPadding");
+        c.init(Cipher.DECRYPT_MODE, secretKey(), new GCMParameterSpec(128, all, 0, 12));
+        p.load(new ByteArrayInputStream(c.doFinal(all, 12, all.length - 12)));
+        return p;
+    }
+
+    private void writeSecrets(Properties p) throws Exception {
+        ByteArrayOutputStream text = new ByteArrayOutputStream();
+        p.store(text, null);
+        Cipher c = Cipher.getInstance("AES/GCM/NoPadding");
+        c.init(Cipher.ENCRYPT_MODE, secretKey());
+        byte[] iv = c.getIV(), sealed = c.doFinal(text.toByteArray());
+        File tmp = new File(getFilesDir(), "servers.sealed.tmp");
+        try (FileOutputStream out = new FileOutputStream(tmp)) {
+            out.write(iv);
+            out.write(sealed);
+            out.getFD().sync();
+        }
+        if (!tmp.renameTo(secretsFile())) throw new java.io.IOException("rename");
+    }
+
+    public synchronized String secretGet(String key) {
+        try {
+            return readSecrets().getProperty(key);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    public synchronized String secretPut(String key, String value) {
+        try {
+            Properties p = readSecrets();
+            p.setProperty(key, value);
+            writeSecrets(p);
+            return "1";
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    public synchronized String secretDelete(String key) {
+        try {
+            Properties p = readSecrets();
+            if (p.remove(key) != null) writeSecrets(p);
+            return "1";
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /* ---- haptics ---- */

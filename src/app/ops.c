@@ -8,7 +8,7 @@
 fr_clip clip;
 
 /* the one dialog open at a time */
-static enum { DLG_NONE, DLG_RENAME, DLG_NEW_FOLDER, DLG_DELETE, DLG_PROPERTIES, DLG_ERROR } dlg;
+static enum { DLG_NONE, DLG_RENAME, DLG_NEW_FOLDER, DLG_DELETE, DLG_PROPERTIES, DLG_ERROR, DLG_BULK, DLG_OPEN_WITH } dlg;
 static fr_text field;
 static char *dlg_uri;          /* rename: the item */
 static fr_strs dlg_uris;       /* delete: the items */
@@ -29,6 +29,8 @@ int ops_dialog_open(void) { return dlg != DLG_NONE || job_asking(); }
 static void dlg_close(void)
 {
     if (dlg == DLG_PROPERTIES) props_close();
+    if (dlg == DLG_BULK) bulk_rename_close();
+    if (dlg == DLG_OPEN_WITH) openwith_close();
     dlg = DLG_NONE;
     free(dlg_uri);
     dlg_uri = NULL;
@@ -61,7 +63,11 @@ static int in_archive(const char *uri) { return fr_archive_is_uri(uri); }
 
 int ops_rename(const char *from, const char *to)
 {
-    if (!in_archive(from)) return fr_vfs_rename(from, to);
+    if (!in_archive(from)) {
+        int rc = fr_vfs_rename(from, to);
+        if (!rc) undo_record_rename(from, to);
+        return rc;
+    }
     if (fr_vfs_exists(to)) return -EEXIST;
     fr_job_submit_rename(from, to);
     return 0;
@@ -180,6 +186,29 @@ void ops_delete(int permanently)
     dlg_uris = uris;
 }
 
+void ops_delete_uris(fr_strs *uris, const char *title, const char *message)
+{
+    dlg = DLG_DELETE;
+    dlg_permanent = 1;
+    snprintf(dlg_title, sizeof dlg_title, "%s", title);
+    snprintf(dlg_message, sizeof dlg_message, "%s", message);
+    fr_strs_free(&dlg_uris);
+    dlg_uris = *uris;
+    *uris = (fr_strs){0};
+}
+
+void ops_open_with(void)
+{
+    if (dlg == DLG_NONE && openwith_open()) dlg = DLG_OPEN_WITH;
+}
+
+void ops_terminal_here(void)
+{
+    const char *dir = br.uri ? fr_uri_local(br.uri) : NULL;
+    if (!dir) ui_toast("A terminal opens only in a folder on this device");
+    else if (plat_terminal(dir)) ui_toast("No terminal found: set $TERMINAL, or install one such as foot or xterm");
+}
+
 void ops_rename_start(void)
 {
     fr_strs uris = targets();
@@ -239,6 +268,15 @@ void ops_share(void)
     fr_strs_free(&uris);
 }
 
+void ops_bulk_rename(int as_text)
+{
+    if (br.uri && in_archive(br.uri)) {
+        ui_toast("Rename items inside an archive one at a time");
+        return;
+    }
+    if (bulk_rename_open(as_text)) dlg = DLG_BULK;
+}
+
 void ops_properties(void)
 {
     fr_strs uris = targets();
@@ -292,6 +330,7 @@ int ops_create(const char *typed)
             fr_stream *s = fr_vfs_open_write(uri, 1, &rc);
             if (s) rc = s->close(s);
         }
+        if (!rc && !in_archive(uri)) undo_record_created(uri, folder);
         free(uri);
         if (rc == -EEXIST) ui_toast("\"%s\" already exists here", name);
         else if (rc) ui_toast("Could not make the %s: %s", folder ? "folder" : "file", fr_vfs_error(rc));
@@ -321,16 +360,17 @@ void ops_poll_jobs(void)
     int f = fr_jobs_finished();
     if (f == seen_finished) return;
     seen_finished = f;
-    browser_reload();
     fr_job_status st[16];
     int n = fr_jobs_list(st, 16);
     for (int i = 0; i < n; i++) {
         if (st[i].state != JOB_DONE && st[i].state != JOB_CANCELLED) continue;
         static const char *done[] = {"Copied", "Moved", "Deleted", "Moved to the trash", "Changed the permissions of",
-                                     "Extracted", "Compressed", "Renamed", "Made"};
-        if (st[i].state == JOB_CANCELLED) ui_toast("Cancelled");
+                                     "Extracted", "Compressed", "Renamed", "Made", "Did"};
+        if (undo_job_done(&st[i])) {
+        } else if (st[i].state == JOB_CANCELLED) ui_toast("Cancelled");
         else if (st[i].failed) {
             if (dlg == DLG_PROPERTIES) props_close();
+            if (dlg == DLG_BULK) bulk_rename_close();
             dlg = DLG_ERROR;
             snprintf(dlg_title, sizeof dlg_title, "%d %s could not be done", st[i].failed, st[i].failed == 1 ? "item" : "items");
             snprintf(dlg_message, sizeof dlg_message, "%s", st[i].error);
@@ -340,6 +380,8 @@ void ops_poll_jobs(void)
             ui_toast("%s %d %s", done[st[i].kind], st[i].items, st[i].items == 1 ? "item" : "items");
         fr_job_dismiss(st[i].id);
     }
+    /* after the renames were recorded, which search results follow */
+    browser_reload();
 }
 
 float ops_draw_jobs(Rectangle area)
@@ -380,7 +422,8 @@ float ops_draw_jobs(Rectangle area)
     else if (j->kind <= JOB_MOVE || j->kind == JOB_EXTRACT || j->kind == JOB_COMPRESS) {
         if (what) snprintf(line, sizeof line, "%s %s to %s", verbs[j->kind], what, j->dest_name);
         else snprintf(line, sizeof line, "%s %d items to %s", verbs[j->kind], j->items, j->dest_name);
-    } else if (what) snprintf(line, sizeof line, "%s %s", verbs[j->kind], what);
+    } else if (j->kind == JOB_STEPS) snprintf(line, sizeof line, "%s %s", j->what, what ? what : "");
+    else if (what) snprintf(line, sizeof line, "%s %s", verbs[j->kind], what);
     else snprintf(line, sizeof line, "%s %d items", verbs[j->kind], j->items);
     if (queued) {
         size_t l = strlen(line);
@@ -438,6 +481,12 @@ void ops_draw_dialogs(void)
     }
     case DLG_PROPERTIES:
         if (!props_draw()) dlg_close();
+        break;
+    case DLG_BULK:
+        if (!bulk_rename_draw()) dlg_close();
+        break;
+    case DLG_OPEN_WITH:
+        if (!openwith_draw()) dlg_close();
         break;
     case DLG_ERROR: {
         fr_dialog d = {.title = dlg_title, .message = dlg_message, .buttons = {"Close"}, .nbuttons = 1, .cancel = 0};

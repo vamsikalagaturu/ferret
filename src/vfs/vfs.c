@@ -1,4 +1,5 @@
 #include "vfs.h"
+#include "net/net.h"
 #include "vfs_archive.h"
 #include <errno.h>
 #include <stdio.h>
@@ -10,6 +11,8 @@
 
 #ifdef __ANDROID__
 extern const fr_backend fr_backend_saf; /* platform/android/saf.c */
+#else
+extern const fr_backend fr_backend_trash; /* trash_linux.c */
 #endif
 
 static const fr_backend *backends[] = {
@@ -17,10 +20,14 @@ static const fr_backend *backends[] = {
     &fr_backend_archive,
 #ifdef __ANDROID__
     &fr_backend_saf,
+#else
+    &fr_backend_trash,
 #endif
 #ifdef FR_HAVE_MTP
     &fr_backend_mtp,
 #endif
+    &fr_backend_smb,
+    &fr_backend_sftp,
 };
 
 static size_t scheme_len(const char *uri)
@@ -100,6 +107,12 @@ int fr_vfs_trash(const char *uri)
     return b->trash ? b->trash(uri) : -ENOTSUP;
 }
 
+int fr_vfs_untrash(const char *uri)
+{
+    BACKEND_OR(uri, -EPROTONOSUPPORT);
+    return b->untrash ? b->untrash(uri) : -ENOTSUP;
+}
+
 int fr_vfs_can_trash(const char *uri)
 {
     const fr_backend *b = fr_vfs_backend(uri);
@@ -117,6 +130,11 @@ const char *fr_vfs_error(int err)
     switch (-err) {
     case EPROTONOSUPPORT: return "This kind of location is not supported";
     case ENOTSUP: return "Not supported here";
+    case FR_EAUTH: return "The server wants a user name and password";
+    case FR_EUNTRUSTED: return "The server is not trusted yet";
+    case FR_EIDCHANGED: return "The server's identity changed since it was trusted: ferret will not connect (remove "
+                               "its line from ~/.config/ferret/known_hosts if the change is expected)";
+    case EHOSTUNREACH: return "The server cannot be reached";
     case EBADMSG: return "Not an archive ferret can read, or a damaged one";
     default: return strerror(-err);
     }

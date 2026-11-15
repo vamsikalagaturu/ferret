@@ -1,4 +1,5 @@
 #include "views.h"
+#include "vfs/trash.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,6 +13,7 @@ static int reveal_pending;
 
 static fr_layout layout_in_effect(void)
 {
+    if (br.uri && fr_trash_is_root(br.uri)) return LAYOUT_DETAILS;
     if (app.layout == LAYOUT_COLUMNS && (ui.touch || shown_w < DP(720))) return LAYOUT_DETAILS;
     return app.layout;
 }
@@ -84,6 +86,18 @@ void view_row_pressed(int v, int right_click)
         browser_set_selected(idx, 1);
         br.cursor = br.anchor = v;
     }
+}
+
+fr_item *view_item_at(Vector2 p)
+{
+    for (int v = 0; v < br.view.n; v++) {
+        fr_item *it = browser_item(v);
+        Rectangle r;
+        if ((ui_clickable_rect(ui_id(it->e.name, (int)ui_id("row", 0)), &r) || ui_clickable_rect(ui_id(it->e.name, (int)ui_id("tile", 0)), &r)) &&
+            CheckCollisionPointRec(p, r))
+            return it;
+    }
+    return NULL;
 }
 
 void view_background_input(Rectangle r)
@@ -257,9 +271,10 @@ void view_draw_empty(Rectangle r, const char *icon, const char *title, const cha
 
 int view_draw_folder_state(Rectangle r)
 {
-    if (br.error) view_draw_empty(r, "triangle-alert", "This folder cannot be shown", br.error, 1);
-    else if (!br.view.n && br.loading) view_draw_empty(r, "loader-circle", "Loading...", NULL, 0);
+    if (br.loading && !br.items.n) view_draw_empty(r, "loader-circle", "Loading...", NULL, 0);
+    else if (br.error) view_draw_empty(r, "triangle-alert", "This folder cannot be shown", br.error, 1);
     else if (!br.view.n && br.filtering && br.filter.len) view_draw_empty(r, "search", "Nothing matches", NULL, 0);
+    else if (!br.view.n && br.results) view_draw_empty(r, "search", search_running() ? "Searching..." : "Nothing found", NULL, 0);
     else if (!br.view.n) view_draw_empty(r, "folder-open", "Empty folder", br.items.n ? "Only hidden items are here" : NULL, 0);
     else return 0;
     return 1;
@@ -308,7 +323,8 @@ void view_draw(Rectangle r)
     }
     reveal_pending = 0;
     fr_layout layout = layout_in_effect();
-    if (layout == LAYOUT_COLUMNS) columns_draw(r);
+    if (br.uri && fr_trash_is_root(br.uri)) trash_draw(r);
+    else if (layout == LAYOUT_COLUMNS) columns_draw(r);
     else if (view_draw_folder_state(r)) return;
     else if (layout == LAYOUT_GRID) grid_draw(r);
     else draw_details(r);

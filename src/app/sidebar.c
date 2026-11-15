@@ -234,6 +234,7 @@ void places_draw(Rectangle r)
         y += ih;
     }
     y = disks_draw(r, y, ih, disk_current);
+    y = network_draw(r, y, ih);
     if (ui.touch) return;
     float status_h = DP(36);
     Rectangle help = {r.x + DP(8), fmaxf(y + DP(12) + status_h, r.y + r.height - ih - DP(8)), r.width - DP(16), ih};

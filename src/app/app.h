@@ -46,7 +46,8 @@ typedef struct {
     int keyboard;       /* the cursor moved by key since the last click: show it */
     int nselected;
     char *error;        /* the listing failed */
-    int loading;        /* a listing off this machine is being fetched on a thread */
+    int loading;        /* a listing off this machine is on its way (async.h); the items are the last ones until then */
+    int results;        /* the items are search results below uri, each named by its path from there */
     int64_t dir_mtime;
     double checked_at;
     char *focus_name;   /* the row the next browser_open() or browser_reload() lands on; it takes it */
@@ -69,6 +70,12 @@ fr_item *browser_item(int view_index);
 void browser_count_some(int first, int last); /* folder item counts for the rows shown */
 void browser_add_placeholder(void);           /* an empty row at the top, under the cursor */
 void browser_drop_placeholder(void);
+/* search results (between frames only): begin empties the list into results of uri's tree, add takes es's
+ * entries, leave lists uri again; a reload re-reads the results' entries and drops those gone */
+void browser_results_begin(void);
+void browser_results_add(fr_entries *es);
+void browser_results_leave(void);
+void browser_results_renamed(const char *from, const char *to); /* the results under from follow it */
 
 /* ---- the window's state (main.c) ---- */
 typedef enum { LAYOUT_DETAILS, LAYOUT_COLUMNS, LAYOUT_GRID } fr_layout;
@@ -126,6 +133,7 @@ void view_set_layout(fr_layout layout);
 void view_reveal(int v); /* scroll so view row v shows */
 int view_grid_columns(void); /* items per row in the grid layout, 1 in the others */
 void view_flash(const fr_item *it, Rectangle r); /* the yank flash over a row or tile */
+fr_item *view_item_at(Vector2 p); /* the row or tile the last frame drew under p, NULL none */
 void browser_flash_targets(void); /* flashes the selected rows, else the cursor row */
 
 /* ---- image thumbnails (thumbnails.c) ---- */
@@ -139,7 +147,9 @@ int thumb_draw(const fr_item *it, Rectangle box);
 /* ---- settings.toml, favorites, theme overrides (settings.c) ---- */
 typedef struct {
     fr_strs favorites; /* URIs, in the order shown */
+    fr_strs servers;   /* the Network section's URIs (never with a password), in the order shown */
     char *theme[THEME_ROLES]; /* [theme] values as written, NULL for roles not set */
+    char *last_folder, *start_folder; /* URIs, NULL when not set */
 } fr_settings;
 extern fr_settings settings;
 #define UI_SCALE_MIN 0.5
@@ -148,8 +158,25 @@ extern fr_settings settings;
 #define TEXT_SCALE_MAX 2.0
 void settings_load(void);
 void settings_poll(void); /* saves what changed (sort, layout, hidden, favorites); reloads after a hand edit */
+char *settings_start_uri(void); /* start_folder, else last_folder, when it is a folder that is there; else NULL */
 int favorite_index(const char *uri); /* -1 when not a favorite */
 void favorite_toggle(const char *uri);
+int server_index(const char *uri); /* -1 when not in the Network section */
+void server_set(const char *uri, int on); /* adds it to the Network section, or takes it out */
+
+/* ---- network locations, for any scheme with a backend (connect.c) ---- */
+/* an address as typed made one to save and open: normalized, any password dropped; NULL when it is not one */
+char *server_uri(const char *typed);
+/* the Network section of the sidebar from y down: the saved servers and "Connect to server"; the y after it */
+float network_draw(Rectangle r, float y, float ih);
+void connect_start(void); /* the "Connect to server" dialog */
+/* window thread, before a remote location is used: what the keystore has for its server, into memory */
+void net_prepare(const char *uri);
+/* a remote call on uri failed with rc: asks for a sign-in or the server's trust when that is what it wants (1),
+ * then retry() runs once the user answered yes */
+int net_ask(const char *uri, int rc, void (*retry)(void));
+int connect_dialog_open(void);
+void connect_draw_dialogs(void);
 
 /* ---- keys (keys.c) ---- */
 typedef enum { MODE_NORMAL, MODE_VISUAL, MODE_INSERT } fr_mode;
@@ -177,6 +204,7 @@ int ops_archive_targets(void);  /* how many targets there are when all are archi
 void ops_extract(int into_folder); /* the targets here, or each into a folder of its own named after it */
 char *ops_compress_name(void);  /* "<name>.zip" for the targets, NULL without any */
 void ops_compress(void);        /* the targets into a new zip here */
+void ops_bulk_rename(int as_text); /* the targets' names in an editor, or find and replace across them */
 void ops_copy(int cut);
 void ops_paste(void);
 void ops_clip_clear(void);
@@ -192,6 +220,28 @@ int ops_dialog_open(void); /* also a job's question about a name taken */
 float ops_draw_jobs(Rectangle area); /* the job strip at the bottom of area; returns its height */
 void ops_poll_jobs(void);
 
+/* ---- searching below the folder (search.c) ---- */
+void search_prompt(int content); /* a field in the header for a name (content 0) or the text inside files */
+int search_header(Rectangle r);  /* draws the field or the results' bar; 0 when neither shows */
+void search_poll(void);          /* between frames: the results found meanwhile into the list */
+int search_running(void);
+void search_reveal(void);        /* the cursor row's result, shown in its folder */
+void search_stop(void);          /* before the window closes */
+
+/* ---- renaming the targets together (bulk_rename.c), one of ops.c's dialogs ---- */
+int bulk_rename_open(int as_text); /* as_text: the names in an editor; else find and replace. 0 when nothing to rename */
+int bulk_rename_draw(void);        /* 0 once it closed itself */
+void bulk_rename_close(void);
+
+/* ---- undo and redo of what was done to files (undo.c); kept until the window closes ---- */
+void undo_record(const char *label, fr_steps *steps); /* takes the steps */
+void undo_record_rename(const char *from, const char *to);
+void undo_record_created(const char *uri, int folder);
+/* a finished job: what it did, recorded (an undo or redo job toasts its own outcome); 1 when it toasted */
+int undo_job_done(const fr_job_status *st);
+void undo_run(int redo);
+int undo_can(int redo);
+
 /* ---- ferret --replay SCRIPT [FOLDER] (replay.c): a script's input between frames, checked as it goes ---- */
 int replay_load(const char *script, const char *folder); /* 0, or -1 after saying why; relative paths are FOLDER's */
 int replay_frame(void);  /* once a frame, after its input was handled: 0 when the script is done */
@@ -202,4 +252,21 @@ int replay_status(void); /* the exit status: 0 when every expectation held */
 void props_open(fr_strs *uris); /* takes the URIs */
 int props_draw(void);           /* 0 once it closed itself */
 void props_close(void);
+
+/* ---- open with (openwith.c), one of ops.c's dialogs ---- */
+int openwith_open(void); /* the targets' apps; 0 when no dialog is needed (handed to the system, or said why) */
+int openwith_draw(void); /* 0 once it closed itself */
+void openwith_close(void);
+void ops_open_with(void);
+void ops_terminal_here(void);
+/* asks before deleting uris (taken) for good, with this title and message */
+void ops_delete_uris(fr_strs *uris, const char *title, const char *message);
+
+/* ---- trash:/// (views_trash.c) ---- */
+void trash_draw_menus(void);
+void trash_restore(void); /* the targets, back where they came from */
+void trash_empty(void);   /* asks first */
+
+/* ---- files dropped on the window (drop.c), between frames ---- */
+void drop_poll(void);
 #endif

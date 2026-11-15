@@ -16,13 +16,14 @@ step "ferret ($MODE)"
 if [ "$MODE" = debug ]; then
     BUILD=$ROOT/build-debug
     cmake --fresh -S "$REPO" -B "$BUILD" -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH="$RAYLIB_OUT" \
-        -DFR_LIBARCHIVE_DIR="$LIBARCHIVE_OUT" \
+        -DFR_LIBARCHIVE_DIR="$LIBARCHIVE_OUT" -DFR_NET_PREFIX="$NET_OUT" \
         -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
         -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON >/dev/null
 else
     BUILD=$ROOT/build
     cmake --fresh -S "$REPO" -B "$BUILD" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$RAYLIB_OUT" \
-        -DFR_LIBARCHIVE_DIR="$LIBARCHIVE_OUT" -DCMAKE_C_FLAGS_RELEASE="$SIZE_CFLAGS -DNDEBUG" -DCMAKE_EXE_LINKER_FLAGS="-Wl,--gc-sections" \
+        -DFR_LIBARCHIVE_DIR="$LIBARCHIVE_OUT" -DFR_NET_PREFIX="$NET_OUT" \
+        -DCMAKE_C_FLAGS_RELEASE="$SIZE_CFLAGS -DNDEBUG" -DCMAKE_EXE_LINKER_FLAGS="-Wl,--gc-sections" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON >/dev/null
 fi
 cmake --build "$BUILD" -j"$JOBS"

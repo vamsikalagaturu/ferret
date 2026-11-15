@@ -1,0 +1,145 @@
+#include "app.h"
+#include "jobs/search.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+static struct {
+    int prompting, content; /* the field shows, for names or for text inside files */
+    fr_text field;
+    char *term;     /* of the results shown */
+    int term_content;
+    fr_search_status st;
+    fr_entries pending; /* found, not in the list yet */
+    double added_at;
+} s;
+
+static unsigned field_id(void) { return ui_id("search-field", 0); }
+
+int search_running(void) { return s.st.running; }
+
+void search_prompt(int content)
+{
+    if (!br.uri) return;
+    if (br.filtering) filter_stop();
+    s.prompting = 1;
+    s.content = content;
+    text_set(&s.field, br.results && s.term && s.term_content == content ? s.term : "");
+    ui.focus = field_id();
+    ui.dirty = 1;
+}
+
+static void prompt_stop(void)
+{
+    s.prompting = 0;
+    if (ui.focus == field_id()) ui.focus = 0;
+    ui.nchars = 0;
+    ui.dirty = 1;
+}
+
+static void begin_now(const char *term, int content)
+{
+    if (!br.uri) return;
+    fr_entries_free(&s.pending);
+    free(s.term);
+    s.term = fr_strdup(term);
+    s.term_content = content;
+    fr_search_start(br.uri, term, content, br.show_hidden, plat_wake);
+    s.st = (fr_search_status){.running = 1};
+    s.added_at = 0;
+    browser_results_begin();
+}
+
+static void leave_now(const char *str, int n)
+{
+    fr_search_cancel();
+    browser_results_leave();
+}
+
+void search_poll(void)
+{
+    if (!br.results) {
+        if (s.st.running) fr_search_cancel();
+        s.st.running = 0;
+        fr_entries_free(&s.pending);
+        return;
+    }
+    int was = s.st.running;
+    fr_search_take(&s.pending, &s.st);
+    /* a sort of the whole list each time: a few times a second is enough */
+    if (s.pending.n && (!s.st.running || ui.now - s.added_at > 0.25)) {
+        browser_results_add(&s.pending);
+        s.added_at = ui.now;
+    }
+    if (was || s.st.running) ui.dirty = 1;
+    if (s.pending.n || s.st.running) ui_redraw_in(0.25);
+}
+
+void search_reveal(void)
+{
+    fr_item *it = browser_item(br.cursor);
+    if (!br.results || !it) return;
+    char *uri = fr_uri_join(br.uri, it->e.name), *parent = fr_uri_parent(uri);
+    if (parent) {
+        free(br.focus_name);
+        br.focus_name = fr_uri_name(uri);
+        browser_open(parent, 1);
+    }
+    free(parent), free(uri);
+}
+
+void search_stop(void)
+{
+    fr_search_stop();
+    fr_entries_free(&s.pending);
+}
+
+int search_header(Rectangle r)
+{
+    if (!s.prompting && !br.results) return 0;
+    float b = DP(ui.touch ? 48 : 36), x = r.x + DP(4), right = r.x + r.width - DP(4), cy = r.y + (r.height - b) / 2;
+    if (s.prompting) {
+        if (ui_icon_button(ui_id("search-close", 0), (Rectangle){x, cy, b, b}, "arrow-left", theme.text)) {
+            prompt_stop();
+            return 1;
+        }
+        x += b + DP(4);
+        Rectangle field = {x, r.y + DP(8), right - x - DP(4), r.height - DP(16)};
+        ui.focus = field_id();
+        int res = ui_text_field(field_id(), &s.field, field,
+                                s.content ? "Text inside the files below this folder" : "Names below this folder; * and ? match any");
+        if (res & TEXT_CANCEL) prompt_stop();
+        else if (res & TEXT_SUBMIT && s.field.len) {
+            app_defer(begin_now, s.field.buf, s.content);
+            prompt_stop();
+        }
+        ui_hline(r.x, r.y + r.height - DP(1), r.width, theme.border);
+        return 1;
+    }
+    if (ui_icon_button(ui_id("results-close", 0), (Rectangle){x, cy, b, b}, "arrow-left", theme.text)) app_defer(leave_now, NULL, 0);
+    x += b + DP(8);
+    right -= b;
+    if (ui_icon_button(ui_id("more", 0), (Rectangle){right, cy, b, b}, "ellipsis-vertical", theme.text))
+        ui_menu_open(app.menu_more, (Rectangle){right, cy, b, b});
+    right -= b;
+    if (s.st.running) {
+        if (ui_icon_button(ui_id("search-cancel", 0), (Rectangle){right, cy, b, b}, "x", theme.text)) fr_search_cancel();
+    } else if (ui_icon_button(ui_id("search-again", 0), (Rectangle){right, cy, b, b}, "search", theme.text))
+        search_prompt(s.term_content);
+    char *folder = fr_uri_name(br.uri), title[400], line[400];
+    snprintf(title, sizeof title, "%s\"%s\" in %s", s.term_content ? "Text " : "", s.term ? s.term : "", *folder ? folder : "/");
+    free(folder);
+    int n = s.st.found;
+    if (s.st.running)
+        snprintf(line, sizeof line, "Searching: %d found, %lld files looked at, now in %s", n, (long long)s.st.files,
+                 *s.st.current ? s.st.current : "the folder itself");
+    else if (s.st.unreadable)
+        snprintf(line, sizeof line, "%d found; %d %s could not be read", n, s.st.unreadable, s.st.unreadable == 1 ? "folder" : "folders");
+    else snprintf(line, sizeof line, "%d found in %lld files", n, (long long)s.st.files);
+    float w = right - x - DP(8), l1 = ui_line_height(15), l2 = ui_line_height(13), top = r.y + (r.height - l1 - l2) / 2;
+    ui_text_box(title, (Rectangle){x, top, w, l1}, 15, FONT_SEMIBOLD, theme.text, ALIGN_LEFT, 0);
+    ui_text_box(line, (Rectangle){x, top + l1, w, l2}, 13, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 1);
+    if (s.st.running) ui_progress((Rectangle){r.x, r.y + r.height - DP(3), r.width, DP(2)}, (float)(ui.now - (long)ui.now), theme.accent);
+    else ui_hline(r.x, r.y + r.height - DP(1), r.width, theme.border);
+    return 1;
+}

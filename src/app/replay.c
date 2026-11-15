@@ -188,7 +188,9 @@ static void expect(const command *c)
     size_t sl = (size_t)(value - a);
     while (*value == ' ') value++;
 #define IS(word) (sl == strlen(word) && !strncmp(a, word, sl))
-    if (IS("folder")) {
+    if (IS("folder") && strstr(value, "://")) {
+        if (!br.uri || strcmp(br.uri, value)) fail(c, "expected folder %s, got %s", value, br.uri ? br.uri : "(none)");
+    } else if (IS("folder")) {
         char *want = resolve(value), *real = realpath(want, NULL);
         const char *got = br.uri ? fr_uri_local(br.uri) : NULL;
         if (!got || strcmp(got, real ? real : want)) fail(c, "expected folder %s, got %s", real ? real : want, got ? got : br.uri ? br.uri : "(none)");

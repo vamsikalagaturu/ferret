@@ -170,9 +170,12 @@ static int file_set_mode(const char *uri, uint32_t mode) { return chmod(fr_uri_p
 
 #ifdef __ANDROID__
 #define file_trash NULL
+#define file_untrash NULL
 #else
-int fr_trash_path(const char *path); /* trash_linux.c */
+int fr_trash_path(const char *path);   /* trash_linux.c */
+int fr_trash_untrash(const char *path); /* trash_linux.c */
 static int file_trash(const char *uri) { return fr_trash_path(fr_uri_path(uri)); }
+static int file_untrash(const char *uri) { return fr_trash_untrash(fr_uri_path(uri)); }
 #endif
 
 const fr_backend fr_backend_file = {
@@ -189,4 +192,5 @@ const fr_backend fr_backend_file = {
     .copy_link = file_copy_link,
     .free_space = file_free_space,
     .set_mode = file_set_mode,
+    .untrash = file_untrash,
 };

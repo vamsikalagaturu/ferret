@@ -1,4 +1,5 @@
 #include "app.h"
+#include <errno.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -172,6 +173,17 @@ static void complete(void)
 static void path_go(void)
 {
     char *target = NULL;
+    if (strstr(path_field.buf, "://") && strncmp(path_field.buf, "file://", 7)) {
+        /* asking a server whether it is a folder would hold up the window: open it, and the listing tells */
+        target = server_uri(path_field.buf);
+        if (!target) ui_toast("%s: %s", path_field.buf, fr_vfs_error(-EPROTONOSUPPORT));
+        else {
+            path_edit_stop();
+            browser_open(target, 1);
+            free(target);
+        }
+        return;
+    }
     if (strstr(path_field.buf, "://")) target = fr_strdup(path_field.buf);
     else {
         char *full = expand(path_field.buf);
@@ -266,6 +278,7 @@ void header_draw(Rectangle r)
         ui_hline(r.x, r.y + r.height - DP(1), r.width, theme.border);
         return;
     }
+    if (search_header(r)) return;
     if (!app_wide()) {
         if (ui_icon_button(ui_id("drawer", 0), btn, "menu", theme.text)) app.drawer_open = 1, places_refresh(1);
         x += b;

@@ -1,5 +1,7 @@
 #define _GNU_SOURCE
 #include "app.h"
+#include "jobs/async.h"
+#include "net/net.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -90,6 +92,13 @@ static void archive_items(void)
     }
 }
 
+static void rename_items(void)
+{
+    if (br.nselected < 2) return;
+    if (ui_menu_item("Rename as text", "list", -1)) ops_bulk_rename(1);
+    if (ui_menu_item("Find and replace in names", "pencil", -1)) ops_bulk_rename(0);
+}
+
 static void draw_menus(void)
 {
     if (ui_menu_begin(app.menu_more)) {
@@ -135,6 +144,10 @@ static void draw_menus(void)
         }
         ui_menu_separator();
         if (ui_menu_item("Show hidden", "eye", br.show_hidden)) br.show_hidden = !br.show_hidden, browser_rebuild_view();
+        if (ui_menu_item("Search names below", "search", -1)) search_prompt(0);
+        if (ui_menu_item("Search inside files", "file-text", -1)) search_prompt(1);
+        if (undo_can(0) && ui_menu_item("Undo", "undo-2", -1)) undo_run(0);
+        if (undo_can(1) && ui_menu_item("Redo", "redo-2", -1)) undo_run(1);
         ui_menu_separator();
         char pct[16];
         snprintf(pct, sizeof pct, "%d%%", (int)lroundf(ui.user_scale * 100));
@@ -144,6 +157,8 @@ static void draw_menus(void)
         d = ui_menu_stepper("Text", "a-large-small", pct);
         if (d) app_text_zoom(d == 2 ? 0 : d);
         if (!ui.touch && ui_menu_item("Keyboard shortcuts", "keyboard", -1)) app.help_open = 1;
+        if (br.uri && fr_uri_local(br.uri) && !plat_terminal(NULL) && ui_menu_item("Open terminal here", "terminal", -1))
+            ops_terminal_here();
         ui_menu_separator();
         if (ui_menu_item("Refresh", "refresh-cw", -1)) browser_reload();
         ui_menu_end();
@@ -151,9 +166,12 @@ static void draw_menus(void)
     if (ui_menu_begin(app.menu_row)) {
         fr_item *it = browser_item(br.cursor);
         if (br.nselected == 1 && it && ui_menu_item("Open", "external-link", -1)) ops_open_item(it);
+        if (it && !it->e.is_dir && br.uri && fr_uri_local(br.uri) && ui_menu_item("Open with...", "app-window", -1)) ops_open_with();
         if (ui_menu_item("Copy", "copy", -1)) ops_copy(0);
         if (ui_menu_item("Cut", "scissors", -1)) ops_copy(1);
         if (br.nselected == 1 && ui_menu_item("Rename", "pencil", -1)) ops_rename_start();
+        rename_items();
+        if (br.results && br.nselected == 1 && ui_menu_item("Show in folder", "folder-open", -1)) search_reveal();
         if (br.nselected == 1 && it && it->e.is_dir) {
             char *uri = fr_uri_join(br.uri, it->e.name);
             int fav = favorite_index(uri) >= 0;
@@ -179,12 +197,18 @@ static void draw_menus(void)
                 favorite_toggle(br.uri);
         }
         if (ui_menu_item("Show hidden", "eye", br.show_hidden)) br.show_hidden = !br.show_hidden, browser_rebuild_view();
+        if (br.uri && fr_uri_local(br.uri) && !plat_terminal(NULL) && ui_menu_item("Open terminal here", "terminal", -1))
+            ops_terminal_here();
         if (ui_menu_item("Refresh", "refresh-cw", -1)) browser_reload();
         ui_menu_end();
     }
+    trash_draw_menus();
     if (ui_menu_begin(app.menu_selection)) {
         if (ui.touch && ui_menu_item("Select all", "check-check", -1)) browser_select_all();
         if (br.nselected == 1 && ui_menu_item("Rename", "pencil", -1)) ops_rename_start();
+        rename_items();
+        if (br.results && br.nselected == 1 && ui_menu_item("Show in folder", "folder-open", -1)) search_reveal();
+        if (br.nselected == 1 && br.uri && fr_uri_local(br.uri) && ui_menu_item("Open with...", "app-window", -1)) ops_open_with();
         archive_items();
         if (ui_menu_item("Properties", "info", -1)) ops_properties();
         if (br.uri && fr_vfs_can_trash(br.uri) && ui_menu_item("Delete permanently", "trash-2", -1)) ops_delete(1);
@@ -225,10 +249,15 @@ static const char *const shortcuts[][2] = {
     {"I", "rename here, at the start"},    {"c", "retype the name, keep the extension"},
     {"Enter / Esc", "keep / drop the new name"},       {"a", "new file, or folder when the name ends in /"},
     {"Ctrl+Shift+N", "new folder"},
+    {"R", "rename the targets as text, one name per line"}, {"E", "find and replace in the targets' names"},
     {"D, Delete", "move to the trash"},    {"X, Shift+Delete", "delete permanently"},
+    {"u, Ctrl+Z", "undo the last file operation"},         {"U, Ctrl+Shift+Z", "redo"},
+    {"ff", "search names below this folder (* and ?)"},   {"fg", "search the text inside files below"},
+    {"gr", "show a search result in its folder"},          {"Esc, Backspace, h", "leave the search results"},
     {"Enter on an archive", "browse inside it (zip, tar, 7z, rar, iso)"},
     {"ze / zf", "extract here / into a folder named after it"}, {"zc", "compress to <name>.zip"},
     {"Alt+Enter", "properties"},           {".", "show hidden files"},
+    {"O", "open with another app"},        {"T", "a terminal in this folder"},
     {"sn ss sm se", "sort by name, size, date, extension"}, {"S", "reverse the order"},
     {"Ctrl+1 / 2 / 3", "details, columns, grid"},          {"m", "add or remove this folder as a favorite"},
     {"g1 .. g9", "open favorite 1 to 9"},  {"gh, g~", "home"},
@@ -327,7 +356,7 @@ static int frame(void)
         ui_redraw_in(0.5);
         return 0;
     }
-    int modal = ops_dialog_open() || ui_menu_is_open() || app.help_open || dview_modal();
+    int modal = ops_dialog_open() || connect_dialog_open() || ui_menu_is_open() || app.help_open || dview_modal();
     Rectangle s = ui.safe;
     if (app_wide()) {
         float sw = DP(240);
@@ -376,6 +405,7 @@ static int frame(void)
     }
     draw_menus();
     ops_draw_dialogs();
+    connect_draw_dialogs();
     draw_help();
     ui_toast_draw(list.y + list.height);
     if (modal && ui_key(KEY_BACK, 0)) ui_menu_close();
@@ -386,11 +416,14 @@ static int frame(void)
 static void between_frames(int keys)
 {
     run_deferred();
+    drop_poll();
     thumbs_poll();
     if (keys) keys_handle();
     if (!app.storage_ok) return;
+    fr_async_poll();
     if (app_wide() || app.drawer_open) places_refresh(0);
     ops_poll_jobs();
+    search_poll();
     disks_poll();
     dview_poll();
     browser_poll();
@@ -410,6 +443,9 @@ int fr_app_main(int argc, char **argv)
     theme_load(settings.theme);
     if (!replay) ui_input_init();
     fr_jobs_start(plat_wake);
+    fr_async_start(plat_wake);
+    static const fr_secret_store keystore = {plat_secret_load, plat_secret_save, plat_secret_forget};
+    if (plat_secret_available()) fr_creds_set_store(&keystore);
     thumbs_start();
     app.menu_more = ui_id("menu-more", 0), app.menu_row = ui_id("menu-row", 0), app.menu_bg = ui_id("menu-bg", 0);
     app.menu_selection = ui_id("menu-selection", 0);
@@ -419,8 +455,9 @@ int fr_app_main(int argc, char **argv)
         if (real) start = fr_uri_from_path(real);
         free(real);
     }
-    if (!start) start = plat_home_uri();
     app.storage_ok = plat_storage_granted();
+    if (!start && app.storage_ok) start = settings_start_uri();
+    if (!start) start = plat_home_uri();
     ui.now = fr_now();
     places_refresh(1);
     browser_open(start, 0);
@@ -451,6 +488,8 @@ int fr_app_main(int argc, char **argv)
     dview_shutdown();
     fr_jobs_stop();
     thumbs_stop();
+    search_stop();
+    fr_conn_close_all();
     plat_close_window();
     return replay ? replay_status() : 0;
 }

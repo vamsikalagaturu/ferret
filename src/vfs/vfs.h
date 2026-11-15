@@ -47,6 +47,7 @@ typedef struct {
     int (*copy_link)(const char *from, const char *to); /* recreates a symlink */
     int (*free_space)(const char *uri, uint64_t *free_bytes, uint64_t *total_bytes);
     int (*set_mode)(const char *uri, uint32_t mode); /* the permission bits (07777), of a symlink's target */
+    int (*untrash)(const char *uri); /* puts back what trash(uri) took last; -EEXIST when uri is taken again */
 } fr_backend;
 
 const fr_backend *fr_vfs_backend(const char *uri);
@@ -61,6 +62,7 @@ int fr_vfs_rename(const char *from, const char *to);
 int fr_vfs_remove(const char *uri);
 int fr_vfs_trash(const char *uri); /* -ENOTSUP where there is no trash */
 int fr_vfs_can_trash(const char *uri);
+int fr_vfs_untrash(const char *uri); /* -ENOTSUP where there is no trash */
 int fr_vfs_set_mode(const char *uri, uint32_t mode); /* -ENOTSUP where the storage has no permissions */
 const char *fr_vfs_error(int err);
 
@@ -100,4 +102,6 @@ int fr_name_valid(const char *name);
 
 extern const fr_backend fr_backend_file;
 extern const fr_backend fr_backend_archive;
+extern const fr_backend fr_backend_smb;  /* vfs_smb.c */
+extern const fr_backend fr_backend_sftp; /* vfs_sftp.c */
 #endif

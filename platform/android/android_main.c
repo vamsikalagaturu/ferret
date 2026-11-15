@@ -12,6 +12,7 @@
 #include <android/looper.h>
 #include <android/native_activity.h>
 #include <android_native_app_glue.h>
+#include <errno.h>
 #include <jni.h>
 #include <math.h>
 #include <pthread.h>
@@ -523,6 +524,19 @@ int plat_share(const char *paths)
     return failed ? -1 : 0;
 }
 
+int plat_apps_for(const char *mime, fr_app_choices *out) { return -1; }
+int plat_open_app(const char *id, const fr_strs *paths) { return -1; }
+int plat_set_default_app(const char *mime, const char *id) { return -ENOTSUP; }
+int plat_terminal(const char *dir) { return -1; }
+
+int plat_open_chooser(const char *path)
+{
+    char *r = java("openWith", 1, path);
+    int failed = !r;
+    free(r);
+    return failed ? -1 : 0;
+}
+
 void plat_set_clipboard(const char *text) { free(java("setClipboard", 1, text ? text : "")); }
 
 char *plat_clipboard(void)
@@ -543,6 +557,45 @@ int plat_storage_granted(void)
 }
 
 void plat_request_storage(void) { free(java("requestStorage", 0)); }
+
+/* FerretActivity's sealed file: server key -> "user\npassword" */
+static void wipe(char *s)
+{
+    if (!s) return;
+    volatile char *p = s;
+    while (*p) *p++ = 0;
+    free(s);
+}
+
+int plat_secret_available(void) { return 1; }
+
+int plat_secret_load(const char *key, char **user, char **password)
+{
+    char *v = java("secretGet", 1, key), *nl = v ? strchr(v, '\n') : NULL;
+    if (nl) {
+        *user = fr_strndup(v, (size_t)(nl - v));
+        *password = fr_strdup(nl + 1);
+    }
+    wipe(v);
+    return nl ? 0 : -1;
+}
+
+int plat_secret_save(const char *key, const char *user, const char *password)
+{
+    char *v = fr_format("%s\n%s", user, password), *r = java("secretPut", 2, key, v);
+    int ok = r != NULL;
+    wipe(v);
+    free(r);
+    return ok ? 0 : -1;
+}
+
+int plat_secret_forget(const char *key)
+{
+    char *r = java("secretDelete", 1, key);
+    int ok = r != NULL;
+    free(r);
+    return ok ? 0 : -1;
+}
 
 #define INTERNAL "/storage/emulated/0"
 
