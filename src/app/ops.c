@@ -620,21 +620,6 @@ float ops_draw_jobs(Rectangle area)
     if (active < 0) return 0;
     fr_job_status *j = &st[active];
 
-    if (j->state == JOB_ASKING) {
-        char title[300], msg[400];
-        snprintf(title, sizeof title, "\"%s\" already exists", j->conflict);
-        snprintf(msg, sizeof msg, j->conflict_dir ? "Replacing merges the two folders: files with the same name are overwritten."
-                                                  : "Replacing overwrites the file in %s.", j->dest_name);
-        fr_dialog d = {.title = title, .message = msg, .check = "Do this for all conflicts", .checked = &conflict_for_all,
-                       .buttons = {"Skip", "Keep both", "Replace"}, .nbuttons = 3, .cancel = 0};
-        int b = ui_dialog(&d);
-        if (b >= 0) {
-            static const fr_conflict answers[] = {CONFLICT_SKIP, CONFLICT_KEEP_BOTH, CONFLICT_REPLACE};
-            fr_job_answer(j->id, answers[b], conflict_for_all);
-            conflict_for_all = 0;
-        }
-    }
-
     float h = DP(ui.touch ? 64 : 52), pad = DP(16);
     Rectangle r = {area.x, area.y + area.height - h, area.width, h};
     ui_rect(r, theme.surface);
@@ -673,8 +658,33 @@ float ops_draw_jobs(Rectangle area)
 
 /* ---- dialogs ---- */
 
+/* a job waiting for an answer: drawn with the other dialogs, after the file list, which would cover it */
+static void draw_conflict(void)
+{
+    fr_job_status st[16];
+    int n = fr_jobs_list(st, 16);
+    for (int i = 0; i < n; i++) {
+        fr_job_status *j = &st[i];
+        if (j->state != JOB_ASKING) continue;
+        char title[300], msg[400];
+        snprintf(title, sizeof title, "\"%s\" already exists", j->conflict);
+        snprintf(msg, sizeof msg, j->conflict_dir ? "Replacing merges the two folders: files with the same name are overwritten."
+                                                  : "Replacing overwrites the file in %s.", j->dest_name);
+        fr_dialog d = {.title = title, .message = msg, .check = "Do this for all conflicts", .checked = &conflict_for_all,
+                       .buttons = {"Skip", "Keep both", "Replace"}, .nbuttons = 3, .cancel = 0};
+        int b = ui_dialog(&d);
+        if (b >= 0) {
+            static const fr_conflict answers[] = {CONFLICT_SKIP, CONFLICT_KEEP_BOTH, CONFLICT_REPLACE};
+            fr_job_answer(j->id, answers[b], conflict_for_all);
+            conflict_for_all = 0;
+        }
+        return;
+    }
+}
+
 void ops_draw_dialogs(void)
 {
+    draw_conflict();
     if (dlg == DLG_NONE) return;
     int b;
     switch (dlg) {
