@@ -37,14 +37,18 @@ static void prompt(int content, int everywhere)
 }
 
 void search_prompt(int content) { prompt(content, 0); }
-/* a new search session collects the names afresh, so files made since the last one are found */
+/* the names below home, collected in the background at start and again for each search session, which meanwhile
+ * searches the last ones collected */
+void search_index_refresh(void)
+{
+    char *root = plat_home_uri();
+    if (root) fr_search_index(root, br.show_hidden);
+    free(root);
+}
+
 void search_everywhere(void)
 {
-    if (!br.results) {
-        char *root = plat_home_uri();
-        if (root) fr_search_index(root, br.show_hidden);
-        free(root);
-    }
+    if (!br.results) search_index_refresh();
     prompt(0, 1);
 }
 

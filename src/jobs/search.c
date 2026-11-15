@@ -171,37 +171,57 @@ int fr_search_file(const char *uri, const char *term)
 
 /* ---- the name index ---- */
 
-/* Every path below one local root, collected once by a thread of its own (fr_search_index); a name search of that
- * root then scores the paths in memory instead of walking the disk per term, and looks up size and date only for
- * the best FR_SEARCH_SHOWN. Guarded by lock, grown while it is built; grew signals each batch. */
-static struct {
+/* Every path below one local root, collected by a thread of its own (fr_search_index); a name search of that root
+ * then scores the paths in memory instead of walking the disk per term, and looks up size and date only for the
+ * best FR_SEARCH_SHOWN. A refresh builds a second index while searches keep using the finished one, and replaces
+ * it when done; a search holds the index it reads (users), and one replaced is freed by its last user. All fields
+ * under lock; grew signals each batch added and each build's end. */
+typedef struct {
+    char *rel;
+    int base; /* where the name starts in rel */
+} ix_entry;
+
+typedef struct {
     char *root;
-    int hidden, building, done, stop;
-    struct ix_entry {
-        char *rel;
-        int base; /* where the name starts in rel */
-    } *v;
+    int hidden, building, done, stop, users, retired;
+    ix_entry *v;
     int n, cap;
-    pthread_t thread;
-    int have_thread;
-} ix;
+} ix_index;
+
+static ix_index *ix_live, *ix_next; /* searched; being built to replace it (NULL when none) */
 static pthread_cond_t grew = PTHREAD_COND_INITIALIZER;
 
-static void ix_walk(int dirfd, const char *rel, int at_slash);
+static void ix_free(ix_index *x)
+{
+    for (int i = 0; i < x->n; i++) free(x->v[i].rel);
+    free(x->v), free(x->root), free(x);
+}
 
-static void ix_add(const char *rel, int base)
+static void ix_add(ix_index *x, const char *rel, int base)
 {
     pthread_mutex_lock(&lock);
-    if (ix.n == ix.cap) ix.cap = ix.cap ? ix.cap * 2 : 4096, ix.v = fr_realloc(ix.v, sizeof *ix.v * (size_t)ix.cap);
-    ix.v[ix.n++] = (struct ix_entry){fr_strdup(rel), base};
-    if (!(ix.n & 1023)) pthread_cond_broadcast(&grew);
+    if (x->n == x->cap) x->cap = x->cap ? x->cap * 2 : 4096, x->v = fr_realloc(x->v, sizeof *x->v * (size_t)x->cap);
+    x->v[x->n++] = (ix_entry){fr_strdup(rel), base};
+    if (!(x->n & 1023)) pthread_cond_broadcast(&grew);
     pthread_mutex_unlock(&lock);
 }
 
 /* the kernel's own trees, not files anyone looks for, and endless */
 static int pseudo(const char *rel) { return !strcmp(rel, "proc") || !strcmp(rel, "sys") || !strcmp(rel, "dev") || !strcmp(rel, "run"); }
 
-static void ix_walk(int dirfd, const char *rel, int at_slash)
+/* Android's internal storage keeps apps' data and caches in Android/ (most of its entries, and slow to list through
+ * the storage layer); the everywhere search leaves it out, and a search from inside it walks it */
+static int skipped(const char *name, int top)
+{
+#ifdef __ANDROID__
+    return top && !strcmp(name, "Android");
+#else
+    (void)name, (void)top;
+    return 0;
+#endif
+}
+
+static void ix_walk(ix_index *x, int dirfd, const char *rel, int at_slash)
 {
     DIR *d = fdopendir(dirfd);
     if (!d) {
@@ -209,9 +229,9 @@ static void ix_walk(int dirfd, const char *rel, int at_slash)
         return;
     }
     struct dirent *de;
-    while (!__atomic_load_n(&ix.stop, __ATOMIC_RELAXED) && (de = readdir(d))) {
+    while (!__atomic_load_n(&x->stop, __ATOMIC_RELAXED) && (de = readdir(d))) {
         const char *name = de->d_name;
-        if (!strcmp(name, ".") || !strcmp(name, "..") || (name[0] == '.' && !ix.hidden)) continue;
+        if (!strcmp(name, ".") || !strcmp(name, "..") || (name[0] == '.' && !x->hidden) || skipped(name, !rel)) continue;
         int type = de->d_type;
         if (type == DT_UNKNOWN) {
             struct stat st;
@@ -219,52 +239,113 @@ static void ix_walk(int dirfd, const char *rel, int at_slash)
             type = S_ISDIR(st.st_mode) ? DT_DIR : DT_REG;
         }
         char *krel = rel ? fr_format("%s/%s", rel, name) : fr_strdup(name);
-        ix_add(krel, rel ? (int)strlen(rel) + 1 : 0);
+        ix_add(x, krel, rel ? (int)strlen(rel) + 1 : 0);
         if (type == DT_DIR && !(at_slash && pseudo(name))) {
             int fd = openat(dirfd, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-            if (fd >= 0) ix_walk(fd, krel, 0);
+            if (fd >= 0) ix_walk(x, fd, krel, 0);
         }
         free(krel);
     }
     closedir(d);
 }
 
+/* builds x; when it replaces a finished index, that one goes once no search reads it */
 static void *ix_run(void *arg)
 {
-    const char *path = arg;
+    ix_index *x = arg;
+    const char *path = fr_uri_local(x->root);
     int fd = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-    if (fd >= 0) ix_walk(fd, NULL, !strcmp(path, "/"));
+    if (fd >= 0) ix_walk(x, fd, NULL, !strcmp(path, "/"));
+    ix_index *old = NULL;
     pthread_mutex_lock(&lock);
-    ix.building = 0, ix.done = !ix.stop;
+    x->building = 0, x->done = !x->stop;
+    if (x->stop) {
+        if (ix_next == x) ix_next = NULL;
+        if (ix_live == x) ix_live = NULL;
+        x->retired = 1;
+    } else if (ix_next == x) {
+        old = ix_live, ix_live = x, ix_next = NULL;
+        if (old) old->retired = 1;
+    }
+    int free_x = x->retired && !x->users, free_old = old && !old->users;
     pthread_cond_broadcast(&grew);
     pthread_mutex_unlock(&lock);
+    if (free_old) ix_free(old);
+    if (free_x) ix_free(x);
     return NULL;
 }
 
+static ix_index *ix_start(const char *root, int hidden)
+{
+    ix_index *x = fr_realloc(NULL, sizeof *x);
+    *x = (ix_index){.root = fr_strdup(root), .hidden = hidden, .building = 1};
+    pthread_t t;
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    int failed = pthread_create(&t, &attr, ix_run, x);
+    pthread_attr_destroy(&attr);
+    if (failed) {
+        ix_free(x);
+        return NULL;
+    }
+    return x;
+}
+
+/* stops the builds and waits for them; a search still reading the live index frees it */
 void fr_search_index_drop(void)
 {
-    __atomic_store_n(&ix.stop, 1, __ATOMIC_RELAXED);
-    if (ix.have_thread) pthread_join(ix.thread, NULL);
-    ix.have_thread = 0;
-    for (int i = 0; i < ix.n; i++) free(ix.v[i].rel);
-    free(ix.v), free(ix.root);
-    ix = (typeof(ix)){0};
+    pthread_mutex_lock(&lock);
+    ix_index *xs[] = {ix_live, ix_next};
+    for (int i = 0; i < 2; i++)
+        if (xs[i]) __atomic_store_n(&xs[i]->stop, 1, __ATOMIC_RELAXED);
+    while ((ix_live && ix_live->building) || (ix_next && ix_next->building)) pthread_cond_wait(&grew, &lock);
+    ix_index *live = ix_live;
+    ix_live = ix_next = NULL;
+    int free_live = live && !live->users;
+    if (live) live->retired = 1;
+    pthread_mutex_unlock(&lock);
+    if (free_live) ix_free(live);
 }
 
 void fr_search_index(const char *root, int hidden)
 {
-    const char *path = fr_uri_local(root);
-    if (!path) return;
-    fr_search_stop();
-    fr_search_index_drop();
-    ix.root = fr_strdup(root), ix.hidden = hidden, ix.building = 1;
-    if (pthread_create(&ix.thread, NULL, ix_run, (void *)fr_uri_local(ix.root))) ix.building = 0;
-    else ix.have_thread = 1;
+    if (!fr_uri_local(root)) return;
+    pthread_mutex_lock(&lock);
+    int same = ix_live && !strcmp(ix_live->root, root) && ix_live->hidden == hidden, busy = ix_next || (ix_live && ix_live->building);
+    pthread_mutex_unlock(&lock);
+    if (same && busy) return;
+    if (!same) {
+        fr_search_index_drop();
+        ix_index *x = ix_start(root, hidden);
+        pthread_mutex_lock(&lock);
+        ix_live = x;
+        pthread_mutex_unlock(&lock);
+        return;
+    }
+    ix_index *x = ix_start(root, hidden);
+    pthread_mutex_lock(&lock);
+    ix_next = x;
+    pthread_mutex_unlock(&lock);
 }
 
-static int ix_serves(const search *s)
+/* the index a name search of s->root reads, held (ix_release), NULL when there is none */
+static ix_index *ix_take(const search *s)
 {
-    return !s->content && ix.root && !strcmp(ix.root, s->root) && ix.hidden == s->hidden && (ix.building || ix.done);
+    pthread_mutex_lock(&lock);
+    ix_index *x = ix_live;
+    if (s->content || !x || strcmp(x->root, s->root) || x->hidden != s->hidden || x->stop) x = NULL;
+    if (x) x->users++;
+    pthread_mutex_unlock(&lock);
+    return x;
+}
+
+static void ix_release(ix_index *x)
+{
+    pthread_mutex_lock(&lock);
+    int last = !--x->users && x->retired;
+    pthread_mutex_unlock(&lock);
+    if (last) ix_free(x);
 }
 
 typedef struct {
@@ -277,8 +358,8 @@ static int by_score(const void *a, const void *b)
     return x->score != y->score ? y->score - x->score : x->i - y->i;
 }
 
-/* scores the index as it grows (waiting for the build), then keeps the best FR_SEARCH_SHOWN */
-static void ix_search(search *s)
+/* scores the index as it grows (waiting for a first build), then keeps the best FR_SEARCH_SHOWN */
+static void ix_search(search *s, ix_index *x)
 {
     int glob = strpbrk(s->term, "*?") != NULL, at = 0, total = 0;
     struct {
@@ -287,7 +368,7 @@ static void ix_search(search *s)
     } hits = {0};
     for (;;) {
         pthread_mutex_lock(&lock);
-        while (at == ix.n && ix.building && !cancelled()) {
+        while (at == x->n && x->building && !cancelled()) {
             struct timespec t;
             clock_gettime(CLOCK_REALTIME, &t);
             t.tv_nsec += 100 * 1000000L;
@@ -295,15 +376,15 @@ static void ix_search(search *s)
             pthread_cond_timedwait(&grew, &lock, &t);
         }
         /* in batches under the lock, as the build may move the array; it waits a few milliseconds at most */
-        int end = ix.n < at + 8192 ? ix.n : at + 8192, more = ix.building || end < ix.n;
+        int end = x->n < at + 8192 ? x->n : at + 8192, more = x->building || end < x->n;
         for (; at < end; at++) {
-            const char *name = ix.v[at].rel + ix.v[at].base;
+            const char *name = x->v[at].rel + x->v[at].base;
             int score = glob ? (fr_glob_match(s->term, name) ? 1 : -1) : fr_fuzzy_score(s->term, name);
             if (score < 0) continue;
             total++;
             FR_PUSH(hits, ((scored){at, score}));
         }
-        status.files = ix.n;
+        status.files = x->n;
         pthread_mutex_unlock(&lock);
         if (cancelled() || !more) break;
         wake(0);
@@ -312,7 +393,7 @@ static void ix_search(search *s)
         qsort(hits.v, (size_t)hits.n, sizeof *hits.v, by_score);
         for (int k = 0; k < hits.n && k < FR_SEARCH_SHOWN && !cancelled(); k++) {
             pthread_mutex_lock(&lock);
-            char *rel = fr_strdup(ix.v[hits.v[k].i].rel);
+            char *rel = fr_strdup(x->v[hits.v[k].i].rel);
             pthread_mutex_unlock(&lock);
             add(s, rel);
             free(rel);
@@ -392,11 +473,11 @@ static void *run(void *arg)
 {
     search *s = arg;
     const char *path = fr_uri_local(s->root);
-    pthread_mutex_lock(&lock);
-    int indexed = ix_serves(s);
-    pthread_mutex_unlock(&lock);
-    if (indexed) ix_search(s);
-    else if (path) {
+    ix_index *x = ix_take(s);
+    if (x) {
+        ix_search(s, x);
+        ix_release(x);
+    } else if (path) {
         int fd = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
         if (fd >= 0) walk_local(s, fd, NULL, !strcmp(path, "/"));
         else count(0, 0, 1);

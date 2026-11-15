@@ -586,7 +586,7 @@ int fr_app_main(int argc, char **argv)
     static const fr_secret_store keystore = {plat_secret_load, plat_secret_save, plat_secret_forget};
     if (plat_secret_available()) fr_creds_set_store(&keystore);
     thumbs_start();
-    if (!replay) update_check(0);
+    if (!replay) update_check(0), search_index_refresh();
     app.menu_more = ui_id("menu-more", 0), app.menu_row = ui_id("menu-row", 0), app.menu_bg = ui_id("menu-bg", 0);
     app.menu_selection = ui_id("menu-selection", 0);
     char *start = NULL;
