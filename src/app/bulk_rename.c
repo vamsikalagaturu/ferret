@@ -186,8 +186,8 @@ int bulk_rename_draw(void)
         if (res & TEXT_CHANGED) b.stale = 1;
         submit |= res & TEXT_SUBMIT, cancel |= res & TEXT_CANCEL;
     } else {
-        if (ui_key(KEY_TAB, 0) || ui_key(KEY_TAB, MOD_SHIFT)) b.focus = b.focus == find_id() ? replace_id() : find_id();
-        if (ui.focus != find_id() && ui.focus != replace_id()) ui.focus = b.focus;
+        if (ui_key(KEY_TAB, 0) || ui_key(KEY_TAB, MOD_SHIFT)) ui.focus = b.focus = b.focus == find_id() ? replace_id() : find_id();
+        else if (ui.focus != find_id() && ui.focus != replace_id()) ui.focus = b.focus;
         float lw = DP(110);
         const char *labels[] = {"Find", "Replace with"};
         fr_text *fields[] = {&b.find, &b.replace};
