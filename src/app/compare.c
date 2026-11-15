@@ -251,7 +251,7 @@ static void preview_row(const fr_step *s, Rectangle r)
     Color c;
     if (s->kind == STEP_COPIED) label = "New", c = theme.accent;
     else if (s->kind == STEP_REPLACED) label = "Replace", c = theme.warning;
-    else label = "To trash", c = theme.danger;
+    else label = fr_vfs_can_trash(s->a) ? "To trash" : "Delete", c = theme.danger;
     fr_kind k = kind_of(path, s->is_dir);
     ui_icon(kind_icon(k), (Rectangle){r.x, r.y, DP(24), r.height}, 16, kind_color(k));
     float cw = ui_text_width(label, 12, FONT_SEMIBOLD) + DP(16), ch = DP(20);
@@ -321,7 +321,10 @@ void compare_draw_dialog(void)
     if (state) ui_round(row, 8, state == 2 ? theme.pressed : theme.hover);
     ui_icon(C.mirror ? "square-check" : "square", (Rectangle){row.x + DP(4), y, DP(28), row.height}, 20, C.mirror ? theme.danger : theme.text_dim);
     char mirror[300];
-    snprintf(mirror, sizeof mirror, "Mirror: also replace what differs and move what only %s has to the trash", *to ? to : "/");
+    /* put_aside() in the job deletes for good where the storage has no trash */
+    if (fr_vfs_can_trash(C.to_right ? C.right : C.left))
+        snprintf(mirror, sizeof mirror, "Mirror: also replace what differs and move what only %s has to the trash", *to ? to : "/");
+    else snprintf(mirror, sizeof mirror, "Mirror: also replace what differs and DELETE what only %s has (no trash there)", *to ? to : "/");
     ui_text_box(mirror, (Rectangle){row.x + DP(40), y, row.width - DP(44), row.height}, 14, FONT_REGULAR, theme.text, ALIGN_LEFT, 1);
     y += row.height + DP(16);
 
