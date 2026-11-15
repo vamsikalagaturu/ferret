@@ -10,7 +10,8 @@ void fr_places_free(fr_places *p)
 
 void fr_disks_free(fr_disks *d)
 {
-    for (int i = 0; i < d->n; i++) free(d->v[i].id), free(d->v[i].label), free(d->v[i].device), fr_strs_free(&d->v[i].mounts);
+    for (int i = 0; i < d->n; i++)
+        free(d->v[i].id), free(d->v[i].label), free(d->v[i].device), free(d->v[i].uri), fr_strs_free(&d->v[i].mounts);
     free(d->v);
     *d = (fr_disks){0};
 }

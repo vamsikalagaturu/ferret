@@ -36,15 +36,99 @@ static void dlg_close(void)
     ui.dirty = 1;
 }
 
+void ops_open_entry(const char *uri, const fr_entry *e)
+{
+    if (e->is_dir) browser_open(uri, 1);
+    else if (fr_archive_browsable(e->name)) {
+        char *root = fr_archive_root(uri);
+        browser_open(root, 1);
+        free(root);
+    } else {
+        const char *path = fr_uri_local(uri);
+        if (!path || plat_open(path)) ui_toast("No app can open %s", e->name);
+    }
+}
+
 void ops_open_item(fr_item *it)
 {
     char *uri = fr_uri_join(br.uri, it->e.name);
-    if (it->e.is_dir) browser_open(uri, 1);
-    else {
-        const char *path = fr_uri_local(uri);
-        if (!path || plat_open(path)) ui_toast("No app can open %s", it->e.name);
-    }
+    ops_open_entry(uri, &it->e);
     free(uri);
+}
+
+/* archives are rewritten whole for a change inside, so it runs as a job */
+static int in_archive(const char *uri) { return fr_archive_is_uri(uri); }
+
+int ops_rename(const char *from, const char *to)
+{
+    if (!in_archive(from)) return fr_vfs_rename(from, to);
+    if (fr_vfs_exists(to)) return -EEXIST;
+    fr_job_submit_rename(from, to);
+    return 0;
+}
+
+int ops_archive_targets(void)
+{
+    if (!br.uri || in_archive(br.uri)) return 0;
+    fr_strs uris = browser_target_uris();
+    int n = uris.n;
+    for (int i = 0; i < uris.n; i++) {
+        char *name = fr_uri_name(uris.v[i]);
+        if (!fr_archive_browsable(name)) n = 0;
+        free(name);
+    }
+    fr_strs_free(&uris);
+    return n;
+}
+
+void ops_extract(int into_folder)
+{
+    if (!ops_archive_targets()) {
+        ui_toast("Choose archives to extract (zip, tar, 7z, rar, iso)");
+        return;
+    }
+    fr_strs uris = browser_target_uris();
+    fr_job_submit_extract(&uris, br.uri, into_folder);
+    fr_strs_free(&uris);
+    browser_clear_selection();
+}
+
+char *ops_compress_name(void)
+{
+    fr_strs uris = browser_target_uris();
+    char *name = NULL;
+    if (uris.n == 1) {
+        fr_entry e = {0};
+        int is_dir = !fr_vfs_stat(uris.v[0], &e) && e.is_dir;
+        fr_entry_free(&e);
+        char *full = fr_uri_name(uris.v[0]);
+        name = fr_format("%.*s.zip", (int)fr_stem_len(full, is_dir), full);
+        free(full);
+    } else if (uris.n) {
+        char *here = fr_uri_name(br.uri);
+        name = fr_format("%s.zip", *here ? here : "Archive");
+        free(here);
+    }
+    fr_strs_free(&uris);
+    return name;
+}
+
+void ops_compress(void)
+{
+    if (!br.uri || in_archive(br.uri)) {
+        ui_toast("Archives are made outside archives");
+        return;
+    }
+    char *name = ops_compress_name();
+    if (!name) return;
+    fr_strs uris = browser_target_uris();
+    char *dest = fr_uri_free_name(br.uri, name, 0), *shown = fr_uri_name(dest);
+    fr_job_submit_compress(&uris, dest);
+    free(br.focus_name);
+    br.focus_name = shown;
+    fr_strs_free(&uris);
+    free(dest), free(name);
+    browser_clear_selection();
 }
 
 static void copy_now(const char *s, int cut)
@@ -177,7 +261,7 @@ static void rename_commit(void)
         return;
     }
     char *parent = fr_uri_parent(dlg_uri), *to = fr_uri_join(parent, field.buf);
-    int rc = fr_vfs_rename(dlg_uri, to);
+    int rc = ops_rename(dlg_uri, to);
     if (rc == -EEXIST) ui_toast("\"%s\" already exists here", field.buf);
     else if (rc) ui_toast("Could not rename: %s", fr_vfs_error(rc));
     else {
@@ -200,7 +284,10 @@ int ops_create(const char *typed)
     else {
         char *uri = fr_uri_join(br.uri, name);
         rc = 0;
-        if (folder) rc = fr_vfs_mkdir(uri);
+        if (in_archive(uri)) {
+            if (fr_vfs_exists(uri)) rc = -EEXIST;
+            else fr_job_submit_create(uri, folder);
+        } else if (folder) rc = fr_vfs_mkdir(uri);
         else {
             fr_stream *s = fr_vfs_open_write(uri, 1, &rc);
             if (s) rc = s->close(s);
@@ -239,14 +326,17 @@ void ops_poll_jobs(void)
     int n = fr_jobs_list(st, 16);
     for (int i = 0; i < n; i++) {
         if (st[i].state != JOB_DONE && st[i].state != JOB_CANCELLED) continue;
-        static const char *done[] = {"Copied", "Moved", "Deleted", "Moved to the trash", "Changed the permissions of"};
+        static const char *done[] = {"Copied", "Moved", "Deleted", "Moved to the trash", "Changed the permissions of",
+                                     "Extracted", "Compressed", "Renamed", "Made"};
         if (st[i].state == JOB_CANCELLED) ui_toast("Cancelled");
         else if (st[i].failed) {
             if (dlg == DLG_PROPERTIES) props_close();
             dlg = DLG_ERROR;
             snprintf(dlg_title, sizeof dlg_title, "%d %s could not be done", st[i].failed, st[i].failed == 1 ? "item" : "items");
             snprintf(dlg_message, sizeof dlg_message, "%s", st[i].error);
-        } else
+        } else if (st[i].kind == JOB_COMPRESS || st[i].kind == JOB_RENAME || st[i].kind == JOB_CREATE)
+            ui_toast("%s %s", done[st[i].kind], st[i].dest_name);
+        else
             ui_toast("%s %d %s", done[st[i].kind], st[i].items, st[i].items == 1 ? "item" : "items");
         fr_job_dismiss(st[i].id);
     }
@@ -282,10 +372,12 @@ float ops_draw_jobs(Rectangle area)
     Rectangle r = {area.x, area.y + area.height - h, area.width, h};
     ui_rect(r, theme.surface);
     ui_hline(r.x, r.y, r.width, theme.border);
-    static const char *verbs[] = {"Copying", "Moving", "Deleting", "Moving to the trash", "Changing the permissions of"};
+    static const char *verbs[] = {"Copying", "Moving", "Deleting", "Moving to the trash", "Changing the permissions of",
+                                  "Extracting", "Compressing", "Renaming", "Making"};
     char line[640];
     const char *what = j->items == 1 && j->current[0] ? j->current : NULL;
-    if (j->kind <= JOB_MOVE) {
+    if (j->kind == JOB_RENAME || j->kind == JOB_CREATE) snprintf(line, sizeof line, "%s %s", verbs[j->kind], j->dest_name);
+    else if (j->kind <= JOB_MOVE || j->kind == JOB_EXTRACT || j->kind == JOB_COMPRESS) {
         if (what) snprintf(line, sizeof line, "%s %s to %s", verbs[j->kind], what, j->dest_name);
         else snprintf(line, sizeof line, "%s %d items to %s", verbs[j->kind], j->items, j->dest_name);
     } else if (what) snprintf(line, sizeof line, "%s %s", verbs[j->kind], what);

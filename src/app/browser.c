@@ -1,5 +1,6 @@
 #include "app.h"
 #include <dirent.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -83,7 +84,8 @@ static void push_placeholder(void)
     FR_PUSH(br.items, it);
 }
 
-static void load(const char *uri)
+/* shows the listing of uri, which es hands over */
+static void apply(const char *uri, fr_entries *es, int rc)
 {
     fr_strs selected = {0};
     int naming = 0;
@@ -95,20 +97,20 @@ static void load(const char *uri)
     items_free();
     free(br.error);
     br.error = NULL;
-    fr_entries es = {0};
-    int rc = fr_vfs_list(uri, &es);
+    br.loading = 0;
     if (rc) br.error = fr_strdup(fr_vfs_error(rc));
-    for (int i = 0; i < es.n; i++) {
-        fr_item it = {.e = es.v[i], .kind = kind_of(es.v[i].name, es.v[i].is_dir), .count = -1};
+    for (int i = 0; i < es->n; i++) {
+        fr_item it = {.e = es->v[i], .kind = kind_of(es->v[i].name, es->v[i].is_dir), .count = -1};
         if (same)
             for (int k = 0; k < selected.n; k++)
                 if (!strcmp(selected.v[k], it.e.name)) it.selected = 1, br.nselected++;
         FR_PUSH(br.items, it);
     }
-    free(es.v);
+    free(es->v);
+    *es = (fr_entries){0};
     fr_strs_free(&selected);
     if (same && naming) push_placeholder();
-    br.dir_mtime = dir_mtime(uri);
+    br.dir_mtime = fr_uri_local(uri) ? dir_mtime(uri) : -1;
     br.checked_at = ui.now;
     if (!same) {
         free(br.uri);
@@ -117,9 +119,112 @@ static void load(const char *uri)
     rebuild_now(NULL, 0);
 }
 
+/* the cursor on br.focus_name, scrolled to; it takes the name */
+static void land_on_focus(void)
+{
+    if (br.focus_name && br.cursor >= 0) {
+        float rh = app_row_height();
+        br.scroll.target = br.scroll.offset = br.cursor * rh - DP(120);
+        if (br.scroll.target < 0) br.scroll.target = br.scroll.offset = 0;
+    }
+    free(br.focus_name);
+    br.focus_name = NULL;
+}
+
+/* ---- folders off this machine (a phone, a network share) are listed on a thread, so a slow one does not hold
+ * the window; remote_finish() shows the latest listing asked for ---- */
+
+static struct {
+    pthread_mutex_t lock;
+    unsigned want, got;
+    char *uri;
+    fr_entries es;
+    int rc;
+} remote = {.lock = PTHREAD_MUTEX_INITIALIZER};
+
+typedef struct {
+    unsigned seq;
+    char *uri;
+} remote_request;
+
+static void *remote_run(void *arg)
+{
+    remote_request *r = arg;
+    fr_entries es = {0};
+    int rc = fr_vfs_list(r->uri, &es);
+    pthread_mutex_lock(&remote.lock);
+    if (r->seq == remote.want) {
+        fr_entries_free(&remote.es);
+        free(remote.uri);
+        remote.es = es, remote.rc = rc, remote.uri = r->uri, remote.got = r->seq;
+        es = (fr_entries){0}, r->uri = NULL;
+    }
+    pthread_mutex_unlock(&remote.lock);
+    fr_entries_free(&es);
+    free(r->uri);
+    free(r);
+    plat_wake();
+    return NULL;
+}
+
+/* 0: uri is on this machine, list it in place */
+static int remote_load(const char *uri)
+{
+    pthread_mutex_lock(&remote.lock);
+    unsigned seq = ++remote.want;
+    pthread_mutex_unlock(&remote.lock);
+    if (fr_uri_local(uri)) return 0;
+    remote_request *r = fr_realloc(NULL, sizeof *r);
+    *r = (remote_request){seq, fr_strdup(uri)};
+    pthread_t t;
+    if (pthread_create(&t, NULL, remote_run, r)) {
+        free(r->uri);
+        free(r);
+        return 0;
+    }
+    pthread_detach(t);
+    br.loading = 1;
+    if (!br.uri || strcmp(br.uri, uri)) {
+        items_free();
+        free(br.error);
+        br.error = NULL;
+        free(br.uri);
+        br.uri = fr_strdup(uri);
+        rebuild_now(NULL, 0);
+    }
+    return 1;
+}
+
+static void remote_finish(void)
+{
+    pthread_mutex_lock(&remote.lock);
+    int ready = remote.uri && remote.got == remote.want;
+    fr_entries es = remote.es;
+    char *uri = remote.uri;
+    int rc = remote.rc;
+    if (ready) remote.es = (fr_entries){0}, remote.uri = NULL;
+    pthread_mutex_unlock(&remote.lock);
+    if (!ready) return;
+    if (br.uri && !strcmp(br.uri, uri)) {
+        apply(uri, &es, rc);
+        land_on_focus();
+    }
+    fr_entries_free(&es);
+    free(uri);
+}
+
+static void load(const char *uri)
+{
+    if (remote_load(uri)) return;
+    fr_entries es = {0};
+    int rc = fr_vfs_list(uri, &es);
+    apply(uri, &es, rc);
+}
+
 static void reload_now(const char *s, int n)
 {
     if (br.uri) load(br.uri);
+    if (br.loading) return;
     free(br.focus_name);
     br.focus_name = NULL;
 }
@@ -150,13 +255,7 @@ static void open_now(const char *uri, int push_history)
     br.nselected = 0;
     for (int i = 0; i < br.items.n; i++) br.items.v[i].selected = 0;
     load(uri);
-    if (br.focus_name && br.cursor >= 0) {
-        float rh = app_row_height();
-        br.scroll.target = br.scroll.offset = br.cursor * rh - DP(120);
-        if (br.scroll.target < 0) br.scroll.target = br.scroll.offset = 0;
-    }
-    free(br.focus_name);
-    br.focus_name = NULL;
+    if (!br.loading) land_on_focus();
     free(previous);
 }
 
@@ -247,9 +346,10 @@ void browser_drop_placeholder(void) { app_defer(drop_placeholder_now, NULL, 0); 
 
 void browser_poll(void)
 {
+    remote_finish();
     for (int i = 0; i < br.items.n; i++)
         if (br.items.v[i].placeholder) return;
-    if (!br.uri || ui.now - br.checked_at < 1.5) return;
+    if (!br.uri || !fr_uri_local(br.uri) || ui.now - br.checked_at < 1.5) return;
     br.checked_at = ui.now;
     int64_t t = dir_mtime(br.uri);
     /* the folder went away (a disk ejected or unmounted, deleted elsewhere): home, quietly */
