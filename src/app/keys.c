@@ -337,6 +337,8 @@ static void command(int c)
     case K(0, 'I'):
     case K(0, 'c'): insert_start(c); break;
     case K(0, '.'): toggle_hidden(); break;
+    case K(0, 'O'): ops_open_with(); break;
+    case K(0, 'T'): ops_terminal_here(); break;
     case K(0, 'q'): app.quit = 1; break;
     case K('g', 'h'):
     case K('g', '~'): go_home(); break;

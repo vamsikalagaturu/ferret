@@ -173,9 +173,9 @@ static int file_set_mode(const char *uri, uint32_t mode) { return chmod(fr_uri_p
 #define file_untrash NULL
 #else
 int fr_trash_path(const char *path);   /* trash_linux.c */
-int fr_trash_restore(const char *path); /* trash_linux.c */
+int fr_trash_untrash(const char *path); /* trash_linux.c */
 static int file_trash(const char *uri) { return fr_trash_path(fr_uri_path(uri)); }
-static int file_untrash(const char *uri) { return fr_trash_restore(fr_uri_path(uri)); }
+static int file_untrash(const char *uri) { return fr_trash_untrash(fr_uri_path(uri)); }
 #endif
 
 const fr_backend fr_backend_file = {

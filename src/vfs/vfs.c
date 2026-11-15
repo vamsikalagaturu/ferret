@@ -11,6 +11,8 @@
 
 #ifdef __ANDROID__
 extern const fr_backend fr_backend_saf; /* platform/android/saf.c */
+#else
+extern const fr_backend fr_backend_trash; /* trash_linux.c */
 #endif
 
 static const fr_backend *backends[] = {
@@ -18,6 +20,8 @@ static const fr_backend *backends[] = {
     &fr_backend_archive,
 #ifdef __ANDROID__
     &fr_backend_saf,
+#else
+    &fr_backend_trash,
 #endif
 #ifdef FR_HAVE_MTP
     &fr_backend_mtp,

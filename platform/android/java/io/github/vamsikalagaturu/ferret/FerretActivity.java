@@ -123,6 +123,22 @@ public class FerretActivity extends NativeActivity {
         });
     }
 
+    /* path in an app picked from the system's chooser, every time; null when no app takes it */
+    public String openWith(String path) {
+        Uri uri = OpenProvider.uriFor(getPackageName(), path);
+        Intent view = new Intent(Intent.ACTION_VIEW);
+        view.setDataAndType(uri, OpenProvider.mimeOf(path));
+        view.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        return onUi(() -> {
+            try {
+                startActivity(Intent.createChooser(view, null));
+                return "1";
+            } catch (ActivityNotFoundException e) {
+                return null;
+            }
+        });
+    }
+
     /* paths separated by '\n' to the system's share sheet; null when nothing can take them */
     public String share(String paths) {
         String[] list = paths.split("\n");

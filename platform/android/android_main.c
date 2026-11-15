@@ -12,6 +12,7 @@
 #include <android/looper.h>
 #include <android/native_activity.h>
 #include <android_native_app_glue.h>
+#include <errno.h>
 #include <jni.h>
 #include <math.h>
 #include <pthread.h>
@@ -518,6 +519,19 @@ int plat_open(const char *path)
 int plat_share(const char *paths)
 {
     char *r = java("share", 1, paths);
+    int failed = !r;
+    free(r);
+    return failed ? -1 : 0;
+}
+
+int plat_apps_for(const char *mime, fr_app_choices *out) { return -1; }
+int plat_open_app(const char *id, const fr_strs *paths) { return -1; }
+int plat_set_default_app(const char *mime, const char *id) { return -ENOTSUP; }
+int plat_terminal(const char *dir) { return -1; }
+
+int plat_open_chooser(const char *path)
+{
+    char *r = java("openWith", 1, path);
     int failed = !r;
     free(r);
     return failed ? -1 : 0;

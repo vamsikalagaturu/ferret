@@ -25,6 +25,26 @@ void plat_keyboard(int show);
 int plat_open(const char *path); /* in the app the system picks for it; 0 when handed over */
 /* paths separated by '\n' to the system's share sheet (Android); 0 when handed over, -1 where there is none */
 int plat_share(const char *paths);
+/* Open with: the desktop lists the apps itself (platform/linux/apps_linux.c), Android shows its own chooser */
+typedef struct {
+    char *id, *name; /* the desktop ID ("org.gnome.TextEditor.desktop") and what it is called */
+    int is_default;
+} fr_app_choice;
+
+typedef struct {
+    fr_app_choice *v;
+    int n, cap;
+} fr_app_choices;
+
+/* the apps that open files of type mime, the default first; -1 where there is no list (plat_open_chooser) */
+int plat_apps_for(const char *mime, fr_app_choices *out);
+void fr_app_choices_free(fr_app_choices *c);
+int plat_open_app(const char *id, const fr_strs *paths); /* 0 when started */
+int plat_set_default_app(const char *mime, const char *id); /* 0, or -errno */
+int plat_open_chooser(const char *path); /* the system's own "open with"; 0 when handed over, -1 none */
+/* a terminal in dir, or with dir NULL whether there is one; 0 when started (or found), -1 none */
+int plat_terminal(const char *dir);
+
 void plat_set_clipboard(const char *text);
 char *plat_clipboard(void); /* malloc'd, NULL for none */
 void plat_haptic(void);
