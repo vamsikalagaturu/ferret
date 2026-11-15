@@ -46,6 +46,7 @@ typedef struct {
     int keyboard;       /* the cursor moved by key since the last click: show it */
     int nselected;
     char *error;        /* the listing failed */
+    int loading;        /* a listing off this machine is being fetched on a thread */
     int64_t dir_mtime;
     double checked_at;
     char *focus_name;   /* the row the next browser_open() or browser_reload() lands on; it takes it */

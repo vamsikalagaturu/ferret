@@ -31,6 +31,11 @@ BZIP2_VERSION=1.0.8
 BZIP2_URL=https://sourceware.org/pub/bzip2/bzip2-$BZIP2_VERSION.tar.gz
 BZIP2_SHA256=ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269
 
+# desktop only, and only where the system has no libmtp development files (LGPL-2.1, linked statically)
+LIBMTP_VERSION=1.1.23
+LIBMTP_URL=https://github.com/libmtp/libmtp/releases/download/v$LIBMTP_VERSION/libmtp-$LIBMTP_VERSION.tar.gz
+LIBMTP_SHA256=74a2b6e8cb4a0304e95b995496ea3ac644c29371649b892b856e22f12a0bdeed
+
 # download $1 to $2 once and check it against SHA-256 $3
 fetch() {
     [ -f "$2" ] || { curl -fL -o "$2.part" "$1" && mv "$2.part" "$2"; }

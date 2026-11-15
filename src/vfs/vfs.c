@@ -4,6 +4,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef FR_HAVE_MTP
+#include "vfs_mtp.h"
+#endif
 
 #ifdef __ANDROID__
 extern const fr_backend fr_backend_saf; /* platform/android/saf.c */
@@ -14,6 +17,9 @@ static const fr_backend *backends[] = {
     &fr_backend_archive,
 #ifdef __ANDROID__
     &fr_backend_saf,
+#endif
+#ifdef FR_HAVE_MTP
+    &fr_backend_mtp,
 #endif
 };
 
