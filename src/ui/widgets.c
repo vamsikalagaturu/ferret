@@ -327,6 +327,7 @@ int ui_menu_stepper(const char *label, const char *icon, const char *value)
 {
     if (menu.n >= MENU_ITEMS) return 0;
     menu_item *it = &menu.items[menu.n++];
+    *it = (menu_item){0};
     snprintf(it->label, sizeof it->label, "%s", label);
     snprintf(it->value, sizeof it->value, "%s", value);
     it->icon = icon, it->checked = -1, it->separator = 0;
@@ -340,6 +341,7 @@ int ui_menu_item(const char *label, const char *icon, int checked)
     if (menu.n >= MENU_ITEMS) return 0;
     int idx = menu.n++;
     menu_item *it = &menu.items[idx];
+    *it = (menu_item){0};
     snprintf(it->label, sizeof it->label, "%s", label);
     it->icon = icon, it->checked = checked, it->separator = 0, it->value[0] = 0;
     if (menu.clicked && !strcmp(menu.clicked_label, it->label)) {
