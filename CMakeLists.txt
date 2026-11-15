@@ -50,6 +50,23 @@ target_compile_options(fercore PRIVATE ${FR_WARNINGS})
 find_package(Threads REQUIRED)
 target_link_libraries(fercore PUBLIC Threads::Threads m)
 
+# libarchive, static, from platform/*/deps.sh; a codec built beside it is linked from there, else the system's
+set(FR_LIBARCHIVE_DIR "" CACHE PATH "libarchive's install prefix (include/archive.h, lib/libarchive.a)")
+if(NOT EXISTS "${FR_LIBARCHIVE_DIR}/lib/libarchive.a")
+  message(FATAL_ERROR "FR_LIBARCHIVE_DIR: no lib/libarchive.a in '${FR_LIBARCHIVE_DIR}' (platform/*/deps.sh builds it)")
+endif()
+set(FR_ARCHIVE_LIBS ${FR_LIBARCHIVE_DIR}/lib/libarchive.a)
+foreach(codec zstd lzma bz2 z)
+  if(EXISTS ${FR_LIBARCHIVE_DIR}/lib/lib${codec}.a)
+    list(APPEND FR_ARCHIVE_LIBS ${FR_LIBARCHIVE_DIR}/lib/lib${codec}.a)
+  else()
+    list(APPEND FR_ARCHIVE_LIBS ${codec})
+  endif()
+endforeach()
+target_include_directories(fercore SYSTEM PUBLIC ${FR_LIBARCHIVE_DIR}/include)
+target_compile_definitions(fercore PUBLIC LIBARCHIVE_STATIC)
+target_link_libraries(fercore PUBLIC ${FR_ARCHIVE_LIBS})
+
 # A release (FR_RELEASE=1 in the environment) is the plain version; any other build is a development one, as semver
 # pre-release + build metadata: 0.1.0-dev+1b42e42, .dirty with uncommitted changes. Fixed when configured.
 set(FR_VERSION_STRING "${PROJECT_VERSION}")
@@ -74,7 +91,7 @@ target_compile_definitions(fercore PUBLIC FR_VERSION="${FR_VERSION_STRING}")
 
 if(FR_BUILD_PROGRAMS)
   enable_testing()
-  foreach(t util vfs jobs settings mode thumbs)
+  foreach(t util vfs jobs settings mode thumbs archive)
     add_executable(test_${t} tests/test_${t}.c)
     target_link_libraries(test_${t} PRIVATE fercore)
     target_compile_options(test_${t} PRIVATE ${FR_WARNINGS})

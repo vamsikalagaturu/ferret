@@ -26,3 +26,21 @@ if [ ! -f "$RAYLIB_OUT/lib/libraylib.a" ]; then
         -DCMAKE_INSTALL_PREFIX="$RAYLIB_OUT" -DCMAKE_INSTALL_LIBDIR=lib >/dev/null
     cmake --build "$ROOT/raylib-build-$BUILD_TAG" --target install -j"$JOBS" >/dev/null
 fi
+
+step "libarchive $LIBARCHIVE_VERSION (static; the system's zlib, bzip2, xz and zstd)"
+for h in zlib.h bzlib.h lzma.h zstd.h; do
+    echo "#include <$h>" | cc -E -x c - >/dev/null 2>&1 || { echo "missing: $h (the zlib, bzip2, xz, zstd headers)" >&2; exit 1; }
+done
+fetch_tarball "$REPO" "$LIBARCHIVE_URL" "$LIBARCHIVE_SHA256" "libarchive-$LIBARCHIVE_VERSION"
+LIBARCHIVE_OUT=$ROOT/libarchive-$LIBARCHIVE_VERSION-$BUILD_TAG
+if [ ! -f "$LIBARCHIVE_OUT/lib/libarchive.a" ]; then
+    cmake -S "$REPO/thirdparty/libarchive-$LIBARCHIVE_VERSION" -B "$ROOT/libarchive-build-$BUILD_TAG" -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS_RELEASE="$SIZE_CFLAGS -DNDEBUG" -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+        -DCMAKE_INSTALL_PREFIX="$LIBARCHIVE_OUT" -DCMAKE_INSTALL_LIBDIR=lib -DBUILD_SHARED_LIBS=OFF \
+        -DENABLE_TAR=OFF -DENABLE_CPIO=OFF -DENABLE_CAT=OFF -DENABLE_UNZIP=OFF -DENABLE_TEST=OFF \
+        -DENABLE_OPENSSL=OFF -DENABLE_MBEDTLS=OFF -DENABLE_NETTLE=OFF -DENABLE_MD=OFF -DENABLE_CNG=OFF \
+        -DENABLE_LIBB2=OFF -DENABLE_LZ4=OFF -DENABLE_LZO=OFF -DENABLE_LIBXML2=OFF -DENABLE_EXPAT=OFF \
+        -DENABLE_BSDXML=OFF -DENABLE_PCREPOSIX=OFF -DENABLE_PCRE2POSIX=OFF -DENABLE_LIBGCC=OFF \
+        -DENABLE_ACL=OFF -DENABLE_XATTR=OFF -DENABLE_ICONV=OFF -DENABLE_WERROR=OFF >/dev/null
+    cmake --build "$ROOT/libarchive-build-$BUILD_TAG" --target install -j"$JOBS" >/dev/null
+fi
