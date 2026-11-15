@@ -15,8 +15,7 @@ static struct {
         int64_t deleted;
     } *v;
     int n, cap;
-    int64_t listed_mtime;
-    int listed_items;
+    unsigned listed_browser, listed_loads;
 } origins;
 
 static void origins_clear(void)
@@ -27,10 +26,10 @@ static void origins_clear(void)
 
 static const struct origin *origin_of(const fr_item *it)
 {
-    if (origins.listed_mtime != br.dir_mtime || origins.listed_items != br.items.n) {
+    if (origins.listed_browser != br.id || origins.listed_loads != br.loads) {
         origins_clear();
-        origins.listed_mtime = br.dir_mtime;
-        origins.listed_items = br.items.n;
+        origins.listed_browser = br.id;
+        origins.listed_loads = br.loads;
     }
     for (int i = 0; i < origins.n; i++)
         if (!strcmp(origins.v[i].key, it->e.name)) return &origins.v[i];
