@@ -55,6 +55,7 @@ typedef struct {
     char *id; /* names it in requests */
     char *label, *device;
     fr_strs mounts; /* none: not mounted */
+    char *uri;      /* a device opened as this location instead of mounted (a phone over MTP), else NULL */
     uint64_t size;
     int removable, locked;
     int busy; /* the DISK_* request running on it, 0 none */

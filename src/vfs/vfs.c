@@ -3,8 +3,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef FR_HAVE_MTP
+#include "vfs_mtp.h"
+#endif
 
-static const fr_backend *backends[] = {&fr_backend_file};
+static const fr_backend *backends[] = {
+    &fr_backend_file,
+#ifdef FR_HAVE_MTP
+    &fr_backend_mtp,
+#endif
+};
 
 static size_t scheme_len(const char *uri)
 {
