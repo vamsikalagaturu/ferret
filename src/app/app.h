@@ -1,5 +1,6 @@
 #ifndef FR_APP_H
 #define FR_APP_H
+#include "core/kinds.h"
 #include "core/tabs.h"
 #include "jobs/jobs.h"
 #include "platform.h"
@@ -7,9 +8,7 @@
 #include "vfs/vfs.h"
 #include "vfs/vfs_archive.h"
 
-/* ---- file kinds (filetypes.c) ---- */
-typedef enum { KIND_FOLDER, KIND_IMAGE, KIND_VIDEO, KIND_AUDIO, KIND_ARCHIVE, KIND_DOCUMENT, KIND_SHEET, KIND_SLIDES, KIND_CODE, KIND_TEXT, KIND_OTHER } fr_kind;
-fr_kind kind_of(const char *name, int is_dir);
+/* ---- file kinds (filetypes.c; kind_of in core/kinds.h) ---- */
 const char *kind_icon(fr_kind k);
 Color kind_color(fr_kind k);
 const char *kind_label(fr_kind k);
@@ -55,8 +54,13 @@ typedef struct fr_browser {
     int results;        /* the items are search results below uri, each named by its path from there */
     char *search_term;  /* of the results */
     int search_content; /* they are of the text inside files */
+    fr_kind_filter kinds; /* the type filter (KF_ALL: none); it stays from folder to folder */
+    int recent_pending;   /* opened since the last listing: one that works makes it a recent folder */
     int64_t dir_mtime;
     double checked_at;
+    int watch;            /* core/watch.h's handle on the folder, -1: polled every 1.5 s */
+    char *watch_uri;      /* the folder watch is for (or polled, when it could not be watched) */
+    unsigned watch_seen;  /* the handle's serial when last acted on */
     char *focus_name;   /* the row the next browser_open() or browser_reload() lands on; it takes it */
     fr_layout layout;
     float shown_w;      /* views.c: the width view_draw last had, which the layout in effect and the grid follow */
@@ -188,7 +192,10 @@ typedef struct {
     char *theme[THEME_ROLES]; /* [theme] values as written, NULL for roles not set */
     char *last_folder, *start_folder; /* URIs, NULL when not set */
     fr_strs last_tabs; /* URIs: the tabs' folders when ferret last ran with more than one */
+    fr_strs recent;    /* URIs of the folders visited last, newest first, no passwords (core/recent.h) */
+    int scheme;        /* SCHEME_*, [theme] scheme */
 } fr_settings;
+enum { SCHEME_DARK, SCHEME_LIGHT, SCHEME_SYSTEM };
 extern fr_settings settings;
 #define UI_SCALE_MIN 0.5
 #define UI_SCALE_MAX 2.0
@@ -204,6 +211,10 @@ int favorite_index(const char *uri); /* -1 when not a favorite */
 void favorite_toggle(const char *uri);
 int server_index(const char *uri); /* -1 when not in the Network section */
 void server_set(const char *uri, int on); /* adds it to the Network section, or takes it out */
+void recent_visit(const char *uri); /* a folder listed after it was opened: to the front of the recent ones */
+void recent_pick(void);             /* the recent folders in a list to go to one */
+void theme_apply(void);             /* the scheme (the system's, for SCHEME_SYSTEM) and [theme] into the colours */
+void scheme_set(int scheme);
 
 /* ---- network locations, for any scheme with a backend (connect.c) ---- */
 /* an address as typed made one to save and open: normalized, any password dropped; NULL when it is not one */
@@ -229,6 +240,7 @@ int keys_insert_field(int v, Rectangle r);
 void keys_new_start(const char *typed); /* a new row at the top to name a file, or a folder with a trailing "/" */ /* draws view row v's name being typed in r; 0 when v is not renamed in place */
 void filter_start(int first_char);
 void filter_stop(void);
+void kinds_set(fr_kind_filter f); /* the type filter; the one already on, again: off */
 int step_back(int quit_at_end);
 void move_cursor(int to, int extend);
 
@@ -243,7 +255,9 @@ void ops_open_item(fr_item *it);
 void ops_open_entry(const char *uri, const fr_entry *e); /* a folder or an archive is browsed, a file handed on */
 int ops_rename(const char *from, const char *to);       /* inside an archive as a job (0 once it is asked for) */
 int ops_archive_targets(void);  /* how many targets there are when all are archives to extract, else 0 */
-void ops_extract(int into_folder); /* the targets here, or each into a folder of its own named after it */
+/* the targets here, or each into a folder of its own named after it (always so for more than one) */
+void ops_extract(int into_folder);
+void ops_extract_to(void); /* asks for a folder, then extracts each target into a folder of its own there */
 char *ops_compress_name(void);  /* "<name>.zip" for the targets, NULL without any */
 void ops_compress(void);        /* the targets into a new zip here */
 void ops_bulk_rename(int as_text); /* the targets' names in an editor, or find and replace across them */
@@ -251,6 +265,9 @@ void ops_copy(int cut);
 void ops_paste(void);
 void ops_to_other_pane(int move); /* the targets copied (moved) into the folder of the split view's other pane */
 void ops_clip_clear(void);
+#define CLIP_HISTORY 10
+int ops_clip_history_count(void); /* the yank and cut sets kept this session, the newest first */
+void ops_clip_history(void);      /* those in a list: the one picked is pasted here */
 void ops_delete(int permanently);
 void ops_rename_start(void);
 void ops_new_folder_start(void);
@@ -290,6 +307,17 @@ int replay_load(const char *script, const char *folder); /* 0, or -1 after sayin
 int replay_frame(void);  /* once a frame, after its input was handled: 0 when the script is done */
 void replay_capture(void); /* before the drawn frame is shown: takes a pending shot */
 int replay_status(void); /* the exit status: 0 when every expectation held */
+
+/* ---- a list to pick one row from (picker.c), one of ops.c's dialogs ---- */
+typedef struct {
+    char *label, *detail, *value; /* detail may be NULL; value is handed to chosen() */
+    const char *icon;
+} fr_pick;
+/* rows (taken, n of them) shown under title; chosen(value, index) runs through app_defer once one is picked */
+void ops_pick(const char *title, fr_pick *rows, int n, void (*chosen)(const char *value, int index));
+int picker_open(const char *title, fr_pick *rows, int n, void (*chosen)(const char *value, int index)); /* 0: no rows */
+int picker_draw(void); /* 0 once it closed itself */
+void picker_close(void);
 
 /* ---- the properties panel (properties.c), one of ops.c's dialogs ---- */
 void props_open(fr_strs *uris); /* takes the URIs */

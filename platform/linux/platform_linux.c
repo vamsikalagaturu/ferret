@@ -10,6 +10,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <systemd/sd-bus.h>
 #include <unistd.h>
 
 void *glfwGetCurrentContext(void);
@@ -97,6 +98,51 @@ void plat_close_window(void)
     window_alive = 0;
     pthread_mutex_unlock(&wake_lock);
     CloseWindow();
+}
+
+/* GNOME's setting, where no portal answers: "'prefer-dark'", "'prefer-light'", "'default'" */
+static int gsettings_scheme(void)
+{
+    FILE *p = popen("gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null", "r");
+    if (!p) return 0;
+    char line[64] = "";
+    if (!fgets(line, sizeof line, p)) line[0] = 0;
+    pclose(p);
+    return strstr(line, "prefer-dark") ? 1 : strstr(line, "prefer-light") ? 2 : 0;
+}
+
+/* the XDG Desktop Portal's org.freedesktop.appearance color-scheme (Settings.ReadOne, else the older Read, whose
+ * value comes in a second variant); the portal asked with a short timeout, since this is the window's thread */
+int plat_color_scheme(void)
+{
+    static sd_bus *bus;
+    static int no_portal;
+    static double gs_at = -100;
+    static int gs_value;
+    if (!no_portal && !bus && sd_bus_open_user(&bus) < 0) bus = NULL, no_portal = 1;
+    for (int one = 1; !no_portal && one >= 0; one--) {
+        sd_bus_message *m = NULL, *reply = NULL;
+        sd_bus_error err = SD_BUS_ERROR_NULL;
+        uint32_t v = 0;
+        int r = sd_bus_message_new_method_call(bus, &m, "org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop",
+                                               "org.freedesktop.portal.Settings", one ? "ReadOne" : "Read");
+        if (r >= 0) r = sd_bus_message_append(m, "ss", "org.freedesktop.appearance", "color-scheme");
+        if (r >= 0) r = sd_bus_call(bus, m, 250000, &err, &reply);
+        if (r >= 0) r = sd_bus_message_enter_container(reply, 'v', one ? "u" : "v");
+        if (r >= 0 && !one) r = sd_bus_message_enter_container(reply, 'v', "u");
+        if (r >= 0) r = sd_bus_message_read_basic(reply, 'u', &v);
+        int unknown_method = sd_bus_error_has_name(&err, SD_BUS_ERROR_UNKNOWN_METHOD);
+        int gone = sd_bus_error_has_name(&err, SD_BUS_ERROR_SERVICE_UNKNOWN) || sd_bus_error_has_name(&err, SD_BUS_ERROR_NAME_HAS_NO_OWNER);
+        sd_bus_error_free(&err);
+        sd_bus_message_unref(m);
+        sd_bus_message_unref(reply);
+        if (r >= 0) return v <= 2 ? (int)v : 0;
+        if (gone) no_portal = 1;
+        if (!unknown_method) break;
+    }
+    if (!no_portal) return 0;
+    if (fr_now() - gs_at > 10) gs_at = fr_now(), gs_value = gsettings_scheme();
+    return gs_value;
 }
 
 /* Wayland's content scale; on X11 the content scale when set (Xft.dpi), else the monitor's physical DPI over 96

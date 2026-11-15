@@ -522,9 +522,53 @@ static void copy_archived(job *j, int move)
     free_entries(j, es);
 }
 
+/* Several archives: each one's size is known only once it is read, so each gets an equal share of the bar, filled
+ * as its own part is done; else the bar would fall back with every archive that adds its size. */
+#define BATCH_SHARE ((uint64_t)1 << 20)
+
+typedef struct {
+    job *j;
+    int index;
+    uint64_t total, done;
+} batch;
+
+static void batch_set(batch *b)
+{
+    pthread_mutex_lock(&lock);
+    uint64_t part = b->total ? (b->done >= b->total ? BATCH_SHARE : b->done * BATCH_SHARE / b->total) : 0;
+    b->j->st.bytes_done = b->index * BATCH_SHARE + part;
+    wake_locked(0);
+    pthread_mutex_unlock(&lock);
+}
+
+static void batch_total(void *c, uint64_t bytes, int files)
+{
+    batch *b = c;
+    b->total += bytes;
+    hook_total(b->j, 0, files);
+}
+
+static void batch_progress(void *c, uint64_t bytes, int files)
+{
+    batch *b = c;
+    b->done += bytes;
+    add_progress(b->j, 0, files);
+    batch_set(b);
+}
+
+static void batch_current(void *c, const char *name) { hook_current(((batch *)c)->j, name); }
+static void batch_fail(void *c, const char *uri, int err) { hook_fail(((batch *)c)->j, uri, err); }
+
 static void run_extract(job *j)
 {
+    batch b = {j, 0, 0, 0};
+    if (j->sources.n > 1) {
+        pthread_mutex_lock(&lock);
+        j->st.bytes_total = (uint64_t)j->sources.n * BATCH_SHARE;
+        pthread_mutex_unlock(&lock);
+    }
     for (int a = 0; a < j->sources.n && !cancelled(j); a++) {
+        b = (batch){j, a, 0, 0};
         const char *outer = j->sources.v[a];
         set_current(j, outer);
         char *root = fr_archive_root(outer);
@@ -560,8 +604,13 @@ static void run_extract(job *j)
         }
         if (from.n && !cancelled(j)) {
             fr_archive_hooks h = hooks(j);
+            if (j->sources.n > 1) h = (fr_archive_hooks){&b, batch_total, batch_progress, batch_current, batch_fail, &j->cancel};
             int before = failures(j);
             archive_done(j, outer, fr_archive_extract(outer, (const char *const *)from.v, (const char *const *)to.v, from.n, NULL, &h), before);
+        }
+        if (j->sources.n > 1) {
+            b.done = b.total = 1;
+            batch_set(&b);
         }
         fr_strs_free(&from), fr_strs_free(&to);
         free(root);

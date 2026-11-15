@@ -377,6 +377,23 @@ static void jobs(void)
     fr_strs_free(&src);
     free(link), free(plink), free(xlink);
 
+    /* several archives as one job, each into a folder of its own, a name taken there kept */
+    char *batch = at("j/batch"), *taken = at("j/batch/box");
+    CHECK(fr_vfs_mkdir(batch) == 0 && fr_vfs_mkdir(taken) == 0);
+    FR_PUSH(src, at("j/box.zip"));
+    FR_PUSH(src, at("j/packed.tar.gz"));
+    st = wait_job(fr_job_submit_extract(&src, batch, 1));
+    CHECK(st.state == JOB_DONE && st.failed == 0 && st.items == 2);
+    CHECK(st.bytes_total > 0 && st.bytes_done == st.bytes_total);
+    char *ba = at("j/batch/box (2)/docs/a.txt"), *bl = at("j/batch/packed/loose.txt");
+    check_read(ba, "alpha");
+    check_read(bl, "loose");
+    fr_entries left = {0};
+    CHECK(fr_vfs_list(taken, &left) == 0 && left.n == 0);
+    fr_entries_free(&left);
+    fr_strs_free(&src);
+    free(batch), free(taken), free(ba), free(bl);
+
     /* rename and new folder inside, as jobs */
     char *from = in("j/box.zip", "docs/a.txt"), *to = in("j/box.zip", "docs/A.txt"), *nf = in("j/box.zip", "made");
     st = wait_job(fr_job_submit_rename(from, to));

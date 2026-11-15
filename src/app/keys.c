@@ -36,6 +36,12 @@ void filter_stop(void)
     browser_rebuild_view();
 }
 
+void kinds_set(fr_kind_filter f)
+{
+    br.kinds = br.kinds == f ? KF_ALL : f;
+    browser_rebuild_view();
+}
+
 void move_cursor(int to, int extend)
 {
     if (!br.view.n) return;
@@ -58,6 +64,7 @@ int step_back(int quit_at_end)
     if (app.drawer_open) return app.drawer_open = 0, 1;
     if (br.nselected) return browser_clear_selection(), 1;
     if (br.filtering) return filter_stop(), 1;
+    if (br.kinds) return kinds_set(KF_ALL), 1;
     if (br.results) return browser_results_leave(), 1;
     if (!quit_at_end) return 0;
     if (br.back.n) return browser_back(), 1;
@@ -385,6 +392,16 @@ static void command(int c)
     case K('z', 'c'): ops_compress(); break;
     case K('f', 'f'): search_prompt(0); break;
     case K('f', 'g'): search_prompt(1); break;
+    case K('f', 'i'): kinds_set(KF_IMAGES); break;
+    case K('f', 'v'): kinds_set(KF_VIDEO); break;
+    case K('f', 'a'): kinds_set(KF_AUDIO); break;
+    case K('f', 'd'): kinds_set(KF_DOCUMENTS); break;
+    case K('f', 'z'): kinds_set(KF_ARCHIVES); break;
+    case K('f', 'c'): kinds_set(KF_CODE); break;
+    case K('f', 'x'): kinds_set(KF_ALL); break;
+    case K('y', 'h'): ops_clip_history(); break;
+    case K('g', '-'): recent_pick(); break;
+    case K('z', 't'): ops_extract_to(); break;
     case K('g', 'r'): search_reveal(); break;
     case K(0, 'u'): undo_run(0); break;
     case K(0, 'U'): undo_run(1); break;

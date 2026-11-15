@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "app.h"
+#include "core/recent.h"
 #include "core/toml.h"
 #include <errno.h>
 #include <stdio.h>
@@ -23,7 +24,11 @@ typedef struct {
     fr_strs favorites, servers;
     char *folder;
     fr_strs tabs; /* owned, unlike the others in live()'s */
+    fr_strs recent;
+    int scheme;
 } state;
+
+static const char *const scheme_names[] = {[SCHEME_DARK] = "dark", [SCHEME_LIGHT] = "light", [SCHEME_SYSTEM] = "system"};
 
 static char *path;
 static state saved, seen; /* as last written or read; as last seen changing */
@@ -46,7 +51,7 @@ static fr_strs tab_folders(void)
 static state live(void)
 {
     return (state){br.sort, br.desc, br.show_hidden, br.layout, ui.user_scale, ui.text_scale, settings.favorites, settings.servers, br.uri,
-                   tab_folders()};
+                   tab_folders(), settings.recent, settings.scheme};
 }
 
 static int strs_differ(const fr_strs *a, const fr_strs *b)
@@ -62,7 +67,8 @@ static int differs(const state *a, const state *b)
     if (!a->folder != !b->folder || (a->folder && strcmp(a->folder, b->folder))) return 1;
     return a->sort != b->sort || a->desc != b->desc || a->hidden != b->hidden || a->layout != b->layout ||
            a->ui_scale != b->ui_scale || a->font_scale != b->font_scale || strs_differ(&a->favorites, &b->favorites) ||
-           strs_differ(&a->servers, &b->servers) || strs_differ(&a->tabs, &b->tabs);
+           strs_differ(&a->servers, &b->servers) || strs_differ(&a->tabs, &b->tabs) || strs_differ(&a->recent, &b->recent) ||
+           a->scheme != b->scheme;
 }
 
 static void snapshot(state *s)
@@ -70,10 +76,12 @@ static void snapshot(state *s)
     fr_strs_free(&s->favorites);
     fr_strs_free(&s->servers);
     fr_strs_free(&s->tabs);
+    fr_strs_free(&s->recent);
     free(s->folder);
     *s = live();
     s->favorites = fr_strs_copy(&settings.favorites);
     s->servers = fr_strs_copy(&settings.servers);
+    s->recent = fr_strs_copy(&settings.recent);
     s->folder = s->folder ? fr_strdup(s->folder) : NULL;
 }
 
@@ -191,11 +199,21 @@ static void apply(const fr_toml *t)
             else free(uri);
         }
     }
+    if ((v = fr_toml_get(t, "", "recent", TOML_STRINGS))) {
+        fr_strs_free(&settings.recent);
+        for (i = v->strs.n - 1; i >= 0; i--) {
+            char *uri = folder_uri(v->strs.v[i]);
+            if (uri) fr_recent_push(&settings.recent, uri, FR_RECENT_MAX);
+            free(uri);
+        }
+    }
     for (i = 0; i < THEME_ROLES; i++) {
         free(settings.theme[i]);
         v = fr_toml_get(t, "theme", theme_roles[i], TOML_STRING);
         settings.theme[i] = v ? fr_strdup(v->str) : NULL;
     }
+    if ((v = fr_toml_get(t, "theme", "scheme", TOML_STRING)) && (i = find(scheme_names, COUNT(scheme_names), v->str)) >= 0)
+        settings.scheme = i;
 }
 
 /* the file into the settings; 0 when there is none */
@@ -266,8 +284,18 @@ static char *settings_text(void)
     fr_toml_comment(&o, "Servers in the sidebar's Network section: smb://[user@]host/share, sftp://[user@]host[:port]/path.");
     fr_toml_comment(&o, "Passwords are not kept here: the system's keystore has them when you ask ferret to remember one.");
     fr_toml_strings(&o, "servers", &settings.servers);
+    fr_toml_comment(&o, "The folders visited last, newest first (g- lists them): paths, or URIs without passwords.");
+    shown = (fr_strs){0};
+    for (int i = 0; i < settings.recent.n; i++) {
+        const char *p = fr_uri_local(settings.recent.v[i]);
+        FR_PUSH(shown, fr_strdup(p ? p : settings.recent.v[i]));
+    }
+    fr_toml_strings(&o, "recent", &shown);
+    fr_strs_free(&shown);
     fr_toml_comment(&o, "");
     fr_toml_table(&o, "theme");
+    fr_toml_comment(&o, "Nord \"dark\" or \"light\", or \"system\" to follow the desktop's (or the phone's) choice.");
+    fr_toml_string(&o, "scheme", scheme_names[settings.scheme >= 0 && settings.scheme < COUNT(scheme_names) ? settings.scheme : 0]);
     fr_toml_comment(&o, "Colours as \"#rrggbb\", over the desktop's and the Nord defaults, for any of: accent,");
     fr_toml_comment(&o, "background, dark_background, lighter_background, foreground, bright_foreground, red,");
     fr_toml_comment(&o, "yellow, green, blue, magenta, cyan, orange. For example: accent = \"#88c0d0\"");
@@ -311,8 +339,11 @@ void settings_load(void)
     if (path) read_settings();
 }
 
+static void scheme_poll(void);
+
 void settings_poll(void)
 {
+    scheme_poll();
     if (!path) return;
     state now = live();
     if (differs(&now, &seen)) {
@@ -334,8 +365,41 @@ void settings_poll(void)
     }
     browser_rebuild_view();
     view_set_layout(br.layout);
-    theme_load(settings.theme);
+    theme_apply();
 }
+
+static int shown_light = -1;
+
+static int want_light(void)
+{
+    if (settings.scheme != SCHEME_SYSTEM) return settings.scheme == SCHEME_LIGHT;
+    int s = plat_color_scheme();
+    return s ? s == 2 : theme_desktop_light() == 1;
+}
+
+void theme_apply(void)
+{
+    shown_light = want_light();
+    theme_load(settings.theme, shown_light);
+    ui.dirty = 1;
+}
+
+void scheme_set(int scheme)
+{
+    settings.scheme = scheme;
+    theme_apply();
+}
+
+/* between frames: a system switching between light and dark, while the scheme follows it */
+static void scheme_poll(void)
+{
+    static double at;
+    if (settings.scheme != SCHEME_SYSTEM || ui.now - at < 2) return;
+    at = ui.now;
+    if (want_light() != shown_light) theme_apply();
+}
+
+void recent_visit(const char *uri) { fr_recent_push(&settings.recent, uri, FR_RECENT_MAX); }
 
 /* only local folders and the trash: a network share that is gone would hold up the start */
 static int usable_start(const char *uri)
