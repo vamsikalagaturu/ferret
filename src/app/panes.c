@@ -147,14 +147,47 @@ char *tab_label(int i)
     return both;
 }
 
-/* ---- the tab bar (desktop, two tabs or more) ---- */
+/* ---- the tabs (desktop, two tabs or more): a bar above or below the files, or a list in the sidebar or on the
+ * right; the lists need the sidebar's room, so a narrow window has the bar on top ---- */
 
-float tabbar_height(void) { return ui.touch || tabs.n < 2 ? 0 : fmaxf(DP(36), ui_line_height(14) + DP(16)); }
+int tabs_at(void)
+{
+    if (ui.touch || tabs.n < 2) return -1;
+    int at = settings.tabs_at;
+    return (at == TABS_LEFT || at == TABS_RIGHT) && !app_wide() ? TABS_TOP : at;
+}
+
+/* t: the tab's box; hit: its part that takes clicks (the bar cuts off the last tabs) */
+static void tab_cell(int i, Rectangle t, Rectangle hit, Color base)
+{
+    float close = DP(22);
+    int on = i == tabs.cur, state;
+    int picked = ui_clickable(ui_id("tab", i), hit, &state);
+    if (ui_live() && ui.mpressed && ui_hover(hit)) tab_close(i);
+    Color bg = on ? ui_mix(base, theme.accent, 0.22f) : state == 2 ? theme.pressed : state ? theme.hover : base;
+    ui_round(t, 6, bg);
+    float ix = t.x + DP(6), iw = DP(20);
+    ui_icon(tabs.v[i].pane[1] ? "columns-2" : "folder", (Rectangle){ix, t.y, iw, t.height}, 15, on ? theme.accent : theme.text_dim);
+    char *label = tab_label(i);
+    float tx = ix + iw + DP(6);
+    ui_text_box(label, (Rectangle){tx, t.y, t.x + t.width - close - DP(4) - tx, t.height}, 14, on ? FONT_SEMIBOLD : FONT_REGULAR,
+                on ? theme.text : theme.text_dim, ALIGN_LEFT, 1);
+    free(label);
+    Rectangle xb = {t.x + t.width - close - DP(4), t.y + (t.height - close) / 2, close, close};
+    if (ui_icon_button(ui_id("tab-close", i), xb, "x", theme.text_dim)) tab_close(i);
+    else if (picked) tab_select(i);
+}
+
+float tabbar_height(void)
+{
+    int at = tabs_at();
+    return at == TABS_TOP || at == TABS_BOTTOM ? fmaxf(DP(36), ui_line_height(14) + DP(16)) : 0;
+}
 
 void tabbar_draw(Rectangle r)
 {
     ui_rect(r, theme.surface);
-    float pad = DP(6), gap = DP(4), plus = DP(28), close = DP(22);
+    float pad = DP(6), gap = DP(4), plus = DP(28);
     float room = r.width - 2 * pad - plus - gap;
     /* past what fits, the last tabs are cut off: Alt+n, gt and the overflow menu still reach them */
     float w = fmaxf(DP(56), fminf(DP(220), (room - gap * (float)(tabs.n - 1)) / (float)tabs.n));
@@ -162,27 +195,42 @@ void tabbar_draw(Rectangle r)
     Rectangle clip = {r.x, r.y, pad + room, r.height};
     ui_clip_begin(clip);
     for (int i = 0; i < tabs.n && x < clip.x + clip.width; i++, x += w + gap) {
-        Rectangle t = {roundf(x), r.y + DP(4), roundf(w), r.height - DP(8)}, hit = GetCollisionRec(t, clip);
-        int on = i == tabs.cur, state;
-        int picked = ui_clickable(ui_id("tab", i), hit, &state);
-        if (ui_live() && ui.mpressed && ui_hover(hit)) tab_close(i);
-        Color bg = on ? ui_mix(theme.surface, theme.accent, 0.22f) : state == 2 ? theme.pressed : state ? theme.hover : theme.surface;
-        ui_round(t, 6, bg);
-        float ix = t.x + DP(6), iw = DP(20);
-        ui_icon(tabs.v[i].pane[1] ? "columns-2" : "folder", (Rectangle){ix, t.y, iw, t.height}, 15, on ? theme.accent : theme.text_dim);
-        char *label = tab_label(i);
-        float tx = ix + iw + DP(6);
-        ui_text_box(label, (Rectangle){tx, t.y, t.x + t.width - close - DP(4) - tx, t.height}, 14, on ? FONT_SEMIBOLD : FONT_REGULAR,
-                    on ? theme.text : theme.text_dim, ALIGN_LEFT, 1);
-        free(label);
-        Rectangle xb = {t.x + t.width - close - DP(4), t.y + (t.height - close) / 2, close, close};
-        if (ui_icon_button(ui_id("tab-close", i), xb, "x", theme.text_dim)) tab_close(i);
-        else if (picked) tab_select(i);
+        Rectangle t = {roundf(x), r.y + DP(4), roundf(w), r.height - DP(8)};
+        tab_cell(i, t, GetCollisionRec(t, clip), theme.surface);
     }
     ui_clip_end();
     Rectangle pb = {roundf(fminf(x, r.x + pad + room + gap)), r.y + (r.height - plus) / 2, plus, plus};
     if (ui_icon_button(ui_id("tab-new", 0), pb, "plus", theme.text_dim)) tab_new(NULL, 1);
-    ui_hline(r.x, r.y + r.height - DP(1), r.width, theme.border);
+    ui_hline(r.x, settings.tabs_at == TABS_BOTTOM ? r.y : r.y + r.height - DP(1), r.width, theme.border);
+}
+
+/* the "Tabs" heading with a new-tab button, then a row for each; returns the y under them */
+float tablist_draw(Rectangle r, float y, float ih)
+{
+    float plus = DP(24);
+    ui_text_box("Tabs", (Rectangle){r.x + DP(20), y, r.width - DP(40), DP(24)}, 13, FONT_SEMIBOLD, theme.text_dim, ALIGN_LEFT, 0);
+    if (ui_icon_button(ui_id("tab-new", 0), (Rectangle){r.x + r.width - DP(12) - plus, y, plus, plus}, "plus", theme.text_dim))
+        tab_new(NULL, 1);
+    y += DP(28);
+    for (int i = 0; i < tabs.n; i++, y += ih) {
+        Rectangle t = {r.x + DP(8), y, r.width - DP(16), ih};
+        tab_cell(i, t, t, theme.surface);
+    }
+    return y;
+}
+
+float tabstrip_width(void) { return tabs_at() == TABS_RIGHT ? DP(220) : 0; }
+
+void tabstrip_draw(Rectangle r)
+{
+    ui_rect(r, theme.surface);
+    ui_rect((Rectangle){r.x, r.y, DP(1), r.height}, theme.border);
+    static fr_scroll scroll;
+    float ih = app_row_height(), content = DP(40) + tabs.n * ih;
+    ui_scroll(ui_id("tabstrip-scroll", 0), &scroll, r, content);
+    ui_clip_begin(r);
+    tablist_draw(r, r.y + DP(12) - scroll.offset, ih);
+    ui_clip_end();
 }
 
 /* ---- the panes ---- */

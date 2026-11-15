@@ -184,6 +184,13 @@ static void draw_menus(void)
         static const char *const schemes[] = {"Dark", "Light", "System"}, *const scheme_icons[] = {"moon", "sun", "monitor"};
         int sc = ui_menu_segments(schemes, scheme_icons, 3, settings.scheme);
         if (sc >= 0) scheme_set(sc);
+        if (!ui.touch) {
+            ui_menu_heading("Tabs", NULL, NULL);
+            static const char *const places[] = {"Top", "Bottom", "Left", "Right"},
+                                     *const place_icons[] = {"arrow-up", "arrow-down", "arrow-left", "arrow-right"};
+            int at = ui_menu_segments(places, place_icons, 4, settings.tabs_at);
+            if (at >= 0) settings.tabs_at = at, ui.dirty = 1;
+        }
         if (!ui.touch && ui_menu_item("Keyboard shortcuts", "keyboard", -1)) app.help_open = 1;
         if (br.uri && fr_uri_local(br.uri) && !plat_terminal(NULL) && ui_menu_item("Open terminal here", "terminal", -1))
             ops_terminal_here();
@@ -466,9 +473,18 @@ static int frame(void)
         list.height -= ops_draw_jobs(list);
         dview_draw(list);
     } else {
-        float th = tabbar_height();
-        if (th) tabbar_draw((Rectangle){s.x, s.y, s.width, th});
-        list.y += th, list.height -= th;
+        float th = tabbar_height(), tw = tabstrip_width();
+        if (tw) {
+            list.width -= tw;
+            tabstrip_draw((Rectangle){list.x + list.width, list.y, tw, list.height});
+        }
+        if (th && settings.tabs_at == TABS_BOTTOM) {
+            list.height -= th;
+            tabbar_draw((Rectangle){list.x, list.y + list.height, list.width, th});
+        } else if (th) {
+            tabbar_draw((Rectangle){list.x, list.y, list.width, th});
+            list.y += th, list.height -= th;
+        }
         list.height -= ops_draw_jobs(list);
         list.height -= draw_paste_bar(list);
         list.height -= compare_bar_draw(list);

@@ -100,31 +100,23 @@ static int disk_of(const char *uri)
     return best >= 0 ? best : device_of(&app.disks, uri);
 }
 
-/* the disks view's row: "Manage disks" heading the disks, "Storage" after the places where there is no disk manager */
 static struct {
     unsigned id;
-    char *uri;
-    int server;
+    char *key; /* the URI; a disk's id */
+    int kind;
 } place_menu;
 
-void place_menu_open(const char *uri, int server)
+void place_menu_open(const char *key, int kind)
 {
     if (!place_menu.id) place_menu.id = ui_id("menu-place", 0);
-    free(place_menu.uri);
-    place_menu.uri = fr_strdup(uri);
-    place_menu.server = server;
+    free(place_menu.key);
+    place_menu.key = fr_strdup(key);
+    place_menu.kind = kind;
     ui_menu_open(place_menu.id, (Rectangle){ui.mouse.x, ui.mouse.y, 0, 0});
 }
 
-void place_menu_draw(void)
+static void open_items(const char *uri)
 {
-    if (!place_menu.id || !ui_menu_begin(place_menu.id)) return;
-    const char *uri = place_menu.uri;
-    int server = place_menu.server, i = server ? server_index(uri) : favorite_index(uri), n = server ? settings.servers.n : settings.favorites.n;
-    if (i < 0) {
-        ui_menu_end();
-        return;
-    }
     if (ui_menu_item("Open", "folder-open", -1)) {
         dview_close();
         browser_open(uri, 1);
@@ -136,6 +128,58 @@ void place_menu_draw(void)
         pane_switch();
         browser_open(uri, 1);
     }
+}
+
+static void favorite_item(const char *uri)
+{
+    int fav = favorite_index(uri) >= 0;
+    if (ui_menu_item(fav ? "Remove from favorites" : "Add to favorites", fav ? "star-off" : "star", -1)) favorite_toggle(uri);
+}
+
+static void disk_menu(const char *id)
+{
+    const fr_disk *d = NULL;
+    for (int i = 0; i < app.disks.n && !d; i++)
+        if (!strcmp(app.disks.v[i].id, id)) d = &app.disks.v[i];
+    if (!d) return;
+    char *uri = d->uri ? fr_strdup(d->uri) : d->mounts.n ? fr_uri_from_path(d->mounts.v[0]) : NULL;
+    if (uri) {
+        open_items(uri);
+        ui_menu_separator();
+        favorite_item(uri);
+    }
+    if (!d->busy && !d->uri) {
+        if (uri) ui_menu_separator();
+        if (!d->mounts.n && !d->locked && ui_menu_item("Mount", "hard-drive", -1)) plat_disk_request(DISK_MOUNT, d->id);
+        if (d->mounts.n && ui_menu_item("Unmount", "eject", -1)) plat_disk_request(DISK_UNMOUNT, d->id);
+        if (d->mounts.n && d->removable && ui_menu_item("Eject", "eject", -1)) plat_disk_request(DISK_EJECT, d->id);
+    }
+    free(uri);
+}
+
+void place_menu_draw(void)
+{
+    if (!place_menu.id || !ui_menu_begin(place_menu.id)) return;
+    const char *uri = place_menu.key;
+    int kind = place_menu.kind;
+    if (kind == PLACE_DISK) {
+        disk_menu(uri);
+        ui_menu_end();
+        return;
+    }
+    if (kind == PLACE_ROOT) {
+        open_items(uri);
+        ui_menu_separator();
+        favorite_item(uri);
+        ui_menu_end();
+        return;
+    }
+    int server = kind == PLACE_SERVER, i = server ? server_index(uri) : favorite_index(uri), n = server ? settings.servers.n : settings.favorites.n;
+    if (i < 0) {
+        ui_menu_end();
+        return;
+    }
+    open_items(uri);
     ui_menu_separator();
     if (i > 0 && ui_menu_item("Move up", "arrow-up", -1)) server ? server_move(uri, -1) : favorite_move(uri, -1);
     if (i < n - 1 && ui_menu_item("Move down", "arrow-down", -1)) server ? server_move(uri, 1) : favorite_move(uri, 1);
@@ -149,6 +193,8 @@ void place_menu_draw(void)
     }
     ui_menu_end();
 }
+
+/* the disks view's row: "Manage disks" heading the disks, "Storage" after the places where there is no disk manager */
 
 static float manage_row(Rectangle r, float y, float ih)
 {
@@ -187,6 +233,7 @@ static float disks_draw(Rectangle r, float y, float ih, int current)
         Rectangle btn = {row.x + row.width - bs - DP(4), y + (dh - bs) / 2, bs, bs};
         Rectangle hit = eject ? (Rectangle){row.x, y, btn.x - row.x, dh} : row;
         int state;
+        if (ui_hover(row) && ui.rpressed && ui_live()) place_menu_open(d->id, PLACE_DISK);
         if (ui_clickable(ui_id("disk", i), hit, &state) && !d->busy) {
             dview_close();
             if (d->uri) {
@@ -235,6 +282,11 @@ void places_draw(Rectangle r)
     ui_text_box("ferret", (Rectangle){r.x + DP(20), y, r.width - DP(40), DP(28)}, 20, FONT_SEMIBOLD, theme.accent, ALIGN_LEFT, 0);
     ui_text_box(FR_VERSION, (Rectangle){r.x + DP(20), y + DP(28), r.width - DP(40), DP(16)}, 12, FONT_REGULAR, theme.text_faint, ALIGN_LEFT, 1);
     y += DP(56);
+    if (tabs_at() == TABS_LEFT) {
+        y = tablist_draw(r, y, ih);
+        ui_hline(r.x + DP(16), y + DP(6), r.width - DP(32), theme.border);
+        y += DP(12);
+    }
     int fav_current = br.uri && !dview_is_open() ? favorite_index(br.uri) : -1;
     if (settings.favorites.n) {
         ui_text_box("Favorites", (Rectangle){r.x + DP(20), y, r.width - DP(40), DP(24)}, 13, FONT_SEMIBOLD, theme.text_dim, ALIGN_LEFT, 0);
@@ -246,7 +298,7 @@ void places_draw(Rectangle r)
         int state;
         char *name = fr_uri_name(uri);
         if (!*name) free(name), name = fr_strdup(fr_uri_local(uri) ? "/" : uri);
-        if (ui_hover(row) && ui.rpressed && ui_live()) place_menu_open(uri, 0);
+        if (ui_hover(row) && ui.rpressed && ui_live()) place_menu_open(uri, PLACE_FAVORITE);
         if (ui_clickable(ui_id("favorite", i), row, &state)) {
             dview_close();
             browser_open(uri, 1);
@@ -274,6 +326,7 @@ void places_draw(Rectangle r)
         }
         Rectangle row = {r.x + DP(8), y, r.width - DP(16), ih};
         int state;
+        if (ui_hover(row) && ui.rpressed && ui_live()) place_menu_open(p->v[i].uri, PLACE_ROOT);
         if (ui_clickable(ui_id("place", i), row, &state)) {
             dview_close();
             browser_open(p->v[i].uri, 1);

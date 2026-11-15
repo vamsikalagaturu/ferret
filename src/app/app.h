@@ -148,7 +148,11 @@ void split_toggle(void);                    /* the current tab split in two pane
 void pane_switch(void);                     /* the keys to the other pane */
 int app_split(void);                        /* the current tab shows two panes */
 char *tab_label(int i);                     /* its folder's name (both, a split tab's) */
-float tabbar_height(void);                  /* 0 when it is hidden: one tab, or a phone */
+float tabbar_height(void);                  /* 0 when there is no bar: one tab, a phone, or the tabs listed at the side */
+int tabs_at(void);                          /* TABS_* where they show now, -1 nowhere */
+float tablist_draw(Rectangle r, float y, float ih);
+float tabstrip_width(void);
+void tabstrip_draw(Rectangle r);
 void tabbar_draw(Rectangle r);
 void panes_draw(Rectangle r);               /* the header and the files, once or for each pane */
 void tabs_menu_items(void);                 /* the overflow menu's: new tab, the tabs, close, split */
@@ -207,8 +211,10 @@ typedef struct {
     int scheme;         /* SCHEME_*, [theme] scheme */
     int git_status;     /* git's marks in folders inside a work tree (desktop) */
     int relative_links; /* links made relative to their folder, else absolute */
+    int tabs_at;        /* TABS_*: where the tabs are listed (desktop, two tabs or more) */
 } fr_settings;
 enum { SCHEME_DARK, SCHEME_LIGHT, SCHEME_SYSTEM };
+enum { TABS_TOP, TABS_BOTTOM, TABS_LEFT, TABS_RIGHT };
 extern fr_settings settings;
 #define UI_SCALE_MIN 0.5
 #define UI_SCALE_MAX 2.0
@@ -227,7 +233,8 @@ int server_index(const char *uri); /* -1 when not in the Network section */
 void server_set(const char *uri, int on); /* adds it to the Network section, or takes it out */
 void favorite_move(const char *uri, int by); /* one place up (-1) or down (+1) */
 void server_move(const char *uri, int by);
-void place_menu_open(const char *uri, int server); /* the sidebar's right-click menu on a favorite or saved server */
+enum { PLACE_FAVORITE, PLACE_SERVER, PLACE_ROOT, PLACE_DISK };
+void place_menu_open(const char *key, int kind); /* the sidebar's right-click menu on a row: key is its URI, a disk's id */
 void place_menu_draw(void);
 void recent_visit(const char *uri); /* a folder listed after it was opened: to the front of the recent ones */
 void recent_pick(void);             /* the recent folders in a list to go to one */

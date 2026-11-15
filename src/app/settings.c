@@ -27,10 +27,11 @@ typedef struct {
     fr_bookmarks bookmarks;
     fr_strs recent;
     int scheme;
-    int git_status, relative_links;
+    int git_status, relative_links, tabs_at;
 } state;
 
 static const char *const scheme_names[] = {[SCHEME_DARK] = "dark", [SCHEME_LIGHT] = "light", [SCHEME_SYSTEM] = "system"};
+static const char *const tabs_at_names[] = {[TABS_TOP] = "top", [TABS_BOTTOM] = "bottom", [TABS_LEFT] = "left", [TABS_RIGHT] = "right"};
 
 static char *path;
 static state saved, seen; /* as last written or read; as last seen changing */
@@ -54,7 +55,7 @@ static state live(void)
 {
     return (state){br.sort, br.desc, br.show_hidden, br.layout, ui.user_scale, ui.text_scale, settings.favorites, settings.servers, br.uri,
                    tab_folders(), settings.bookmarks, settings.recent, settings.scheme, settings.git_status,
-                   settings.relative_links};
+                   settings.relative_links, settings.tabs_at};
 }
 
 static int strs_differ(const fr_strs *a, const fr_strs *b)
@@ -72,7 +73,7 @@ static int differs(const state *a, const state *b)
            a->ui_scale != b->ui_scale || a->font_scale != b->font_scale || strs_differ(&a->favorites, &b->favorites) ||
            strs_differ(&a->servers, &b->servers) || strs_differ(&a->tabs, &b->tabs) || !fr_bookmarks_equal(&a->bookmarks, &b->bookmarks) ||
            strs_differ(&a->recent, &b->recent) || a->scheme != b->scheme || a->git_status != b->git_status ||
-           a->relative_links != b->relative_links;
+           a->relative_links != b->relative_links || a->tabs_at != b->tabs_at;
 }
 
 static void snapshot(state *s)
@@ -171,6 +172,7 @@ static void apply(const fr_toml *t)
     if ((v = fr_toml_get(t, "", "show_hidden", TOML_BOOL))) br.show_hidden = v->b;
     if ((v = fr_toml_get(t, "", "git_status", TOML_BOOL))) settings.git_status = v->b;
     if ((v = fr_toml_get(t, "", "relative_links", TOML_BOOL))) settings.relative_links = v->b;
+    if ((v = fr_toml_get(t, "", "tabs", TOML_STRING)) && (i = find(tabs_at_names, COUNT(tabs_at_names), v->str)) >= 0) settings.tabs_at = i;
     if ((v = fr_toml_get(t, "", "ui_scale", TOML_NUMBER)) && v->num >= UI_SCALE_MIN && v->num <= UI_SCALE_MAX)
         ui.user_scale = (float)v->num;
     if ((v = fr_toml_get(t, "", "font_scale", TOML_NUMBER)) && v->num >= TEXT_SCALE_MIN && v->num <= TEXT_SCALE_MAX)
@@ -260,6 +262,8 @@ static char *settings_text(void)
     fr_toml_bool(&o, "git_status", settings.git_status);
     fr_toml_comment(&o, "Links made with yl and P point to their target relative to the link's folder, else by the full path.");
     fr_toml_bool(&o, "relative_links", settings.relative_links);
+    fr_toml_comment(&o, "Where the tabs are listed, with two or more: \"top\", \"bottom\", \"left\" (in the sidebar) or \"right\".");
+    fr_toml_string(&o, "tabs", tabs_at_names[settings.tabs_at >= 0 && settings.tabs_at < COUNT(tabs_at_names) ? settings.tabs_at : 0]);
     fr_toml_comment(&o, "Interface size over the system's scale: 1.0 as the system says, 0.5 to 2.0 (Ctrl +, Ctrl -, Ctrl 0).");
     fr_toml_number(&o, "ui_scale", ui.user_scale > 0 ? ui.user_scale : 1);
     fr_toml_comment(&o, "Text size over the interface size: 1.0 as designed, 0.7 to 2.0 (Ctrl Alt +, Ctrl Alt -, Ctrl Alt 0).");
