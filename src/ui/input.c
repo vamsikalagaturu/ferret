@@ -189,6 +189,7 @@ unsigned ui_id(const char *name, int index)
     unsigned h = 2166136261u;
     for (const unsigned char *c = (const unsigned char *)name; *c; c++) h = (h ^ *c) * 16777619u;
     h = (h ^ (unsigned)index) * 16777619u;
+    if (ui.id_salt) h = (h ^ ui.id_salt) * 16777619u;
     return h ? h : 1;
 }
 

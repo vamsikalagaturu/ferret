@@ -44,6 +44,7 @@ typedef struct {
     double redraw_at; /* or at this time (0 = no need) */
     unsigned active;  /* the widget the pointer went down on */
     unsigned focus;   /* the text field taking typed keys */
+    unsigned id_salt; /* mixed into every ui_id: the same widgets drawn twice (two panes) keep apart; 0 none */
     int layer, top;   /* the layer being drawn; the topmost open one, from the last frame */
     int top_next;
 } fr_ui;

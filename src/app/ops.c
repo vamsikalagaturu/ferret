@@ -1,4 +1,5 @@
 #include "app.h"
+#include "vfs/trash.h"
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -158,6 +159,27 @@ static void paste_now(const char *s, int n)
 }
 
 void ops_paste(void) { app_defer(paste_now, NULL, 0); }
+
+static void to_other_now(const char *s, int move)
+{
+    fr_browser *other = tabs_other(&tabs);
+    if (!other || br_cur != tabs_current(&tabs)) return;
+    if (!other->uri || !br.uri || other->results || fr_trash_is_root(other->uri)) {
+        ui_toast("The other pane shows no folder to put them in");
+        return;
+    }
+    if (!strcmp(other->uri, br.uri)) {
+        ui_toast("The other pane shows this folder too");
+        return;
+    }
+    fr_strs uris = browser_target_uris();
+    if (!uris.n) return;
+    fr_job_submit(move ? JOB_MOVE : JOB_COPY, &uris, other->uri);
+    fr_strs_free(&uris);
+    browser_clear_selection();
+}
+
+void ops_to_other_pane(int move) { app_defer(to_other_now, NULL, move); }
 
 static void clip_clear_now(const char *s, int n) { fr_strs_free(&clip.uris); }
 
@@ -381,7 +403,7 @@ void ops_poll_jobs(void)
         fr_job_dismiss(st[i].id);
     }
     /* after the renames were recorded, which search results follow */
-    browser_reload();
+    browser_reload_shown();
 }
 
 float ops_draw_jobs(Rectangle area)

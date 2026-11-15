@@ -94,7 +94,7 @@ static void draw_breadcrumb(Rectangle r)
 
 /* ---- typing a location ---- */
 
-static int editing;
+static unsigned editing; /* the browser whose location is being typed, 0 none */
 static fr_text path_field;
 
 void path_edit_start(void)
@@ -109,7 +109,7 @@ void path_edit_start(void)
     else shown = fr_strdup(br.uri);
     text_set(&path_field, shown);
     free(shown);
-    editing = 1;
+    editing = br.id;
     ui.focus = ui_id("path", 0);
     ui.dirty = 1;
 }
@@ -218,7 +218,10 @@ static void path_go(void)
 
 void header_draw(Rectangle r)
 {
-    ui_rect(r, theme.bg);
+    int active = browser_active();
+    ui_rect(r, app_split() && active ? ui_mix(theme.bg, theme.accent, 0.10f) : theme.bg);
+    /* the keys went to the other pane, or another tab: the field they typed into goes */
+    if (editing && browser_by_id(editing) != tabs_current(&tabs)) path_edit_stop();
     float b = DP(ui.touch ? 48 : 36), x = r.x + DP(4), right = r.x + r.width - DP(4), cy = r.y + (r.height - b) / 2;
     Rectangle btn = {x, cy, b, b};
     if (br.nselected) {
@@ -244,7 +247,7 @@ void header_draw(Rectangle r)
         ui_hline(r.x, r.y + r.height - DP(1), r.width, theme.border);
         return;
     }
-    if (editing) {
+    if (editing && editing == br.id) {
         if (ui_icon_button(ui_id("path-close", 0), btn, "x", theme.text)) {
             path_edit_stop();
             return;
@@ -300,7 +303,7 @@ void header_draw(Rectangle r)
     if (ui_icon_button(ui_id("search", 0), (Rectangle){right, cy, b, b}, "search", theme.text)) filter_start(0);
     Rectangle crumbs = {x + DP(4), r.y, right - x - DP(8), r.height};
     double flash = ui.now - app.path_flash_at;
-    if (app.path_flash_at && flash < 0.6) {
+    if (app.path_flash_at && flash < 0.6 && active) {
         ui_round((Rectangle){crumbs.x, r.y + DP(6), crumbs.width, r.height - DP(12)}, 6, ui_alpha(theme.accent, 0.4f * (float)(1 - flash / 0.6)));
         ui_redraw_in(1.0 / 60);
     }

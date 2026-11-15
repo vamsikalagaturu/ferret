@@ -1,5 +1,6 @@
 #ifndef FR_APP_H
 #define FR_APP_H
+#include "core/tabs.h"
 #include "jobs/jobs.h"
 #include "platform.h"
 #include "ui.h"
@@ -16,6 +17,7 @@ const char *mime_of(const char *name, int is_dir); /* by the extension */
 
 /* ---- the folder being shown (browser.c) ---- */
 typedef enum { SORT_NAME, SORT_SIZE, SORT_DATE, SORT_KIND, SORT_EXT } fr_sort;
+typedef enum { LAYOUT_DETAILS, LAYOUT_COLUMNS, LAYOUT_GRID } fr_layout;
 
 typedef struct {
     fr_entry e;
@@ -26,7 +28,9 @@ typedef struct {
     double flash_at; /* yanked (copied, cut, path copied) then: the row flashes */
 } fr_item;
 
-typedef struct {
+/* one per pane of each tab (core/tabs.h) */
+typedef struct fr_browser {
+    unsigned id; /* never reused: deferred work and listings on their way find their browser by it, or drop */
     char *uri;
     struct {
         fr_item *v;
@@ -47,13 +51,31 @@ typedef struct {
     int nselected;
     char *error;        /* the listing failed */
     int loading;        /* a listing off this machine is on its way (async.h); the items are the last ones until then */
+    unsigned listing;   /* that listing's serial */
     int results;        /* the items are search results below uri, each named by its path from there */
+    char *search_term;  /* of the results */
+    int search_content; /* they are of the text inside files */
     int64_t dir_mtime;
     double checked_at;
     char *focus_name;   /* the row the next browser_open() or browser_reload() lands on; it takes it */
+    fr_layout layout;
+    float shown_w;      /* views.c: the width view_draw last had, which the layout in effect and the grid follow */
+    char *shown_uri;    /* and the folder it drew */
+    int reveal_pending;
 } fr_browser;
 
-extern fr_browser br;
+/* The tabs, and the browser the code works on as br: between frames the pane with the keys; while a pane is drawn,
+ * that pane; while deferred work runs, the pane that asked for it. */
+extern fr_tabs tabs;
+extern fr_browser *br_cur;
+#define br (*br_cur)
+fr_browser *browser_new(const fr_browser *like); /* empty; sort, hidden and layout as like's (NULL: defaults) */
+void browser_free(fr_browser *b);
+fr_browser *browser_by_id(unsigned id); /* NULL once its tab closed */
+void browser_enter(fr_browser *b);      /* br is b (and the widget ids its pane's) until tabs_sync() */
+void tabs_sync(void);                   /* br back to the pane with the keys */
+int browser_active(void);               /* br is the pane with the keys */
+void browser_reload_shown(void);        /* every pane on screen */
 void browser_open(const char *uri, int push_history);
 void browser_reload(void);
 void browser_rebuild_view(void);
@@ -78,8 +100,6 @@ void browser_results_leave(void);
 void browser_results_renamed(const char *from, const char *to); /* the results under from follow it */
 
 /* ---- the window's state (main.c) ---- */
-typedef enum { LAYOUT_DETAILS, LAYOUT_COLUMNS, LAYOUT_GRID } fr_layout;
-
 typedef struct {
     int quit;
     int storage_ok;
@@ -88,7 +108,7 @@ typedef struct {
     double places_at;
     fr_disks disks;
     unsigned disks_serial;
-    fr_layout layout;
+    Rectangle pane_rect[2]; /* where the current tab's panes were drawn, by side (only [0] when not split) */
     unsigned menu_more, menu_row, menu_bg, menu_selection;
     int help_open; /* the keyboard shortcuts sheet */
     double path_flash_at; /* the folder's path was copied then: the breadcrumb flashes */
@@ -103,6 +123,21 @@ void app_defer(void (*fn)(const char *s, int n), const char *s, int n);
 
 float app_row_height(void);
 int app_wide(void); /* the places stay beside the files */
+
+/* ---- tabs and the split view (panes.c); each asks for its change through app_defer ---- */
+void panes_init(void);                      /* the first tab, before the settings are read into it */
+void tab_new(const char *uri, int select);  /* a tab for uri (NULL: br's folder) after the current one */
+void tab_close(int i);                      /* tab i (-1 the current one); the last one stays */
+void tab_select(int i);
+void tab_step(int by);
+void split_toggle(void);                    /* the current tab split in two panes, or back to the one with the keys */
+void pane_switch(void);                     /* the keys to the other pane */
+int app_split(void);                        /* the current tab shows two panes */
+char *tab_label(int i);                     /* its folder's name (both, a split tab's) */
+float tabbar_height(void);                  /* 0 when it is hidden: one tab, or a phone */
+void tabbar_draw(Rectangle r);
+void panes_draw(Rectangle r);               /* the header and the files, once or for each pane */
+void tabs_menu_items(void);                 /* the overflow menu's: new tab, the tabs, close, split */
 
 /* ---- places: the sidebar and the drawer (sidebar.c) ---- */
 void places_refresh(int now);
@@ -130,10 +165,12 @@ void path_edit_start(void); /* the breadcrumb becomes a field to type a location
 /* ---- the files in the current layout (views.c) ---- */
 void view_draw(Rectangle r);
 void view_set_layout(fr_layout layout);
+fr_layout view_layout(void); /* the layout in effect: br.layout, unless the place or the width does not allow it */
 void view_reveal(int v); /* scroll so view row v shows */
 int view_grid_columns(void); /* items per row in the grid layout, 1 in the others */
 void view_flash(const fr_item *it, Rectangle r); /* the yank flash over a row or tile */
 fr_item *view_item_at(Vector2 p); /* the row or tile the last frame drew under p, NULL none */
+void view_open_in_tab(int v);     /* view row v's folder or archive in a new tab behind this one (a middle click) */
 void browser_flash_targets(void); /* flashes the selected rows, else the cursor row */
 
 /* ---- image thumbnails (thumbnails.c) ---- */
@@ -150,6 +187,7 @@ typedef struct {
     fr_strs servers;   /* the Network section's URIs (never with a password), in the order shown */
     char *theme[THEME_ROLES]; /* [theme] values as written, NULL for roles not set */
     char *last_folder, *start_folder; /* URIs, NULL when not set */
+    fr_strs last_tabs; /* URIs: the tabs' folders when ferret last ran with more than one */
 } fr_settings;
 extern fr_settings settings;
 #define UI_SCALE_MIN 0.5
@@ -159,6 +197,9 @@ extern fr_settings settings;
 void settings_load(void);
 void settings_poll(void); /* saves what changed (sort, layout, hidden, favorites); reloads after a hand edit */
 char *settings_start_uri(void); /* start_folder, else last_folder, when it is a folder that is there; else NULL */
+/* without a start_folder: last_tabs' folders that are still there, and in *current the one last_folder names
+ * (-1 none); fewer than two: none */
+fr_strs settings_start_tabs(int *current);
 int favorite_index(const char *uri); /* -1 when not a favorite */
 void favorite_toggle(const char *uri);
 int server_index(const char *uri); /* -1 when not in the Network section */
@@ -181,6 +222,7 @@ void connect_draw_dialogs(void);
 /* ---- keys (keys.c) ---- */
 typedef enum { MODE_NORMAL, MODE_VISUAL, MODE_INSERT } fr_mode;
 void keys_handle(void);
+void keys_reset(void); /* another tab or pane took the keys: no chord, visual mode, renaming or field focused */
 const char *keys_pending(void); /* the chord prefix waiting for its next key, "" none */
 int keys_mode(void);            /* an fr_mode */
 int keys_insert_field(int v, Rectangle r);
@@ -207,6 +249,7 @@ void ops_compress(void);        /* the targets into a new zip here */
 void ops_bulk_rename(int as_text); /* the targets' names in an editor, or find and replace across them */
 void ops_copy(int cut);
 void ops_paste(void);
+void ops_to_other_pane(int move); /* the targets copied (moved) into the folder of the split view's other pane */
 void ops_clip_clear(void);
 void ops_delete(int permanently);
 void ops_rename_start(void);

@@ -22,6 +22,7 @@ typedef struct {
     float ui_scale, font_scale;
     fr_strs favorites, servers;
     char *folder;
+    fr_strs tabs; /* owned, unlike the others in live()'s */
 } state;
 
 static char *path;
@@ -30,9 +31,22 @@ static int saved_valid;
 static double seen_at, checked_at;
 static int64_t file_mtime;
 
+/* the folders worth restoring: local ones (and the trash) as usable_start() takes them, in the tabs' order; for a
+ * split tab, its pane with the keys */
+static fr_strs tab_folders(void)
+{
+    fr_strs r = {0};
+    for (int i = 0; tabs.n > 1 && i < tabs.n; i++) {
+        const fr_browser *b = tabs.v[i].pane[tabs.v[i].side];
+        if (b->uri && (fr_uri_local(b->uri) || !strncmp(b->uri, "trash://", 8))) FR_PUSH(r, fr_strdup(b->uri));
+    }
+    return r;
+}
+
 static state live(void)
 {
-    return (state){br.sort, br.desc, br.show_hidden, app.layout, ui.user_scale, ui.text_scale, settings.favorites, settings.servers, br.uri};
+    return (state){br.sort, br.desc, br.show_hidden, br.layout, ui.user_scale, ui.text_scale, settings.favorites, settings.servers, br.uri,
+                   tab_folders()};
 }
 
 static int strs_differ(const fr_strs *a, const fr_strs *b)
@@ -48,13 +62,14 @@ static int differs(const state *a, const state *b)
     if (!a->folder != !b->folder || (a->folder && strcmp(a->folder, b->folder))) return 1;
     return a->sort != b->sort || a->desc != b->desc || a->hidden != b->hidden || a->layout != b->layout ||
            a->ui_scale != b->ui_scale || a->font_scale != b->font_scale || strs_differ(&a->favorites, &b->favorites) ||
-           strs_differ(&a->servers, &b->servers);
+           strs_differ(&a->servers, &b->servers) || strs_differ(&a->tabs, &b->tabs);
 }
 
 static void snapshot(state *s)
 {
     fr_strs_free(&s->favorites);
     fr_strs_free(&s->servers);
+    fr_strs_free(&s->tabs);
     free(s->folder);
     *s = live();
     s->favorites = fr_strs_copy(&settings.favorites);
@@ -135,7 +150,7 @@ static void apply(const fr_toml *t)
     const fr_toml_value *v;
     int i;
     if ((v = fr_toml_get(t, "", "layout", TOML_STRING)) && (i = find(layout_names, COUNT(layout_names), v->str)) >= 0)
-        app.layout = (fr_layout)i;
+        br.layout = (fr_layout)i;
     if ((v = fr_toml_get(t, "", "sort", TOML_STRING)) && (i = find(sort_names, COUNT(sort_names), v->str)) >= 0)
         br.sort = (fr_sort)i;
     if ((v = fr_toml_get(t, "", "reverse", TOML_BOOL))) br.desc = v->b;
@@ -159,6 +174,12 @@ static void apply(const fr_toml *t)
         v = fr_toml_get(t, "", folder_keys[i], TOML_STRING);
         *folders[i] = v ? folder_uri(v->str) : NULL;
     }
+    fr_strs_free(&settings.last_tabs);
+    if ((v = fr_toml_get(t, "", "last_tabs", TOML_STRINGS)))
+        for (i = 0; i < v->strs.n; i++) {
+            char *uri = folder_uri(v->strs.v[i]);
+            if (uri) FR_PUSH(settings.last_tabs, uri);
+        }
     free(start_written);
     v = fr_toml_get(t, "", "start_folder", TOML_STRING);
     start_written = v ? fr_strdup(v->str) : NULL;
@@ -201,7 +222,7 @@ static char *settings_text(void)
     fr_toml_comment(&o, "again a few seconds after you edit it.");
     fr_toml_comment(&o, "");
     fr_toml_comment(&o, "How files are shown: \"details\", \"columns\" or \"grid\".");
-    fr_toml_string(&o, "layout", (int)app.layout < COUNT(layout_names) ? layout_names[app.layout] : layout_names[0]);
+    fr_toml_string(&o, "layout", (int)br.layout < COUNT(layout_names) ? layout_names[br.layout] : layout_names[0]);
     fr_toml_comment(&o, "Sort by \"name\", \"size\", \"modified\", \"kind\" or \"extension\".");
     fr_toml_string(&o, "sort", (int)br.sort < COUNT(sort_names) && sort_names[br.sort] ? sort_names[br.sort] : sort_names[0]);
     fr_toml_comment(&o, "Sort in reverse order.");
@@ -225,6 +246,20 @@ static char *settings_text(void)
         const char *p = fr_uri_local(br.uri);
         fr_toml_string(&o, "last_folder", p ? p : br.uri);
     }
+    fr_strs open = tab_folders();
+    if (open.n > 1) {
+        fr_toml_comment(&o, "The tabs open then, in order (folders on this device); last_folder is the one shown.");
+        for (int i = 0; i < open.n; i++) {
+            const char *p = fr_uri_local(open.v[i]);
+            if (p) {
+                char *path = fr_strdup(p);
+                free(open.v[i]);
+                open.v[i] = path;
+            }
+        }
+        fr_toml_strings(&o, "last_tabs", &open);
+    }
+    fr_strs_free(&open);
     fr_toml_comment(&o, "Start in this folder every time instead (a path, \"~\" for home, or a URI), for example:");
     if (start_written) fr_toml_string(&o, "start_folder", start_written);
     else fr_toml_comment(&o, "start_folder = \"~/Downloads\"");
@@ -284,6 +319,7 @@ void settings_poll(void)
         snapshot(&seen);
         seen_at = ui.now;
     }
+    fr_strs_free(&now.tabs);
     if (!saved_valid || differs(&seen, &saved)) {
         if (ui.now - seen_at >= 0.5) save();
         else ui_redraw_in(0.5 - (ui.now - seen_at));
@@ -297,7 +333,7 @@ void settings_poll(void)
         return;
     }
     browser_rebuild_view();
-    view_set_layout(app.layout);
+    view_set_layout(br.layout);
     theme_load(settings.theme);
 }
 
@@ -316,6 +352,20 @@ char *settings_start_uri(void)
     if (usable_start(settings.start_folder)) return fr_strdup(settings.start_folder);
     if (usable_start(settings.last_folder)) return fr_strdup(settings.last_folder);
     return NULL;
+}
+
+fr_strs settings_start_tabs(int *current)
+{
+    fr_strs r = {0};
+    *current = -1;
+    if (settings.start_folder) return r;
+    for (int i = 0; i < settings.last_tabs.n; i++) {
+        if (!usable_start(settings.last_tabs.v[i])) continue;
+        if (*current < 0 && settings.last_folder && !strcmp(settings.last_folder, settings.last_tabs.v[i])) *current = r.n;
+        FR_PUSH(r, fr_strdup(settings.last_tabs.v[i]));
+    }
+    if (r.n < 2) fr_strs_free(&r), *current = -1;
+    return r;
 }
 
 int favorite_index(const char *uri)
