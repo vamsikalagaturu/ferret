@@ -6,22 +6,21 @@
 #include <string.h>
 #include <time.h>
 
-/* The layout in effect and the grid's columns depend on the width view_draw last had. */
-static float shown_w;
-static char *shown_uri;
-static int reveal_pending;
-
+/* The layout in effect and the grid's columns depend on the width view_draw last had (br.shown_w). A split view's
+ * panes show columns as details: Miller columns want the width, and their parent and preview panes are one each. */
 static fr_layout layout_in_effect(void)
 {
     if (br.uri && fr_trash_is_root(br.uri)) return LAYOUT_DETAILS;
-    if (app.layout == LAYOUT_COLUMNS && (ui.touch || shown_w < DP(720))) return LAYOUT_DETAILS;
-    return app.layout;
+    if (br.layout == LAYOUT_COLUMNS && (ui.touch || app_split() || br.shown_w < DP(720))) return LAYOUT_DETAILS;
+    return br.layout;
 }
+
+fr_layout view_layout(void) { return layout_in_effect(); }
 
 void view_set_layout(fr_layout layout)
 {
-    app.layout = layout;
-    reveal_pending = 1;
+    br.layout = layout;
+    br.reveal_pending = 1;
     ui.dirty = 1;
 }
 
@@ -35,12 +34,12 @@ void view_flash(const fr_item *it, Rectangle r)
     ui_redraw_in(1.0 / 60);
 }
 
-int view_grid_columns(void) { return layout_in_effect() == LAYOUT_GRID ? grid_columns_for(shown_w) : 1; }
+int view_grid_columns(void) { return layout_in_effect() == LAYOUT_GRID ? grid_columns_for(br.shown_w) : 1; }
 
 void view_reveal(int v)
 {
     if (layout_in_effect() == LAYOUT_GRID) {
-        grid_reveal(v, shown_w);
+        grid_reveal(v, br.shown_w);
         return;
     }
     float rh = app_row_height();
@@ -86,6 +85,20 @@ void view_row_pressed(int v, int right_click)
         browser_set_selected(idx, 1);
         br.cursor = br.anchor = v;
     }
+}
+
+void view_open_in_tab(int v)
+{
+    fr_item *it = browser_item(v);
+    if (!it || it->placeholder || !br.uri) return;
+    char *uri = fr_uri_join(br.uri, it->e.name);
+    if (it->e.is_dir) tab_new(uri, 0);
+    else if (fr_archive_browsable(it->e.name)) {
+        char *root = fr_archive_root(uri);
+        tab_new(root, 0);
+        free(root);
+    }
+    free(uri);
 }
 
 fr_item *view_item_at(Vector2 p)
@@ -255,6 +268,7 @@ static void draw_row(int v, Rectangle row, Rectangle area)
     if (editing && ui_hover(hit)) return;
     if (clicked) view_row_pressed(v, 0);
     else if (right) view_row_pressed(v, 1);
+    else if (ui.mpressed && ui_hover(hit)) view_open_in_tab(v);
 }
 
 void view_draw_empty(Rectangle r, const char *icon, const char *title, const char *detail, int retry)
@@ -311,17 +325,17 @@ static void draw_details(Rectangle r)
 void view_draw(Rectangle r)
 {
     ui_rect(r, theme.bg);
-    shown_w = r.width;
-    if (!br.uri || !shown_uri || strcmp(shown_uri, br.uri)) {
-        free(shown_uri);
-        shown_uri = br.uri ? fr_strdup(br.uri) : NULL;
-        reveal_pending = 1;
+    br.shown_w = r.width;
+    if (!br.uri || !br.shown_uri || strcmp(br.shown_uri, br.uri)) {
+        free(br.shown_uri);
+        br.shown_uri = br.uri ? fr_strdup(br.uri) : NULL;
+        br.reveal_pending = 1;
     }
-    if (reveal_pending && br.cursor >= 0) {
+    if (br.reveal_pending && br.cursor >= 0) {
         view_reveal(br.cursor);
         br.scroll.offset = br.scroll.target;
     }
-    reveal_pending = 0;
+    br.reveal_pending = 0;
     fr_layout layout = layout_in_effect();
     if (br.uri && fr_trash_is_root(br.uri)) trash_draw(r);
     else if (layout == LAYOUT_COLUMNS) columns_draw(r);

@@ -1,0 +1,91 @@
+# Tabs (Ctrl+T, gt / gT, Alt+n, Ctrl+W, middle click) and the split view (F3, Tab, F5 / F6).
+expect tabs 1
+expect pane single
+
+# a tab of the same folder, then another folder in it; the first tab keeps its own
+key ctrl+t
+expect tabs 2
+expect tab 2
+expect folder .
+key l
+expect folder alpha
+key g
+key T
+expect tab 1
+expect folder .
+key g
+key t
+expect folder alpha
+key alt+1
+expect folder .
+key alt+2
+expect folder alpha
+
+# each tab keeps its cursor and history
+key backspace
+expect folder .
+expect cursor alpha
+key alt+1
+key G
+expect cursor zeta.md
+key alt+2
+expect cursor alpha
+key alt+1
+expect cursor zeta.md
+
+# closing: the tab after it takes over, and the last one stays
+key ctrl+w
+expect tabs 1
+expect cursor alpha
+key ctrl+w
+expect tabs 1
+expect toast only tab
+
+# gn / gc, as ranger has them
+key g
+key n
+expect tabs 2
+key g
+key c
+expect tabs 1
+
+# a middle click on a folder opens it in a tab behind this one
+mclick row beta
+expect tabs 2
+expect tab 1
+expect folder .
+key ctrl+tab
+expect folder beta
+key ctrl+w
+
+# the split view: both panes start in this folder, the right one with the keys
+key f3
+expect pane right
+expect folder .
+key j
+key l
+expect folder beta
+key tab
+expect pane left
+expect folder .
+
+# F5 copies the cursor row into the other pane's folder
+key G
+expect cursor zeta.md
+key f5
+expect exists beta/zeta.md
+expect exists zeta.md
+expect toast Copied 1 item
+
+# F6 moves
+key k
+expect cursor report.tar.gz
+key f6
+expect exists beta/report.tar.gz
+expect missing report.tar.gz
+
+# back to one pane: the one with the keys stays
+key f3
+expect pane single
+expect folder .
+quit

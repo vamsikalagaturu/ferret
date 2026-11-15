@@ -21,6 +21,7 @@ static struct {
         void (*fn)(const char *s, int n);
         char *s;
         int n;
+        unsigned browser; /* the pane drawn when it was asked for: it runs there */
     } *v;
     int n, cap;
 } deferred;
@@ -31,14 +32,20 @@ void app_defer(void (*fn)(const char *s, int n), const char *s, int n)
         fn(s, n);
         return;
     }
-    FR_PUSH(deferred, ((struct deferred){fn, s ? fr_strdup(s) : NULL, n}));
+    FR_PUSH(deferred, ((struct deferred){fn, s ? fr_strdup(s) : NULL, n, br_cur->id}));
     ui.dirty = 1;
 }
 
+/* what was asked for in a tab closed since is dropped */
 static void run_deferred(void)
 {
     for (int i = 0; i < deferred.n; i++) {
-        deferred.v[i].fn(deferred.v[i].s, deferred.v[i].n);
+        fr_browser *b = browser_by_id(deferred.v[i].browser);
+        if (b) {
+            browser_enter(b);
+            deferred.v[i].fn(deferred.v[i].s, deferred.v[i].n);
+            tabs_sync();
+        }
         free(deferred.v[i].s);
     }
     deferred.n = 0;
@@ -136,12 +143,14 @@ static void draw_menus(void)
         static const char *const layouts[] = {"Details", "Columns", "Grid"}, *const touch_layouts[] = {"Details", "Grid"};
         static const char *const layout_icons[] = {"list", "columns-3", "layout-grid"}, *const touch_icons[] = {"list", "layout-grid"};
         if (ui.touch) {
-            int l = ui_menu_segments(touch_layouts, touch_icons, 2, app.layout == LAYOUT_GRID ? 1 : 0);
+            int l = ui_menu_segments(touch_layouts, touch_icons, 2, br.layout == LAYOUT_GRID ? 1 : 0);
             if (l >= 0) view_set_layout(l ? LAYOUT_GRID : LAYOUT_DETAILS);
         } else {
-            int l = ui_menu_segments(layouts, layout_icons, 3, (int)app.layout);
+            int l = ui_menu_segments(layouts, layout_icons, 3, (int)br.layout);
             if (l >= 0) view_set_layout((fr_layout)l);
         }
+        ui_menu_separator();
+        tabs_menu_items();
         ui_menu_separator();
         if (ui_menu_item("Show hidden", "eye", br.show_hidden)) br.show_hidden = !br.show_hidden, browser_rebuild_view();
         if (ui_menu_item("Search names below", "search", -1)) search_prompt(0);
@@ -169,6 +178,9 @@ static void draw_menus(void)
         if (it && !it->e.is_dir && br.uri && fr_uri_local(br.uri) && ui_menu_item("Open with...", "app-window", -1)) ops_open_with();
         if (ui_menu_item("Copy", "copy", -1)) ops_copy(0);
         if (ui_menu_item("Cut", "scissors", -1)) ops_copy(1);
+        if (app_split() && ui_menu_item("Copy to the other pane", "copy", -1)) ops_to_other_pane(0);
+        if (app_split() && ui_menu_item("Move to the other pane", "scissors", -1)) ops_to_other_pane(1);
+        if (it && it->e.is_dir && br.nselected <= 1 && ui_menu_item("Open in a new tab", "plus", -1)) view_open_in_tab(br.cursor);
         if (br.nselected == 1 && ui_menu_item("Rename", "pencil", -1)) ops_rename_start();
         rename_items();
         if (br.results && br.nselected == 1 && ui_menu_item("Show in folder", "folder-open", -1)) search_reveal();
@@ -263,8 +275,15 @@ static const char *const shortcuts[][2] = {
     {"g1 .. g9", "open favorite 1 to 9"},  {"gh, g~", "home"},
     {"Ctrl+= / Ctrl+- / Ctrl+0", "bigger / smaller / default interface"},
     {"Ctrl+Alt+= / - / 0", "bigger / smaller / default text"},
-    {"F5, Ctrl+R", "refresh"},             {"gd", "disks (the disk manager)"},
+    {"F5, Ctrl+R", "refresh (Ctrl+R in the split view)"}, {"gd", "disks (the disk manager)"},
     {"?", "this list"},                    {"q, Ctrl+Q", "quit"},
+    {NULL, "Tabs and the split view"},
+    {"Ctrl+T, gn", "new tab of this folder"}, {"Ctrl+W, gc", "close the tab"},
+    {"gt / gT", "next / previous tab"},    {"Ctrl+Tab, Ctrl+PgDn", "next tab"},
+    {"Ctrl+Shift+Tab", "previous tab (also Ctrl+PgUp)"}, {"Alt+1 .. Alt+9", "tab 1 to 9"},
+    {"middle click", "a folder: open it in a new tab; a tab: close it"},
+    {"F3", "split view: two panes side by side, or back to one"},
+    {"Tab", "the keys to the other pane"}, {"F5 / F6", "split view: copy / move to the other pane"},
     {NULL, "Disks"},
     {"h / l, arrows", "previous / next partition"}, {"j / k, arrows", "next / previous disk"},
     {"0 / $", "first / last partition"},   {"gg / G", "first / last disk"},
@@ -364,17 +383,17 @@ static int frame(void)
         ui_rect((Rectangle){s.x + sw - DP(1), s.y, DP(1), s.height}, theme.border);
         s.x += sw, s.width -= sw;
     }
-    float hh = header_height();
-    Rectangle list = {s.x, s.y + hh, s.width, s.height - hh};
+    Rectangle list = s;
     if (dview_is_open()) {
-        Rectangle area = s;
-        area.height -= ops_draw_jobs(area);
-        dview_draw(area);
-        list = area;
+        list.height -= ops_draw_jobs(list);
+        dview_draw(list);
     } else {
+        float th = tabbar_height();
+        if (th) tabbar_draw((Rectangle){s.x, s.y, s.width, th});
+        list.y += th, list.height -= th;
         list.height -= ops_draw_jobs(list);
         list.height -= draw_paste_bar(list);
-        view_draw(list);
+        panes_draw(list);
         const char *chord = keys_pending();
         if (*chord) {
             float cw = ui_text_width(chord, 13, FONT_REGULAR) + DP(20), ch = DP(24);
@@ -382,7 +401,6 @@ static int frame(void)
             ui_round(chip, 12, theme.surface_hi);
             ui_text_box(chord, chip, 13, FONT_REGULAR, theme.text_dim, ALIGN_CENTER, 0);
         }
-        header_draw((Rectangle){s.x, s.y, s.width, hh});
     }
     /* the drawer slides: 180 ms, eased out opening and in closing */
     static float slide;
@@ -439,6 +457,7 @@ int fr_app_main(int argc, char **argv)
     }
     plat_init_window();
     ui.user_scale = ui.text_scale = 1;
+    panes_init();
     settings_load();
     theme_load(settings.theme);
     if (!replay) ui_input_init();
@@ -456,11 +475,19 @@ int fr_app_main(int argc, char **argv)
         free(real);
     }
     app.storage_ok = plat_storage_granted();
+    fr_strs restored = {0};
+    int current = -1;
+    if (!start && app.storage_ok) restored = settings_start_tabs(&current);
     if (!start && app.storage_ok) start = settings_start_uri();
     if (!start) start = plat_home_uri();
     ui.now = fr_now();
     places_refresh(1);
-    browser_open(start, 0);
+    if (restored.n) {
+        browser_open(restored.v[0], 0);
+        for (int i = 1; i < restored.n; i++) tab_new(restored.v[i], 1);
+        tab_select(current >= 0 ? current : 0);
+    } else browser_open(start, 0);
+    fr_strs_free(&restored);
     free(start);
     float scale = 0;
     while (!app.quit && !WindowShouldClose()) {

@@ -40,6 +40,7 @@ static int draw_tile(int v, Rectangle t, Rectangle area)
     view_draw_name(it->e.name, name, name_size(), it->e.hidden ? theme.text_dim : theme.text);
     if (clicked) view_row_pressed(v, 0);
     else if (right) view_row_pressed(v, 1);
+    else if (ui.mpressed && ui_hover(hit)) view_open_in_tab(v);
     return ui_hover(hit);
 }
 

@@ -14,6 +14,7 @@ static struct {
     int seen;   /* a layout drew the field since the last keys_handle */
     int result; /* what the field returned since then */
     int creating; /* naming a new file or folder in the placeholder row; else renaming uri */
+    unsigned browser; /* the pane it is in */
     char *uri;
     fr_text text;
 } insert;
@@ -68,6 +69,7 @@ int step_back(int quit_at_end)
         return 1;
     }
     free(parent);
+    if (tabs.n > 1) return tab_close(-1), 1;
     app.quit = 1;
     return 1;
 }
@@ -93,6 +95,7 @@ static void insert_start(int how)
     insert.uri = fr_uri_join(br.uri, it->e.name);
     insert.on = insert.seen = 1;
     insert.creating = 0;
+    insert.browser = br.id;
     ui.focus = insert_id();
     view_reveal(br.cursor);
     ui.dirty = 1;
@@ -110,6 +113,7 @@ void keys_new_start(const char *typed)
     free(insert.uri);
     insert.uri = NULL;
     insert.on = insert.seen = insert.creating = 1;
+    insert.browser = br.id;
     ui.focus = insert_id();
     view_reveal(br.cursor);
     ui.dirty = 1;
@@ -118,7 +122,14 @@ void keys_new_start(const char *typed)
 static void insert_stop(void)
 {
     insert.on = 0;
-    if (insert.creating) browser_drop_placeholder();
+    fr_browser *in = browser_by_id(insert.browser), *was = br_cur;
+    if (insert.creating && in) {
+        unsigned salt = ui.id_salt;
+        browser_enter(in);
+        browser_drop_placeholder();
+        br_cur = was;
+        ui.id_salt = salt;
+    }
     insert.creating = 0;
     free(insert.uri);
     insert.uri = NULL;
@@ -158,7 +169,7 @@ static void insert_commit(void)
 
 int keys_insert_field(int v, Rectangle r)
 {
-    if (!insert.on || v != br.cursor) return 0;
+    if (!insert.on || v != br.cursor || br.id != insert.browser) return 0;
     fr_item *it = browser_item(v);
     if (insert.creating) {
         if (!it || !it->placeholder) return 0;
@@ -174,6 +185,15 @@ int keys_insert_field(int v, Rectangle r)
     insert.seen = 1;
     insert.result |= ui_text_field(insert_id(), &insert.text, r, NULL);
     return 1;
+}
+
+void keys_reset(void)
+{
+    pending[0] = 0;
+    visual = 0;
+    if (insert.on) insert_stop();
+    ui.focus = 0;
+    ui.dirty = 1;
 }
 
 /* after the layouts drew: committing reloads the folder, which must not happen while its rows are drawn */
@@ -248,6 +268,12 @@ static void toggle_visual(void)
     visual = 1;
     br.anchor = br.cursor;
     go(br.cursor);
+}
+
+static void close_tab(void)
+{
+    if (tabs.n > 1) tab_close(-1);
+    else ui_toast("This is the only tab; q quits");
 }
 
 static void clip_take(int cut)
@@ -343,6 +369,10 @@ static void command(int c)
     case K('g', 'h'):
     case K('g', '~'): go_home(); break;
     case K('g', 'd'): dview_open(); break;
+    case K('g', 't'): tab_step(1); break;
+    case K('g', 'T'): tab_step(-1); break;
+    case K('g', 'n'): tab_new(NULL, 1); break;
+    case K('g', 'c'): close_tab(); break;
     case K(0, 'm'):
         if (br.uri) favorite_toggle(br.uri);
         break;
@@ -401,14 +431,15 @@ void keys_handle(void)
     if (pending[0] && command_key()) set_pending(0);
     int cols = view_grid_columns(), page = (int)(br.scroll.view / app_row_height()) - 1;
     if (page < 1) page = 1;
+    fr_layout layout = br.layout;
     for (int shift = 0; shift <= 1; shift++) {
         int m = shift ? MOD_SHIFT : 0, ext = shift || visual;
         if (ui_key(KEY_DOWN, m)) move_cursor(br.cursor + cols, ext);
         if (ui_key(KEY_UP, m)) move_cursor(br.cursor - cols, ext);
-        if (app.layout == LAYOUT_GRID && ui_key(KEY_RIGHT, m)) move_cursor(br.cursor + 1, ext);
-        if (app.layout == LAYOUT_GRID && ui_key(KEY_LEFT, m)) move_cursor(br.cursor - 1, ext);
-        if (app.layout == LAYOUT_COLUMNS && !m && ui_key(KEY_LEFT, 0)) browser_up();
-        if (app.layout == LAYOUT_COLUMNS && !m && ui_key(KEY_RIGHT, 0)) {
+        if (layout == LAYOUT_GRID && ui_key(KEY_RIGHT, m)) move_cursor(br.cursor + 1, ext);
+        if (layout == LAYOUT_GRID && ui_key(KEY_LEFT, m)) move_cursor(br.cursor - 1, ext);
+        if (layout == LAYOUT_COLUMNS && !m && ui_key(KEY_LEFT, 0)) browser_up();
+        if (layout == LAYOUT_COLUMNS && !m && ui_key(KEY_RIGHT, 0)) {
             fr_item *it = browser_item(br.cursor);
             if (it && it->e.is_dir) ops_open_item(it);
         }
@@ -437,7 +468,18 @@ void keys_handle(void)
     if (ui_key(KEY_Z, MOD_CTRL)) undo_run(0);
     if (ui_key(KEY_Z, MOD_CTRL | MOD_SHIFT)) undo_run(1);
     if (ui_key(KEY_H, MOD_CTRL)) toggle_hidden();
+    /* the split view's F5 and F6 are Midnight Commander's copy and move to the other panel */
+    if (app_split() && ui_key(KEY_F5, 0)) ops_to_other_pane(0);
+    if (app_split() && ui_key(KEY_F6, 0)) ops_to_other_pane(1);
     if (ui_key(KEY_F5, 0) || ui_key(KEY_R, MOD_CTRL)) browser_reload();
+    if (ui_key(KEY_F3, 0)) split_toggle();
+    if (ui_key(KEY_TAB, 0)) pane_switch();
+    if (ui_key(KEY_T, MOD_CTRL)) tab_new(NULL, 1);
+    if (ui_key(KEY_W, MOD_CTRL)) close_tab();
+    if (ui_key(KEY_TAB, MOD_CTRL) || ui_key(KEY_PAGE_DOWN, MOD_CTRL)) tab_step(1);
+    if (ui_key(KEY_TAB, MOD_CTRL | MOD_SHIFT) || ui_key(KEY_PAGE_UP, MOD_CTRL)) tab_step(-1);
+    for (int i = 0; i < 9; i++)
+        if (ui_key(KEY_ONE + i, MOD_ALT)) tab_select(i);
     if (ui_key(KEY_F, MOD_CTRL)) filter_start(0);
     if (ui_key(KEY_ENTER, MOD_ALT)) ops_properties();
     if (ui_key(KEY_ONE, MOD_CTRL)) view_set_layout(LAYOUT_DETAILS);

@@ -6,7 +6,57 @@
 #include <string.h>
 #include <sys/stat.h>
 
-fr_browser br;
+fr_tabs tabs;
+fr_browser *br_cur;
+
+/* the right pane's widget ids: a folder shown in both panes has the same row names twice */
+#define RIGHT_PANE_SALT 0x5bd1e995u
+
+static unsigned next_id;
+
+fr_browser *browser_new(const fr_browser *like)
+{
+    fr_browser *b = fr_realloc(NULL, sizeof *b);
+    *b = (fr_browser){.id = ++next_id};
+    if (like) b->sort = like->sort, b->desc = like->desc, b->show_hidden = like->show_hidden, b->layout = like->layout;
+    return b;
+}
+
+void browser_free(fr_browser *b)
+{
+    if (!b) return;
+    for (int i = 0; i < b->items.n; i++) fr_entry_free(&b->items.v[i].e);
+    free(b->items.v);
+    free(b->view.v);
+    fr_strs_free(&b->back);
+    fr_strs_free(&b->forward);
+    free(b->uri), free(b->error), free(b->focus_name), free(b->search_term), free(b->shown_uri);
+    free(b);
+}
+
+fr_browser *browser_by_id(unsigned id)
+{
+    for (int i = 0; i < tabs.n; i++)
+        for (int s = 0; s < 2; s++)
+            if (tabs.v[i].pane[s] && tabs.v[i].pane[s]->id == id) return tabs.v[i].pane[s];
+    return NULL;
+}
+
+void browser_enter(fr_browser *b)
+{
+    int side = 0;
+    if (tabs_find(&tabs, b, &side) < 0) side = 0;
+    br_cur = b;
+    ui.id_salt = side ? RIGHT_PANE_SALT : 0;
+}
+
+void tabs_sync(void)
+{
+    fr_browser *b = tabs_current(&tabs);
+    if (b) browser_enter(b);
+}
+
+int browser_active(void) { return br_cur == tabs_current(&tabs); }
 
 static void items_free(void)
 {
@@ -119,17 +169,32 @@ static void apply(const char *uri, fr_entries *es, int rc)
     rebuild_now(NULL, 0);
 }
 
-static unsigned serial; /* of the last listing asked for: an older one's answer comes too late */
+static unsigned serial; /* of the last listing asked for, by any browser */
+
+/* the browser waiting for that listing: none when another was asked for since, or its tab closed */
+static fr_browser *awaiting(unsigned listing)
+{
+    for (int i = 0; listing && i < tabs.n; i++)
+        for (int s = 0; s < 2; s++)
+            if (tabs.v[i].pane[s] && tabs.v[i].pane[s]->listing == listing) return tabs.v[i].pane[s];
+    return NULL;
+}
 
 static void listed(const char *uri, fr_entries *es, int rc, void *ctx)
 {
-    if ((unsigned)(uintptr_t)ctx != serial || !br.uri || strcmp(br.uri, uri)) return;
+    fr_browser *b = awaiting((unsigned)(uintptr_t)ctx), *was = br_cur;
+    if (!b || !b->uri || strcmp(b->uri, uri)) return;
+    unsigned salt = ui.id_salt;
+    browser_enter(b);
     br.loading = 0;
+    br.listing = 0;
     if (rc) net_ask(uri, rc, browser_reload);
     apply(uri, es, rc);
     if (br.focus_name && br.cursor >= 0) view_reveal(br.cursor);
     free(br.focus_name);
     br.focus_name = NULL;
+    br_cur = was;
+    ui.id_salt = salt;
 }
 
 /* A folder on this device is listed at once; a remote one on a thread of its own (listed() takes the answer), the
@@ -143,7 +208,7 @@ static void load(const char *uri)
         return;
     }
     br.results = 0;
-    serial++;
+    br.listing = 0;
     br.loading = 0;
     if (fr_uri_local(uri) || !fr_vfs_backend(uri)) {
         fr_entries es = {0};
@@ -160,8 +225,9 @@ static void load(const char *uri)
         rebuild_now(NULL, 0);
     }
     br.loading = 1;
+    br.listing = ++serial;
     net_prepare(uri);
-    fr_async_list(uri, listed, (void *)(uintptr_t)serial);
+    fr_async_list(uri, listed, (void *)(uintptr_t)br.listing);
 }
 
 /* ---- search results ---- */
@@ -197,7 +263,7 @@ void browser_results_begin(void)
     free(br.error);
     br.error = NULL;
     br.loading = 0;
-    serial++;
+    br.listing = 0;
     br.results = 1;
     br.filtering = 0;
     br.scroll = (fr_scroll){0};
@@ -389,7 +455,20 @@ static void drop_placeholder_now(const char *s, int n)
 
 void browser_drop_placeholder(void) { app_defer(drop_placeholder_now, NULL, 0); }
 
-void browser_poll(void)
+void browser_reload_shown(void)
+{
+    fr_browser *other = tabs_other(&tabs), *was = br_cur;
+    unsigned salt = ui.id_salt;
+    browser_reload();
+    if (other) {
+        browser_enter(other);
+        browser_reload();
+    }
+    br_cur = was;
+    ui.id_salt = salt;
+}
+
+static void poll_one(void)
 {
     for (int i = 0; i < br.items.n; i++)
         if (br.items.v[i].placeholder) return;
@@ -403,6 +482,21 @@ void browser_poll(void)
         browser_open(home, 0);
         free(home);
     } else if (t != br.dir_mtime) browser_reload();
+}
+
+/* every tab's, so one in the background is current when it comes back */
+void browser_poll(void)
+{
+    fr_browser *was = br_cur;
+    unsigned salt = ui.id_salt;
+    for (int i = 0; i < tabs.n; i++)
+        for (int s = 0; s < 2; s++)
+            if (tabs.v[i].pane[s]) {
+                browser_enter(tabs.v[i].pane[s]);
+                poll_one();
+            }
+    br_cur = was;
+    ui.id_salt = salt;
 }
 
 fr_item *browser_item(int view_index)

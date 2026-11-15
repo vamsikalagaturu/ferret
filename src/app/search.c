@@ -4,11 +4,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* One search runs at a time, into the browser that started it (owner); a tab's results stay after another's search
+ * begins, as a list no longer growing. */
 static struct {
-    int prompting, content; /* the field shows, for names or for text inside files */
+    unsigned prompting; /* the browser whose header shows the field, 0 none */
+    int content;        /* the field is for the text inside files */
     fr_text field;
-    char *term;     /* of the results shown */
-    int term_content;
+    unsigned owner;
     fr_search_status st;
     fr_entries pending; /* found, not in the list yet */
     double added_at;
@@ -16,15 +18,15 @@ static struct {
 
 static unsigned field_id(void) { return ui_id("search-field", 0); }
 
-int search_running(void) { return s.st.running; }
+int search_running(void) { return s.st.running && s.owner == br.id; }
 
 void search_prompt(int content)
 {
     if (!br.uri) return;
     if (br.filtering) filter_stop();
-    s.prompting = 1;
+    s.prompting = br.id;
     s.content = content;
-    text_set(&s.field, br.results && s.term && s.term_content == content ? s.term : "");
+    text_set(&s.field, br.results && br.search_term && br.search_content == content ? br.search_term : "");
     ui.focus = field_id();
     ui.dirty = 1;
 }
@@ -41,10 +43,11 @@ static void begin_now(const char *term, int content)
 {
     if (!br.uri) return;
     fr_entries_free(&s.pending);
-    free(s.term);
-    s.term = fr_strdup(term);
-    s.term_content = content;
+    free(br.search_term);
+    br.search_term = fr_strdup(term);
+    br.search_content = content;
     fr_search_start(br.uri, term, content, br.show_hidden, plat_wake);
+    s.owner = br.id;
     s.st = (fr_search_status){.running = 1};
     s.added_at = 0;
     browser_results_begin();
@@ -52,13 +55,14 @@ static void begin_now(const char *term, int content)
 
 static void leave_now(const char *str, int n)
 {
-    fr_search_cancel();
+    if (s.owner == br.id) fr_search_cancel();
     browser_results_leave();
 }
 
 void search_poll(void)
 {
-    if (!br.results) {
+    fr_browser *b = browser_by_id(s.owner);
+    if (!b || !b->results) {
         if (s.st.running) fr_search_cancel();
         s.st.running = 0;
         fr_entries_free(&s.pending);
@@ -68,7 +72,12 @@ void search_poll(void)
     fr_search_take(&s.pending, &s.st);
     /* a sort of the whole list each time: a few times a second is enough */
     if (s.pending.n && (!s.st.running || ui.now - s.added_at > 0.25)) {
+        fr_browser *at = br_cur;
+        unsigned salt = ui.id_salt;
+        browser_enter(b);
         browser_results_add(&s.pending);
+        br_cur = at;
+        ui.id_salt = salt;
         s.added_at = ui.now;
     }
     if (was || s.st.running) ui.dirty = 1;
@@ -96,9 +105,12 @@ void search_stop(void)
 
 int search_header(Rectangle r)
 {
-    if (!s.prompting && !br.results) return 0;
+    /* the keys went to another pane or tab: the field goes with them */
+    if (s.prompting && browser_by_id(s.prompting) != tabs_current(&tabs)) prompt_stop();
+    int prompting = s.prompting && s.prompting == br.id;
+    if (!prompting && !br.results) return 0;
     float b = DP(ui.touch ? 48 : 36), x = r.x + DP(4), right = r.x + r.width - DP(4), cy = r.y + (r.height - b) / 2;
-    if (s.prompting) {
+    if (prompting) {
         if (ui_icon_button(ui_id("search-close", 0), (Rectangle){x, cy, b, b}, "arrow-left", theme.text)) {
             prompt_stop();
             return 1;
@@ -116,30 +128,33 @@ int search_header(Rectangle r)
         ui_hline(r.x, r.y + r.height - DP(1), r.width, theme.border);
         return 1;
     }
+    int live = s.owner == br.id;
+    int running = live && s.st.running;
     if (ui_icon_button(ui_id("results-close", 0), (Rectangle){x, cy, b, b}, "arrow-left", theme.text)) app_defer(leave_now, NULL, 0);
     x += b + DP(8);
     right -= b;
     if (ui_icon_button(ui_id("more", 0), (Rectangle){right, cy, b, b}, "ellipsis-vertical", theme.text))
         ui_menu_open(app.menu_more, (Rectangle){right, cy, b, b});
     right -= b;
-    if (s.st.running) {
+    if (running) {
         if (ui_icon_button(ui_id("search-cancel", 0), (Rectangle){right, cy, b, b}, "x", theme.text)) fr_search_cancel();
     } else if (ui_icon_button(ui_id("search-again", 0), (Rectangle){right, cy, b, b}, "search", theme.text))
-        search_prompt(s.term_content);
+        search_prompt(br.search_content);
     char *folder = fr_uri_name(br.uri), title[400], line[400];
-    snprintf(title, sizeof title, "%s\"%s\" in %s", s.term_content ? "Text " : "", s.term ? s.term : "", *folder ? folder : "/");
+    snprintf(title, sizeof title, "%s\"%s\" in %s", br.search_content ? "Text " : "", br.search_term ? br.search_term : "", *folder ? folder : "/");
     free(folder);
-    int n = s.st.found;
-    if (s.st.running)
+    int n = live ? s.st.found : br.view.n;
+    if (running)
         snprintf(line, sizeof line, "Searching: %d found, %lld files looked at, now in %s", n, (long long)s.st.files,
                  *s.st.current ? s.st.current : "the folder itself");
+    else if (!live) snprintf(line, sizeof line, "%d found", n);
     else if (s.st.unreadable)
         snprintf(line, sizeof line, "%d found; %d %s could not be read", n, s.st.unreadable, s.st.unreadable == 1 ? "folder" : "folders");
     else snprintf(line, sizeof line, "%d found in %lld files", n, (long long)s.st.files);
     float w = right - x - DP(8), l1 = ui_line_height(15), l2 = ui_line_height(13), top = r.y + (r.height - l1 - l2) / 2;
     ui_text_box(title, (Rectangle){x, top, w, l1}, 15, FONT_SEMIBOLD, theme.text, ALIGN_LEFT, 0);
     ui_text_box(line, (Rectangle){x, top + l1, w, l2}, 13, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 1);
-    if (s.st.running) ui_progress((Rectangle){r.x, r.y + r.height - DP(3), r.width, DP(2)}, (float)(ui.now - (long)ui.now), theme.accent);
+    if (running) ui_progress((Rectangle){r.x, r.y + r.height - DP(3), r.width, DP(2)}, (float)(ui.now - (long)ui.now), theme.accent);
     else ui_hline(r.x, r.y + r.height - DP(1), r.width, theme.border);
     return 1;
 }

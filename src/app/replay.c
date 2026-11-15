@@ -2,11 +2,12 @@
  * GLFW would deliver them, and its expectations are checked against the app's state. One command per line:
  *   key SPEC          j, G, ctrl+c, shift+down, enter, esc, f2, alt+left (US layout: ? is shift+/)
  *   type TEXT         the text as typed characters
- *   click|rclick|dclick TARGET, move TARGET
+ *   click|rclick|dclick|mclick TARGET, move TARGET
  *                     TARGET: "X Y" in window pixels (negative: from the right or bottom edge), "row NAME" (a row or
  *                     tile of the folder shown), "place LABEL" (a sidebar row: a place or a favorite)
  *   wheel DY, wait FRAMES, shot FILE.png, quit
  *   expect folder|cursor|selected|exists|missing|mode|clipboard|layout|toast VALUE
+ *   expect tabs N, tab N (the current one, from 1), pane single|left|right (the one with the keys)
  * Between commands the window runs until it is idle: nothing to redraw, no queued input, no job running, no
  * thumbnail being made.
  * Relative paths start at FOLDER. Failures go to stderr as SCRIPT:LINE: ...; the exit status is 1 after any. */
@@ -216,8 +217,15 @@ static void expect(const command *c)
         free(got);
     } else if (IS("layout")) {
         static const char *layouts[] = {"details", "columns", "grid"};
-        const char *got = layouts[app.layout];
+        const char *got = layouts[br.layout];
         if (strcasecmp(got, value)) fail(c, "expected layout %s, got %s", value, got);
+    } else if (IS("tabs")) {
+        if (tabs.n != atoi(value)) fail(c, "expected %d tabs, got %d", atoi(value), tabs.n);
+    } else if (IS("tab")) {
+        if (tabs.cur + 1 != atoi(value)) fail(c, "expected tab %d current, got %d", atoi(value), tabs.cur + 1);
+    } else if (IS("pane")) {
+        const char *got = !app_split() ? "single" : tabs.v[tabs.cur].side ? "right" : "left";
+        if (strcasecmp(got, value)) fail(c, "expected pane %s, got %s", value, got);
     } else if (IS("toast")) {
         const char *got = ui_toast_shown();
         if (!*got || !strstr(got, value)) fail(c, "expected a toast with \"%s\", got \"%s\"", value, got);
@@ -259,18 +267,19 @@ static int run(const command *c)
             i = fr_utf8_decode(c->arg, len, i, &cp);
             ui_push_char(cp);
         }
-    } else if (!strcmp(v, "click") || !strcmp(v, "rclick") || !strcmp(v, "dclick") || !strcmp(v, "move")) {
-        int right = v[0] == 'r', presses = v[0] == 'd' ? 2 : v[0] == 'm' ? 0 : 1;
-        if (presses && !right && fr_now() - rp.pressed_at < CLICK_GAP_S) return -1;
+    } else if (!strcmp(v, "click") || !strcmp(v, "rclick") || !strcmp(v, "dclick") || !strcmp(v, "mclick") || !strcmp(v, "move")) {
+        int button = v[0] == 'r' ? MOUSE_BUTTON_RIGHT : !strcmp(v, "mclick") ? MOUSE_BUTTON_MIDDLE : MOUSE_BUTTON_LEFT;
+        int left = button == MOUSE_BUTTON_LEFT, presses = v[0] == 'd' ? 2 : !strcmp(v, "move") ? 0 : 1;
+        if (presses && left && fr_now() - rp.pressed_at < CLICK_GAP_S) return -1;
         Vector2 at;
         if (target(c, &at)) return 0;
         rp.pointer = at;
         ui.dirty = 1;
         for (int i = 0; i < presses; i++) {
-            ui_push_mouse(right ? MOUSE_BUTTON_RIGHT : MOUSE_BUTTON_LEFT, 1);
-            ui_push_mouse(right ? MOUSE_BUTTON_RIGHT : MOUSE_BUTTON_LEFT, 0);
+            ui_push_mouse(button, 1);
+            ui_push_mouse(button, 0);
         }
-        if (presses && !right) rp.pressed_at = fr_now();
+        if (presses && left) rp.pressed_at = fr_now();
     } else if (!strcmp(v, "wheel")) ui_push_wheel(0, strtof(c->arg, NULL));
     else if (!strcmp(v, "wait")) rp.wait = atoi(c->arg);
     else if (!strcmp(v, "quit")) app.quit = 1;
@@ -323,7 +332,7 @@ static const char *check(const char *verb, const char *arg)
     Vector2 xy;
     if (!strcmp(verb, "key")) return parse_key(arg, &i, &i, &i) ? "not a key" : NULL;
     if (!strcmp(verb, "type")) return !*arg ? "nothing to type" : strlen(arg) > TYPE_MAX ? "too long to type at once" : NULL;
-    if (!strcmp(verb, "click") || !strcmp(verb, "rclick") || !strcmp(verb, "dclick") || !strcmp(verb, "move"))
+    if (!strcmp(verb, "click") || !strcmp(verb, "rclick") || !strcmp(verb, "dclick") || !strcmp(verb, "mclick") || !strcmp(verb, "move"))
         return !strncmp(arg, "row ", 4) && arg[4] ? NULL : !strncmp(arg, "place ", 6) && arg[6] ? NULL
                : !parse_xy(arg, &xy) ? NULL : "the target is X Y, row NAME or place LABEL";
     if (!strcmp(verb, "wheel")) return sscanf(arg, "%f %n", &f, &n) == 1 && !arg[n] ? NULL : "wheel takes a number";
@@ -331,12 +340,13 @@ static const char *check(const char *verb, const char *arg)
     if (!strcmp(verb, "shot")) return *arg ? NULL : "shot takes a file";
     if (!strcmp(verb, "quit")) return *arg ? "quit takes nothing" : NULL;
     if (!strcmp(verb, "expect")) {
-        static const char *subjects[] = {"folder", "cursor", "selected", "exists", "missing", "mode", "clipboard", "layout", "toast"};
+        static const char *subjects[] = {"folder", "cursor", "selected", "exists", "missing", "mode", "clipboard", "layout", "toast",
+                                         "tabs", "tab", "pane"};
         size_t sl = strcspn(arg, " ");
         for (size_t k = 0; k < sizeof subjects / sizeof *subjects; k++)
             if (sl == strlen(subjects[k]) && !strncmp(arg, subjects[k], sl))
                 return arg[sl] || !strcmp(subjects[k], "clipboard") ? NULL : "expect what?";
-        return "expect folder, cursor, selected, exists, missing, mode, clipboard, layout or toast";
+        return "expect folder, cursor, selected, exists, missing, mode, clipboard, layout, toast, tabs, tab or pane";
     }
     return "unknown command";
 }
