@@ -977,6 +977,17 @@ static int write_archive(const char *outer, int create, const fr_archive_change 
     if (create) {
         if (fr_vfs_exists(outer)) return -EEXIST;
     } else if ((rc = fr_vfs_stat(outer, &old))) return rc;
+    /* through a symlink the file it points to is rewritten, and the link stays */
+    char *real = old.is_link && fr_uri_local(outer) ? realpath(fr_uri_local(outer), NULL) : NULL;
+    if (real) {
+        char *target = fr_uri_from_path(real);
+        free(real);
+        fr_entry_free(&old);
+        rc = write_archive(target, create, ch, n, h);
+        free(target);
+        cache_forget(outer);
+        return rc;
+    }
     if (!create && h && h->total) {
         int err = 0;
         tree *t = tree_get(outer, &err);

@@ -434,6 +434,29 @@ int main(void)
     edits("s.tar.gz");
     edits("s.7z");
 
+    /* cancelled: the archive stays as it was, and nothing is left beside it */
+    int stop = 1;
+    fr_archive_hooks cancel = {.cancel = &stop};
+    char *sz = at("s.zip");
+    fr_archive_change del = {.op = FR_AR_DELETE, .path = ".hidden"};
+    CHECK(fr_archive_rewrite(sz, &del, 1, &cancel) == -ECANCELED);
+    CHECK(exists_in("s.zip", ".hidden"));
+    fr_entries left = {0};
+    CHECK(fr_vfs_list(root, &left) == 0);
+    for (int i = 0; i < left.n; i++) CHECK(!strstr(left.v[i].name, ".ferret-"));
+    fr_entries_free(&left);
+    free(sz);
+
+    /* written through a symlink: the file it points to changes, the link stays */
+    char *lpath = fr_format("%s/link.zip", root_path);
+    CHECK(symlink("s.zip", lpath) == 0);
+    char *ldir = in("link.zip", "via-link");
+    CHECK(fr_vfs_mkdir(ldir) == 0);
+    struct stat lst;
+    CHECK(lstat(lpath, &lst) == 0 && S_ISLNK(lst.st_mode));
+    CHECK(exists_in("s.zip", "via-link"));
+    free(lpath), free(ldir);
+
     /* an archive in an archive */
     char *inner_path = fr_format("%s/s.tar.gz", root_path);
     {
