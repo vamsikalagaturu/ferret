@@ -8,11 +8,13 @@
  * both and prints these. */
 #define _GNU_SOURCE
 #include "check.h"
+#include "core/opencache.h"
 #include "jobs/jobs.h"
 #include "net/net.h"
 #include "vfs/vfs.h"
 #include <errno.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 static const char *password;
@@ -174,6 +176,23 @@ static void exercise(const char *base, int how)
     char *got = get(round, &n);
     CHECK(got && n == bn && !memcmp(got, data, bn));
     free(got);
+
+    /* opened from there: a read-only copy here, kept while the source stays the same */
+    char *remote_big = fr_format("%s/sub/big.bin", remote_tree), *cache = fr_format("%s/cache", tmpl);
+    char *copy = fr_opencache_path(cache, remote_big, "big.bin"), *copy_uri = fr_uri_from_path(copy);
+    fr_job_submit_fetch(remote_big, copy_uri);
+    CHECK(jobs_ok());
+    got = get(copy_uri, &n);
+    CHECK(got && n == bn && !memcmp(got, data, bn));
+    free(got);
+    struct stat sb;
+    CHECK(stat(copy, &sb) == 0 && (sb.st_mode & 07777) == 0400);
+    ino_t inode = sb.st_ino;
+    fr_job_submit_fetch(remote_big, copy_uri);
+    CHECK(jobs_ok());
+    CHECK(stat(copy, &sb) == 0 && (!be->set_mtime || sb.st_ino == inode));
+    free(remote_big), free(cache), free(copy), free(copy_uri);
+
     char *moved = fr_uri_join(dir, "moved");
     CHECK(fr_vfs_rename(remote_tree, moved) == 0);
     fr_strs_free(&src);

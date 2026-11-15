@@ -158,7 +158,7 @@ if(FR_BUILD_PROGRAMS)
 
   enable_testing()
   foreach(t util vfs jobs settings mode thumbs archive mtp net remote search rename undo hash xdg trash sniff disks tabs
-          netparse bookmarks dupes)
+          netparse bookmarks dupes opencache)
     add_executable(test_${t} tests/test_${t}.c)
     target_link_libraries(test_${t} PRIVATE fercore)
     target_compile_options(test_${t} PRIVATE ${FR_WARNINGS})
