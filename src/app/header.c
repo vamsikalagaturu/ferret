@@ -216,6 +216,21 @@ static void path_go(void)
     free(target);
 }
 
+/* the type filter as a chip ending at right, in r's row; a click clears it. The x left of it. */
+static float kinds_chip(Rectangle r, float right)
+{
+    if (!br.kinds) return right;
+    const char *label = kind_filter_label(br.kinds);
+    float tw = ui_text_width(label, 13, FONT_SEMIBOLD), ch = DP(28), cw = tw + DP(42);
+    Rectangle chip = {right - cw, r.y + (r.height - ch) / 2, cw, ch};
+    int state;
+    if (ui_clickable(ui_id("kinds-chip", 0), chip, &state)) kinds_set(KF_ALL);
+    ui_round(chip, 6, ui_alpha(theme.accent, state == 2 ? 0.32f : state ? 0.25f : 0.18f));
+    ui_text_box(label, (Rectangle){chip.x + DP(12), chip.y, tw + DP(2), ch}, 13, FONT_SEMIBOLD, theme.accent, ALIGN_LEFT, 0);
+    ui_icon("x", (Rectangle){chip.x + cw - DP(26), chip.y, DP(20), ch}, 14, theme.accent);
+    return chip.x - DP(6);
+}
+
 void header_draw(Rectangle r)
 {
     int active = browser_active();
@@ -269,6 +284,7 @@ void header_draw(Rectangle r)
             return;
         }
         x += b + DP(4);
+        right = kinds_chip(r, right - DP(4));
         Rectangle field = {x, r.y + DP(8), right - x - DP(4), r.height - DP(16)};
         int res = ui_text_field(ui_id("filter", 0), &br.filter, field, "Filter this folder");
         if (res & TEXT_CHANGED) browser_rebuild_view();
@@ -301,6 +317,7 @@ void header_draw(Rectangle r)
         ui_menu_open(app.menu_more, (Rectangle){right, cy, b, b});
     right -= b;
     if (ui_icon_button(ui_id("search", 0), (Rectangle){right, cy, b, b}, "search", theme.text)) filter_start(0);
+    right = kinds_chip(r, right - DP(4)) + DP(4);
     Rectangle crumbs = {x + DP(4), r.y, right - x - DP(8), r.height};
     double flash = ui.now - app.path_flash_at;
     if (app.path_flash_at && flash < 0.6 && active) {

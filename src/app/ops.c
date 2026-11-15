@@ -9,10 +9,10 @@
 fr_clip clip;
 
 /* the one dialog open at a time */
-static enum { DLG_NONE, DLG_RENAME, DLG_NEW_FOLDER, DLG_DELETE, DLG_PROPERTIES, DLG_ERROR, DLG_BULK, DLG_OPEN_WITH } dlg;
+static enum { DLG_NONE, DLG_RENAME, DLG_NEW_FOLDER, DLG_DELETE, DLG_PROPERTIES, DLG_ERROR, DLG_BULK, DLG_OPEN_WITH, DLG_PICK, DLG_EXTRACT_TO } dlg;
 static fr_text field;
 static char *dlg_uri;          /* rename: the item */
-static fr_strs dlg_uris;       /* delete: the items */
+static fr_strs dlg_uris;       /* delete: the items; extract to: the archives */
 static int dlg_permanent;
 static char dlg_message[1024], dlg_title[128];
 static int dlg_pending;     /* rename, new: the call runs off this device (remote.c) */
@@ -34,6 +34,7 @@ static void dlg_close(void)
     if (dlg == DLG_PROPERTIES) props_close();
     if (dlg == DLG_BULK) bulk_rename_close();
     if (dlg == DLG_OPEN_WITH) openwith_close();
+    if (dlg == DLG_PICK) picker_close();
     dlg = DLG_NONE;
     dlg_pending = 0;
     dlg_serial++;
@@ -106,9 +107,71 @@ void ops_extract(int into_folder)
         return;
     }
     fr_strs uris = browser_target_uris();
-    fr_job_submit_extract(&uris, br.uri, into_folder);
+    /* several archives' contents mixed in one folder would be a mess to sort out again */
+    fr_job_submit_extract(&uris, br.uri, into_folder || uris.n > 1);
     fr_strs_free(&uris);
     browser_clear_selection();
+}
+
+/* the shown form of a folder: "~/x" under home, the path on this device, else the URI */
+static char *shown_folder(const char *uri)
+{
+    const char *p = fr_uri_local(uri), *home = getenv("HOME");
+    size_t hl = home ? strlen(home) : 0;
+    if (p && hl > 1 && !strncmp(p, home, hl) && (p[hl] == '/' || !p[hl])) return fr_format("~%s", p + hl);
+    return fr_strdup(p ? p : uri);
+}
+
+/* a folder as typed ("~/x", "/x", a URI) as a URI; NULL when it is not one */
+static char *typed_folder(const char *typed)
+{
+    if (strstr(typed, "://")) return strncmp(typed, "file://", 7) ? server_uri(typed) : fr_strdup(typed);
+    const char *home = getenv("HOME");
+    char *full = typed[0] == '~' && (typed[1] == '/' || !typed[1]) && home ? fr_format("%s%s", home, typed + 1)
+                 : typed[0] == '/'                                          ? fr_strdup(typed)
+                                                                            : NULL;
+    if (!full) return NULL;
+    size_t n = strlen(full);
+    while (n > 1 && full[n - 1] == '/') full[--n] = 0;
+    char *uri = fr_uri_from_path(full);
+    free(full);
+    return uri;
+}
+
+void ops_extract_to(void)
+{
+    if (!ops_archive_targets()) {
+        ui_toast("Choose archives to extract (zip, tar, 7z, rar, iso)");
+        return;
+    }
+    if (dlg != DLG_NONE) return;
+    fr_browser *other = tabs_other(&tabs);
+    const char *dest = other && other->uri && !other->results && !fr_archive_is_uri(other->uri) ? other->uri : br.uri;
+    char *shown = shown_folder(dest);
+    text_set(&field, shown);
+    free(shown);
+    fr_strs_free(&dlg_uris);
+    dlg_uris = browser_target_uris();
+    dlg = DLG_EXTRACT_TO;
+}
+
+static void extract_to_commit(void)
+{
+    char *dest = typed_folder(field.buf);
+    /* a server is not asked from the window's thread: the job tells when the folder is not there */
+    fr_entry e = {.is_dir = 1};
+    int rc = !dest ? -EINVAL : fr_archive_is_uri(dest) ? -EROFS : fr_uri_local(dest) ? fr_vfs_stat(dest, &e) : 0;
+    if (!rc && !e.is_dir) rc = -ENOTDIR;
+    fr_entry_free(&e);
+    if (!dest) ui_toast("Type a folder: a path starting with / or ~, or a location");
+    else if (rc == -EROFS) ui_toast("Extract outside archives");
+    else if (rc) ui_toast("%s: %s", field.buf, fr_vfs_error(rc));
+    else {
+        fr_job_submit_extract(&dlg_uris, dest, 1);
+        browser_clear_selection();
+        dlg_close();
+    }
+    free(dest);
 }
 
 char *ops_compress_name(void)
@@ -149,12 +212,46 @@ void ops_compress(void)
     browser_clear_selection();
 }
 
+/* the session's yank and cut sets, the newest first; the clipboard is a copy of one of them */
+static fr_clip history[CLIP_HISTORY];
+static int nhistory;
+
+static int same_set(const fr_clip *a, const fr_clip *b)
+{
+    if (a->cut != b->cut || a->uris.n != b->uris.n) return 0;
+    for (int i = 0; i < a->uris.n; i++)
+        if (strcmp(a->uris.v[i], b->uris.v[i])) return 0;
+    return 1;
+}
+
+static void history_drop(int i)
+{
+    fr_strs_free(&history[i].uris);
+    memmove(history + i, history + i + 1, sizeof *history * (size_t)(nhistory - i - 1));
+    history[--nhistory] = (fr_clip){0};
+}
+
+/* the clipboard to the front, once */
+static void history_push(void)
+{
+    for (int i = 0; i < nhistory; i++)
+        if (same_set(&history[i], &clip)) {
+            history_drop(i);
+            break;
+        }
+    if (nhistory == CLIP_HISTORY) history_drop(nhistory - 1);
+    memmove(history + 1, history, sizeof *history * (size_t)nhistory);
+    history[0] = (fr_clip){fr_strs_copy(&clip.uris), clip.cut};
+    nhistory++;
+}
+
 static void copy_now(const char *s, int cut)
 {
     fr_strs_free(&clip.uris);
     clip.uris = browser_target_uris();
     clip.cut = cut;
     if (!clip.uris.n) return;
+    history_push();
     browser_flash_targets();
     browser_clear_selection();
     ui_toast("%d %s %s; open a folder and paste", clip.uris.n, clip.uris.n == 1 ? "item" : "items", cut ? "cut" : "copied");
@@ -166,10 +263,59 @@ static void paste_now(const char *s, int n)
 {
     if (!clip.uris.n || !br.uri) return;
     fr_job_submit(clip.cut ? JOB_MOVE : JOB_COPY, &clip.uris, br.uri);
-    if (clip.cut) fr_strs_free(&clip.uris);
+    if (!clip.cut) return;
+    /* moved: what the set names is not there any more */
+    for (int i = 0; i < nhistory; i++)
+        if (same_set(&history[i], &clip)) {
+            history_drop(i);
+            break;
+        }
+    fr_strs_free(&clip.uris);
 }
 
 void ops_paste(void) { app_defer(paste_now, NULL, 0); }
+
+int ops_clip_history_count(void) { return nhistory; }
+
+static void paste_set(const char *s, int i)
+{
+    if (i < 0 || i >= nhistory) return;
+    fr_strs_free(&clip.uris);
+    clip = (fr_clip){fr_strs_copy(&history[i].uris), history[i].cut};
+    history_push();
+    paste_now(NULL, 0);
+}
+
+void ops_clip_history(void)
+{
+    if (!nhistory) {
+        ui_toast("Nothing copied or cut yet: yy copies, dd cuts");
+        return;
+    }
+    fr_pick *rows = fr_realloc(NULL, sizeof *rows * (size_t)nhistory);
+    for (int i = 0; i < nhistory; i++) {
+        const fr_clip *c = &history[i];
+        char *first = fr_uri_name(c->uris.v[0]), *parent = fr_uri_parent(c->uris.v[0]);
+        char *from = parent ? shown_folder(parent) : fr_strdup("");
+        if (c->uris.n == 1) rows[i].label = fr_strdup(first);
+        else rows[i].label = fr_format("%s and %d more", first, c->uris.n - 1);
+        rows[i].detail = fr_format("%s %d %s from %s", c->cut ? "Move" : "Copy", c->uris.n, c->uris.n == 1 ? "item" : "items", from);
+        rows[i].value = NULL;
+        rows[i].icon = c->cut ? "scissors" : "copy";
+        free(first), free(parent), free(from);
+    }
+    ops_pick("Paste from the clipboard's history", rows, nhistory, paste_set);
+}
+
+void ops_pick(const char *title, fr_pick *rows, int n, void (*chosen)(const char *value, int index))
+{
+    if (dlg != DLG_NONE) {
+        for (int i = 0; i < n; i++) free(rows[i].label), free(rows[i].detail), free(rows[i].value);
+        free(rows);
+        return;
+    }
+    if (picker_open(title, rows, n, chosen)) dlg = DLG_PICK;
+}
 
 static void to_other_now(const char *s, int move)
 {
@@ -449,6 +595,7 @@ void ops_poll_jobs(void)
         else if (st[i].failed) {
             if (dlg == DLG_PROPERTIES) props_close();
             if (dlg == DLG_BULK) bulk_rename_close();
+            if (dlg == DLG_PICK) picker_close();
             dlg = DLG_ERROR;
             snprintf(dlg_title, sizeof dlg_title, "%d %s could not be done", st[i].failed, st[i].failed == 1 ? "item" : "items");
             snprintf(dlg_message, sizeof dlg_message, "%s", st[i].error);
@@ -568,6 +715,19 @@ void ops_draw_dialogs(void)
     case DLG_OPEN_WITH:
         if (!openwith_draw()) dlg_close();
         break;
+    case DLG_PICK:
+        if (!picker_draw()) dlg_close();
+        break;
+    case DLG_EXTRACT_TO: {
+        char title[64];
+        snprintf(title, sizeof title, "Extract %d %s to", dlg_uris.n, dlg_uris.n == 1 ? "archive" : "archives");
+        fr_dialog d = {.title = title, .message = "Each goes into a folder of its own there, named after it.", .field = &field,
+                       .hint = "Folder, e.g. ~/Downloads", .buttons = {"Cancel", "Extract"}, .nbuttons = 2, .cancel = 0};
+        b = ui_dialog(&d);
+        if (b == 1) extract_to_commit();
+        else if (b == 0) dlg_close();
+        break;
+    }
     case DLG_ERROR: {
         fr_dialog d = {.title = dlg_title, .message = dlg_message, .buttons = {"Close"}, .nbuttons = 1, .cancel = 0};
         if (ui_dialog(&d) >= 0) dlg_close();

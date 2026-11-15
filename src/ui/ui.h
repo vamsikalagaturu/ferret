@@ -16,9 +16,10 @@ extern fr_theme theme;
 /* the colour roles of the desktop's colors.toml: accent, background, dark_background, ... */
 enum { THEME_ROLES = 13 };
 extern const char *const theme_roles[THEME_ROLES];
-/* Nord, then the desktop's colours when it publishes them, then overrides ("#rrggbb" per role, NULL keeps;
- * overrides itself may be NULL) */
-void theme_load(char *const *overrides);
+/* Nord dark or light, then the desktop's colours when it publishes them (and they are as light or dark), then
+ * overrides ("#rrggbb" per role, NULL keeps; overrides itself may be NULL) */
+void theme_load(char *const *overrides, int light);
+int theme_desktop_light(void); /* the desktop's palette is light (1) or dark (0); -1 none */
 
 enum { MOD_SHIFT = 1, MOD_CTRL = 2, MOD_ALT = 4, MOD_SUPER = 8 };
 

@@ -6,6 +6,7 @@
 #include "platform.h"
 #include "ui.h"
 #include "vfs/vfs.h"
+#include <android/configuration.h>
 #include <android/input.h>
 #include <android/keycodes.h>
 #include <android/log.h>
@@ -26,6 +27,13 @@
 #define LOG(...) __android_log_print(ANDROID_LOG_INFO, "ferret", __VA_ARGS__)
 
 struct android_app *GetAndroidApp(void); /* rcore_android.c; not declared in raylib.h */
+
+/* the configuration the glue keeps current (uiMode is in the manifest's configChanges, so a switch arrives here) */
+int plat_color_scheme(void)
+{
+    int night = AConfiguration_getUiModeNight(GetAndroidApp()->config);
+    return night == ACONFIGURATION_UI_MODE_NIGHT_YES ? 1 : night == ACONFIGURATION_UI_MODE_NIGHT_NO ? 2 : 0;
+}
 
 /* ---- JNI ---- */
 

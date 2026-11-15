@@ -46,6 +46,9 @@ int plat_open_chooser(const char *path); /* the system's own "open with"; 0 when
 /* a terminal in dir, or with dir NULL whether there is one; 0 when started (or found), -1 none */
 int plat_terminal(const char *dir);
 
+/* the system's light or dark preference, as the freedesktop portal's color-scheme: 1 dark, 2 light, 0 none */
+int plat_color_scheme(void);
+
 void plat_set_clipboard(const char *text);
 char *plat_clipboard(void); /* malloc'd, NULL for none */
 void plat_haptic(void);

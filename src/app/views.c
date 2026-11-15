@@ -296,7 +296,11 @@ int view_draw_folder_state(Rectangle r)
     if (br.loading && !br.items.n) view_draw_empty(r, "loader-circle", "Loading...", NULL, 0);
     else if (br.error) view_draw_empty(r, "triangle-alert", "This folder cannot be shown", br.error, 1);
     else if (!br.view.n && br.filtering && br.filter.len) view_draw_empty(r, "search", "Nothing matches", NULL, 0);
-    else if (!br.view.n && br.dupes) view_draw_empty(r, "file-stack", dupes_running() ? "Looking for duplicates..." : "No duplicates found", NULL, 0);
+    else if (!br.view.n && br.kinds && br.items.n) {
+        char detail[64];
+        snprintf(detail, sizeof detail, "Showing only %s", kind_filter_label(br.kinds));
+        view_draw_empty(r, "shapes", "Nothing of this kind here", detail, 0);
+    } else if (!br.view.n && br.dupes) view_draw_empty(r, "file-stack", dupes_running() ? "Looking for duplicates..." : "No duplicates found", NULL, 0);
     else if (!br.view.n && br.results) view_draw_empty(r, "search", search_running() ? "Searching..." : "Nothing found", NULL, 0);
     else if (!br.view.n) view_draw_empty(r, "folder-open", "Empty folder", br.items.n ? "Only hidden items are here" : NULL, 0);
     else return 0;

@@ -273,6 +273,8 @@ void ui_scroll_to(fr_scroll *s, float top, float bottom)
 
 /* ---- menus ---- */
 
+#define MENU_ITEMS 48
+
 typedef struct {
     char label[96];
     const char *icon;
@@ -285,7 +287,7 @@ typedef struct {
 static struct {
     unsigned id;
     Rectangle anchor, rect;
-    menu_item items[32];
+    menu_item items[MENU_ITEMS];
     int n, hot, prev_layer;
     int fresh; /* opened by this frame's click, which must not count as one outside it */
     float scroll;
@@ -323,7 +325,7 @@ int ui_menu_begin(unsigned id)
 
 int ui_menu_stepper(const char *label, const char *icon, const char *value)
 {
-    if (menu.n >= 32) return 0;
+    if (menu.n >= MENU_ITEMS) return 0;
     menu_item *it = &menu.items[menu.n++];
     snprintf(it->label, sizeof it->label, "%s", label);
     snprintf(it->value, sizeof it->value, "%s", value);
@@ -335,7 +337,7 @@ int ui_menu_stepper(const char *label, const char *icon, const char *value)
 
 int ui_menu_item(const char *label, const char *icon, int checked)
 {
-    if (menu.n >= 32) return 0;
+    if (menu.n >= MENU_ITEMS) return 0;
     int idx = menu.n++;
     menu_item *it = &menu.items[idx];
     snprintf(it->label, sizeof it->label, "%s", label);
@@ -350,12 +352,12 @@ int ui_menu_item(const char *label, const char *icon, int checked)
 
 void ui_menu_separator(void)
 {
-    if (menu.n < 32) menu.items[menu.n++] = (menu_item){.separator = 1};
+    if (menu.n < MENU_ITEMS) menu.items[menu.n++] = (menu_item){.separator = 1};
 }
 
 int ui_menu_heading(const char *label, const char *button_icon, const char *button_label)
 {
-    if (menu.n >= 32) return 0;
+    if (menu.n >= MENU_ITEMS) return 0;
     menu_item *it = &menu.items[menu.n++];
     *it = (menu_item){.separator = 2, .icon = button_icon, .checked = -1};
     snprintf(it->label, sizeof it->label, "%s", label);
@@ -366,7 +368,7 @@ int ui_menu_heading(const char *label, const char *button_icon, const char *butt
 
 int ui_menu_segments(const char *const *labels, const char *const *icons, int n, int selected)
 {
-    if (menu.n >= 32 || n <= 0) return -1;
+    if (menu.n >= MENU_ITEMS || n <= 0) return -1;
     menu_item *it = &menu.items[menu.n++];
     *it = (menu_item){.checked = -1, .seg_labels = labels, .seg_icons = icons, .seg_n = n, .seg_sel = selected};
     snprintf(it->label, sizeof it->label, "%s", labels[0]);

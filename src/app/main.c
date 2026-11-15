@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "app.h"
+#include "core/watch.h"
 #include "jobs/async.h"
 #include "net/net.h"
 #include <math.h>
@@ -74,22 +75,20 @@ static float draw_paste_bar(Rectangle area)
 
 /* ---- menus ---- */
 
-/* Extract here, Extract to <name>/, Compress to <name>.zip, for what is chosen */
+/* Extract here, Extract to <name>/, Extract to..., Compress to <name>.zip, for what is chosen */
 static void archive_items(void)
 {
     int n = ops_archive_targets();
-    if (n) {
+    if (n == 1) {
         if (ui_menu_item("Extract here", "package", -1)) ops_extract(0);
-        char label[300] = "Extract each to its own folder";
-        if (n == 1) {
-            fr_strs uris = browser_target_uris();
-            char *name = fr_uri_name(uris.v[0]), *stem = fr_archive_stem(name);
-            snprintf(label, sizeof label, "Extract to %s/", stem);
-            free(name), free(stem);
-            fr_strs_free(&uris);
-        }
+        fr_strs uris = browser_target_uris();
+        char *name = fr_uri_name(uris.v[0]), *stem = fr_archive_stem(name), label[300];
+        snprintf(label, sizeof label, "Extract to %s/", stem);
+        free(name), free(stem);
+        fr_strs_free(&uris);
         if (ui_menu_item(label, "folder-archive", -1)) ops_extract(1);
-    }
+    } else if (n > 1 && ui_menu_item("Extract here, each into its own folder", "package", -1)) ops_extract(1);
+    if (n && ui_menu_item("Extract to...", "folder-open", -1)) ops_extract_to();
     char *zip = br.uri && !fr_archive_is_uri(br.uri) ? ops_compress_name() : NULL;
     if (zip) {
         char label[300];
@@ -149,6 +148,11 @@ static void draw_menus(void)
             int l = ui_menu_segments(layouts, layout_icons, 3, (int)br.layout);
             if (l >= 0) view_set_layout((fr_layout)l);
         }
+        if (ui_menu_heading("Show only", br.kinds ? "x" : NULL, br.kinds ? "All" : NULL)) kinds_set(KF_ALL);
+        static const char *const kinds[] = {"Images", "Video", "Audio", "Docs", "Archives", "Code"};
+        static const char *const kind_icons[] = {"image", "video", "music", "file-text", "file-archive", "file-code"};
+        int k = ui_menu_segments(kinds, kind_icons, 6, (int)br.kinds - 1);
+        if (k >= 0) kinds_set((fr_kind_filter)(k + 1));
         ui_menu_separator();
         tabs_menu_items();
         ui_menu_separator();
@@ -159,6 +163,8 @@ static void draw_menus(void)
         if (br.dupes && br.view.n && ui_menu_item("Select all but the first of each group", "list-checks", -1)) dupes_select_copies();
         if (ui_menu_item(sizes_running() ? "Stop measuring folders" : "Measure the folders' sizes", "ruler", -1)) sizes_measure(1);
         if (ui_menu_item("Bookmarks", "bookmark", -1)) bookmarks_panel_open();
+        if (settings.recent.n > 1 && ui_menu_item("Recent folders", "history", -1)) recent_pick();
+        if (ops_clip_history_count() && ui_menu_item("Paste from history", "clipboard-paste", -1)) ops_clip_history();
         if (undo_can(0) && ui_menu_item("Undo", "undo-2", -1)) undo_run(0);
         if (undo_can(1) && ui_menu_item("Redo", "redo-2", -1)) undo_run(1);
         ui_menu_separator();
@@ -169,6 +175,10 @@ static void draw_menus(void)
         snprintf(pct, sizeof pct, "%d%%", (int)lroundf(ui.text_scale * 100));
         d = ui_menu_stepper("Text", "a-large-small", pct);
         if (d) app_text_zoom(d == 2 ? 0 : d);
+        ui_menu_heading("Theme", NULL, NULL);
+        static const char *const schemes[] = {"Dark", "Light", "System"}, *const scheme_icons[] = {"moon", "sun", "monitor"};
+        int sc = ui_menu_segments(schemes, scheme_icons, 3, settings.scheme);
+        if (sc >= 0) scheme_set(sc);
         if (!ui.touch && ui_menu_item("Keyboard shortcuts", "keyboard", -1)) app.help_open = 1;
         if (br.uri && fr_uri_local(br.uri) && !plat_terminal(NULL) && ui_menu_item("Open terminal here", "terminal", -1))
             ops_terminal_here();
@@ -261,7 +271,8 @@ static const char *const shortcuts[][2] = {
     {"/", "filter this folder"},           {"n / N", "next / previous row"},
     {"Space", "select and move down"},     {"v", "select a range"},
     {"Ctrl+A", "select all"},              {"Esc", "clear the selection, close"},
-    {"yy / dd / p", "copy / cut / paste"}, {"yp / yP", "copy the item's / folder's full path"},
+    {"yy / dd / p", "copy / cut / paste"}, {"yh", "paste one of the last 10 copied or cut sets"},
+    {"yp / yP", "copy the item's / folder's full path"},
     {"r, i, F2", "rename here, before the extension"}, {"A", "rename here, at the end"},
     {"I", "rename here, at the start"},    {"c", "retype the name, keep the extension"},
     {"Enter / Esc", "keep / drop the new name"},       {"a", "new file, or folder when the name ends in /"},
@@ -272,12 +283,16 @@ static const char *const shortcuts[][2] = {
     {"ff", "search names below this folder (* and ?)"},   {"fg", "search the text inside files below"},
     {"gr", "show a search result in its folder"},          {"Esc, Backspace, h", "leave the search results"},
     {"Enter on an archive", "browse inside it (zip, tar, 7z, rar, iso)"},
-    {"ze / zf", "extract here / into a folder named after it"}, {"zc", "compress to <name>.zip"},
+    {"ze / zf", "extract here / into a folder named after it"},
+    {"zt", "extract to a folder you type, each archive into its own"}, {"zc", "compress to <name>.zip"},
+    {"fi fv fa", "show only images / video / audio (folders stay)"},
+    {"fo fz fc", "show only documents / archives / code"}, {"fx, Esc", "show every kind again"},
     {"Alt+Enter", "properties"},           {".", "show hidden files"},
     {"O", "open with another app"},        {"T", "a terminal in this folder"},
     {"sn ss sm se", "sort by name, size, date, extension"}, {"S", "reverse the order"},
     {"Ctrl+1 / 2 / 3", "details, columns, grid"},          {"M", "add or remove this folder as a favorite"},
     {"g1 .. g9", "open favorite 1 to 9"},  {"gh, g~", "home"},
+    {"g-", "recent folders (the last 20)"},
     {"m<key>", "bookmark this folder as key (a letter or digit)"}, {"'<key>", "go to that bookmark"},
     {"''", "back to the folder shown before"}, {"\"<key>", "remove that bookmark"},
     {"dc", "folder sizes: the targets', else all shown (again: stop)"},
@@ -472,11 +487,12 @@ int fr_app_main(int argc, char **argv)
     ui.user_scale = ui.text_scale = 1;
     panes_init();
     settings_load();
-    theme_load(settings.theme);
+    theme_apply();
     if (!replay) ui_input_init();
     fr_jobs_start(plat_wake);
     fr_async_start(plat_wake);
     fetch_start();
+    fr_watch_start(plat_wake);
     static const fr_secret_store keystore = {plat_secret_load, plat_secret_save, plat_secret_forget};
     if (plat_secret_available()) fr_creds_set_store(&keystore);
     thumbs_start();
@@ -527,6 +543,7 @@ int fr_app_main(int argc, char **argv)
         }
     }
     dview_shutdown();
+    fr_watch_stop();
     fr_jobs_stop();
     thumbs_stop();
     search_stop();

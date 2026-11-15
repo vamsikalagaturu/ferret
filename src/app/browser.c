@@ -1,4 +1,5 @@
 #include "app.h"
+#include "core/watch.h"
 #include "jobs/async.h"
 #include <dirent.h>
 #include <stdint.h>
@@ -17,7 +18,7 @@ static unsigned next_id;
 fr_browser *browser_new(const fr_browser *like)
 {
     fr_browser *b = fr_realloc(NULL, sizeof *b);
-    *b = (fr_browser){.id = ++next_id};
+    *b = (fr_browser){.id = ++next_id, .watch = -1};
     if (like) b->sort = like->sort, b->desc = like->desc, b->show_hidden = like->show_hidden, b->layout = like->layout;
     return b;
 }
@@ -31,6 +32,8 @@ void browser_free(fr_browser *b)
     fr_strs_free(&b->back);
     fr_strs_free(&b->forward);
     free(b->uri), free(b->error), free(b->focus_name), free(b->search_term), free(b->shown_uri), free(b->prev_uri);
+    fr_watch_remove(b->watch);
+    free(b->watch_uri);
     free(b);
 }
 
@@ -109,6 +112,7 @@ static void rebuild_now(const char *s, int n)
         }
         if (it->e.hidden && !br.show_hidden) continue;
         if (br.filtering && br.filter.len && !fr_contains_nocase(it->e.name, br.filter.buf)) continue;
+        if (!kind_filter_shows(br.kinds, it->kind)) continue;
         FR_PUSH(br.view, i);
     }
     if (br.view.n > 1) qsort(br.view.v, (size_t)br.view.n, sizeof *br.view.v, cmp_items);
@@ -166,6 +170,8 @@ static void apply(const char *uri, fr_entries *es, int rc)
         free(br.uri);
         br.uri = fr_strdup(uri);
     }
+    if (br.recent_pending && !rc) recent_visit(uri);
+    br.recent_pending = 0;
     sizes_apply();
     rebuild_now(NULL, 0);
 }
@@ -372,6 +378,7 @@ static void open_now(const char *uri, int push_history)
     br.anchor = 0;
     br.nselected = 0;
     for (int i = 0; i < br.items.n; i++) br.items.v[i].selected = 0;
+    br.recent_pending = 1;
     load(uri);
     if (br.loading) {
         free(previous);
@@ -512,12 +519,38 @@ void browser_reload_shown(void)
     ui.id_salt = salt;
 }
 
+/* the watch follows the folder shown; -1 when it is polled instead */
+static int watch_follow(void)
+{
+    const char *path = br.uri && !br.results ? fr_uri_local(br.uri) : NULL;
+    if (path && br.watch_uri && !strcmp(br.watch_uri, br.uri)) return br.watch;
+    if (!path && !br.watch_uri) return -1;
+    fr_watch_remove(br.watch);
+    free(br.watch_uri);
+    br.watch_uri = path ? fr_strdup(br.uri) : NULL;
+    br.watch = path ? fr_watch_add(path) : -1;
+    br.watch_seen = fr_watch_serial(br.watch);
+    return br.watch;
+}
+
 static void poll_one(void)
 {
     for (int i = 0; i < br.items.n; i++)
         if (br.items.v[i].placeholder) return;
+    int w = watch_follow();
     /* a server is asked again on a refresh, and after the jobs that change it */
-    if (!br.uri || br.results || !fr_uri_local(br.uri) || ui.now - br.checked_at < 1.5) return;
+    if (!br.uri || br.results || !fr_uri_local(br.uri)) return;
+    if (w >= 0) {
+        unsigned s = fr_watch_serial(w);
+        if (s == br.watch_seen) return;
+        br.watch_seen = s;
+        if (fr_watch_gone(w)) {
+            fr_watch_remove(w);
+            br.watch = -1;
+            free(br.watch_uri);
+            br.watch_uri = NULL;
+        }
+    } else if (ui.now - br.checked_at < 1.5) return;
     br.checked_at = ui.now;
     int64_t t = dir_mtime(br.uri);
     /* the folder went away (a disk ejected or unmounted, deleted elsewhere): home, quietly */
@@ -525,7 +558,7 @@ static void poll_one(void)
         char *home = plat_home_uri();
         browser_open(home, 0);
         free(home);
-    } else if (t != br.dir_mtime) browser_reload();
+    } else if (t != br.dir_mtime || w >= 0) browser_reload(); /* inotify also hears of files written, which leave the folder's mtime */
 }
 
 /* every tab's, so one in the background is current when it comes back */
