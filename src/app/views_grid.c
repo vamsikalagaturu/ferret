@@ -27,6 +27,7 @@ static int draw_tile(int v, Rectangle t, Rectangle area)
     Rectangle box = {t.x + DP(4), t.y + DP(4), t.width - DP(8), t.height - DP(8)};
     if (it->selected) ui_round(box, 8, theme.selection);
     else if (state) ui_round(box, 8, state == 2 ? theme.pressed : theme.hover);
+    marks_tint(it, box, 8);
     view_flash(it, box);
     if (!ui.touch && br.keyboard && v == br.cursor && !it->selected) ui_round_line(box, 8, ui_alpha(theme.accent, 0.5f));
 
@@ -37,7 +38,8 @@ static int draw_tile(int v, Rectangle t, Rectangle area)
     if (it->e.is_link) ui_icon("link", (Rectangle){t.x + t.width / 2 + DP(12), icon.y + DP(34), DP(14), DP(14)}, 12, theme.text_faint);
     Rectangle name = {box.x + DP(6), icon.y + icon.height + DP(6), box.width - DP(12), 2 * ui_line_height(name_size())};
     if (keys_insert_field(v, (Rectangle){box.x + DP(2), name.y - DP(4), box.width - DP(4), DP(30)})) return ui_hover(hit);
-    view_draw_name(it->e.name, name, name_size(), it->e.hidden ? theme.text_dim : theme.text);
+    view_draw_name(it->e.name, name, name_size(), marks_dimmed(it) ? theme.text_faint : it->e.hidden ? theme.text_dim : theme.text);
+    marks_chips(it, (Rectangle){box.x + DP(4), box.y + DP(4), box.width - DP(8), DP(18)}, 0);
     if (clicked) view_row_pressed(v, 0);
     else if (right) view_row_pressed(v, 1);
     else if (ui.mpressed && ui_hover(hit)) view_open_in_tab(v);

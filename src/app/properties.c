@@ -10,7 +10,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
+#include <unistd.h>
 
 /* folders are counted on a thread of their own; the panel may close (and drop its reference) before it ends */
 typedef struct {
@@ -44,6 +46,14 @@ static struct {
     uint32_t all_on, any_on; /* over the editable items */
     int bit[9], orig[9];
     int recursive;
+    fr_perm_only only;  /* recursive: what inside gets the bits */
+    int exec_x;         /* chmod's X for the execute bits set */
+    int special;        /* the setuid, setgid and sticky bits typed in the octal field; -1 as they are */
+    fr_text octal;
+    int all_local;      /* every editable item is on a local path: owner and group can change */
+    int64_t uid, gid;   /* theirs when they share it, -1 mixed */
+    fr_text owner, group;
+    char owner_was[256], group_was[256];
     char error[512];
     int has_space;
     uint64_t space_free, space_total;
@@ -55,7 +65,6 @@ static struct {
     fr_scroll scroll;
     float content_h;
     int loading;  /* the items' details are on their way from off this device */
-    int applying; /* permission bits being set there */
 } P;
 
 static uint32_t bit_mask(int i) { return 1u << (8 - i); }
@@ -198,10 +207,35 @@ static void load_modes(void)
         uint32_t b = bit_mask(i);
         P.bit[i] = P.orig[i] = P.all_on & b ? BIT_ON : P.any_on & b ? BIT_MIXED : BIT_OFF;
     }
+    P.special = -1;
+    P.all_local = P.editable > 0;
+    P.uid = P.gid = -2;
+    for (int i = 0; i < P.uris.n; i++) {
+        fr_entry *e = &P.ents[i];
+        if (!e->name || e->is_link) continue;
+        const char *path = fr_uri_local(P.uris.v[i]);
+        struct stat st;
+        if (!path || lstat(path, &st)) {
+            P.all_local = 0;
+            continue;
+        }
+        P.uid = P.uid == -2 || P.uid == (int64_t)st.st_uid ? (int64_t)st.st_uid : -1;
+        P.gid = P.gid == -2 || P.gid == (int64_t)st.st_gid ? (int64_t)st.st_gid : -1;
+    }
+    char name[256] = "";
+    if (P.uid >= 0) fr_owner_name((uint32_t)P.uid, 0, name, sizeof name);
+    if (P.uid >= 0 && !*name) snprintf(name, sizeof name, "%lld", (long long)P.uid);
+    snprintf(P.owner_was, sizeof P.owner_was, "%s", P.uid >= 0 ? name : "");
+    name[0] = 0;
+    if (P.gid >= 0) fr_owner_name((uint32_t)P.gid, 1, name, sizeof name);
+    if (P.gid >= 0 && !*name) snprintf(name, sizeof name, "%lld", (long long)P.gid);
+    snprintf(P.group_was, sizeof P.group_was, "%s", P.gid >= 0 ? name : "");
+    text_set(&P.owner, P.owner_was);
+    text_set(&P.group, P.group_was);
 }
 
 /* What the storage says of the items: on the window's thread for this device's files, else on a thread of its own
- * (jobs/async.h), since a server may take its time; also for applying permission bits there. */
+ * (jobs/async.h), since a server may take its time. */
 typedef struct {
     unsigned serial; /* the panel's load it is for */
     fr_strs uris;
@@ -210,9 +244,6 @@ typedef struct {
     int first_err;   /* of the first stat that failed */
     int has_space;
     uint64_t space_free, space_total;
-    uint32_t set, clear; /* applying: the bits */
-    int failed, apply_err;
-    char *failed_name;
 } gathered;
 
 static unsigned load_serial;
@@ -238,7 +269,7 @@ static void gathered_free(gathered *g)
     for (int i = 0; g->ents && i < g->uris.n; i++) fr_entry_free(&g->ents[i]);
     free(g->ents);
     fr_strs_free(&g->uris);
-    free(g->where), free(g->failed_name);
+    free(g->where);
     free(g);
 }
 
@@ -339,6 +370,8 @@ void props_close(void)
     free(P.ents);
     fr_strs_free(&P.uris);
     memset(&P, 0, sizeof P);
+    /* a field of the panel's must not keep the keys from the list */
+    ui.focus = 0;
     ui.dirty = 1;
 }
 
@@ -392,14 +425,14 @@ static void grid_mode(char rwx[10], char octal[6])
         if (P.bit[i] == BIT_ON) m |= bit_mask(i);
         if (P.bit[i] == BIT_MIXED) mixed_digit[i / 3] = 1;
     }
-    uint32_t special = P.all_on & 07000;
+    uint32_t special = P.special >= 0 ? (uint32_t)P.special : P.all_on & 07000;
     fr_mode_rwx(m | special, rwx);
     fr_mode_octal(m | special, octal);
     for (int i = 0; i < 9; i++)
         if (P.bit[i] == BIT_MIXED) rwx[i] = '?';
     for (int d = 0; d < 3; d++)
         if (mixed_digit[d]) octal[1 + d] = '?';
-    if ((P.any_on & 07000) != special) octal[0] = '?';
+    if (P.special < 0 && (P.any_on & 07000) != special) octal[0] = '?';
 }
 
 static void special_text(char *out, size_t len)
@@ -410,10 +443,10 @@ static void special_text(char *out, size_t len)
     } names[] = {{04000, "setuid"}, {02000, "setgid"}, {01000, "sticky"}};
     size_t k = 0;
     out[0] = 0;
+    uint32_t any = P.special >= 0 ? (uint32_t)P.special : P.any_on, all = P.special >= 0 ? (uint32_t)P.special : P.all_on;
     for (int i = 0; i < 3; i++) {
-        if (!(P.any_on & names[i].bit)) continue;
-        k += (size_t)snprintf(out + k, len - k, "%s%s%s", k ? ", " : "", names[i].name,
-                              P.all_on & names[i].bit ? "" : " (some)");
+        if (!(any & names[i].bit)) continue;
+        k += (size_t)snprintf(out + k, len - k, "%s%s%s", k ? ", " : "", names[i].name, all & names[i].bit ? "" : " (some)");
         if (k >= len) break;
     }
     if (!out[0]) snprintf(out, len, "None");
@@ -640,21 +673,88 @@ static void dates(void)
     row("Changed", buf);
 }
 
+/* a text field in the value column of a row rh high; its TEXT_* */
+static int body_field(const char *id, fr_text *t, const char *hint, float w, float rh)
+{
+    float h = DP(ui.touch ? 40 : 30);
+    Rectangle r = {L.x + L.lw - DP(8), L.y + (rh - h) / 2, w, h};
+    Rectangle seen = in_body(r);
+    if (seen.height < r.height) {
+        ui_text_box(t->len ? t->buf : hint, (Rectangle){r.x + DP(8), r.y, w - DP(16), h}, 14, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 0);
+        return 0;
+    }
+    return ui_text_field(ui_id(id, 0), t, r, hint);
+}
+
+static int submitted; /* Enter in one of the panel's fields */
+
 static void ownership(void)
 {
     char buf[128];
+    if (!P.editable || !P.all_local || !P.can_set) {
+        if (!P.local) return;
+        section("Ownership");
+        fmt_id(P.info.owner, P.info.uid, buf, sizeof buf);
+        row("Owner", buf);
+        fmt_id(P.info.group, P.info.gid, buf, sizeof buf);
+        row("Group", buf);
+        return;
+    }
     section("Ownership");
-    fmt_id(P.info.owner, P.info.uid, buf, sizeof buf);
-    row("Owner", buf);
-    fmt_id(P.info.group, P.info.gid, buf, sizeof buf);
-    row("Group", buf);
+    float h = fmaxf(row_h(), DP(ui.touch ? 44 : 34)), fw = fminf(DP(220), L.w - L.lw);
+    label("Owner", h);
+    /* giving files away takes root (chown(2)); ferret never asks for it */
+    if (geteuid() == 0) submitted |= body_field("props-owner", &P.owner, P.uid < 0 ? "mixed: keep each" : "", fw, h) & TEXT_SUBMIT;
+    else ui_text_box(P.uid < 0 ? "Mixed" : P.owner_was, (Rectangle){L.x + L.lw, L.y, L.w - L.lw, h}, 14, FONT_REGULAR, theme.text, ALIGN_LEFT, 0);
+    L.y += h;
+    label("Group", h);
+    submitted |= body_field("props-group", &P.group, P.gid < 0 ? "mixed: keep each" : "", fw, h) & TEXT_SUBMIT;
+    L.y += h;
+    float lh = ui_line_height(13);
+    const char *note = geteuid() == 0 ? "A user or group by name or number." : "A group you belong to, by name or number. Only root gives files to another user.";
+    int lines = ui_text_wrapped(note, (Rectangle){L.x + L.lw, L.y, L.w - L.lw, 0}, 13, FONT_REGULAR, theme.text_faint, 1);
+    L.y += lines * lh + DP(4);
 }
+
+static int owner_changed(void) { return strcmp(P.owner.buf, P.owner_was) != 0; }
+static int group_changed(void) { return strcmp(P.group.buf, P.group_was) != 0; }
 
 static int dirty(void)
 {
     for (int i = 0; i < 9; i++)
         if (P.bit[i] != P.orig[i]) return 1;
+    if (P.special >= 0 && (P.special != (int)(P.all_on & 07000) || P.all_on != P.any_on)) return 1;
+    if (P.all_local && (owner_changed() || group_changed())) return 1;
     return P.recursive;
+}
+
+/* one of n choices as a row of pills; the one picked, else -1 */
+static int pills(const char *id, const char *const *labels, int n, int on)
+{
+    float h = DP(ui.touch ? 36 : 28), x = L.x + L.lw - DP(4), y = L.y + (row_h() - h) / 2;
+    int picked = -1;
+    for (int i = 0; i < n; i++) {
+        float w = ui_text_width(labels[i], 13, FONT_REGULAR) + DP(20);
+        Rectangle r = {x, y, w, h};
+        int s;
+        if (ui_clickable(ui_id(id, i), in_body(r), &s)) picked = i;
+        ui_round(r, 14, i == on ? ui_alpha(theme.accent, 0.22f) : s == 2 ? theme.pressed : s ? theme.hover : theme.surface);
+        ui_text_box(labels[i], r, 13, i == on ? FONT_SEMIBOLD : FONT_REGULAR, i == on ? theme.accent : theme.text, ALIGN_CENTER, 0);
+        x += w + DP(6);
+    }
+    return picked;
+}
+
+static int check_row(const char *id, int on, const char *text)
+{
+    Rectangle cell = {L.x + L.lw, L.y, DP(24), DP(ui.touch ? 40 : 32)};
+    Rectangle hit = {cell.x - DP(4), cell.y, L.w - L.lw + DP(4), cell.height};
+    int s, clicked = ui_clickable(ui_id(id, 0), in_body(hit), &s);
+    if (s) ui_round(hit, 6, s == 2 ? theme.pressed : theme.hover);
+    ui_icon(on ? "square-check" : "square", cell, 20, on ? theme.accent : theme.text_dim);
+    ui_text_box(text, (Rectangle){cell.x + DP(32), cell.y, hit.width - DP(36), cell.height}, 14, FONT_REGULAR, theme.text, ALIGN_LEFT, 1);
+    L.y += cell.height;
+    return clicked;
 }
 
 static void permissions(void)
@@ -693,23 +793,44 @@ static void permissions(void)
     }
     char rwx[10], octal[6], buf[64];
     grid_mode(rwx, octal);
-    snprintf(buf, sizeof buf, "%s  %s", octal, rwx);
-    row("Mode", buf);
+    if (enabled) {
+        float h = fmaxf(row_h(), DP(ui.touch ? 44 : 34)), fw = DP(72);
+        unsigned oid = ui_id("props-octal", 0);
+        if (ui.focus != oid) text_set(&P.octal, octal);
+        label("Mode", h);
+        int r = body_field("props-octal", &P.octal, "755", fw, h);
+        uint32_t m;
+        int special;
+        if (r & TEXT_CHANGED && fr_mode_parse_octal(P.octal.buf, &m, &special)) {
+            for (int i = 0; i < 9; i++) P.bit[i] = m & bit_mask(i) ? BIT_ON : BIT_OFF;
+            P.special = special ? (int)(m & 07000) : -1;
+            P.error[0] = 0;
+            grid_mode(rwx, octal);
+        }
+        submitted |= r & TEXT_SUBMIT;
+        ui_text_box(rwx, (Rectangle){L.x + L.lw - DP(8) + fw + DP(12), L.y, L.w - L.lw - fw, h}, 14, FONT_REGULAR, theme.text, ALIGN_LEFT, 0);
+        L.y += h;
+    } else {
+        snprintf(buf, sizeof buf, "%s  %s", octal, rwx);
+        row("Mode", buf);
+    }
     special_text(buf, sizeof buf);
     row("Special", buf);
     if (P.folders && enabled) {
-        Rectangle cell = {L.x + L.lw, L.y, DP(24), DP(ui.touch ? 40 : 32)};
-        Rectangle hit = {cell.x - DP(4), cell.y, L.w - L.lw + DP(4), cell.height};
-        int s;
-        if (ui_clickable(ui_id("props-recursive", 0), in_body(hit), &s)) P.recursive = !P.recursive, P.error[0] = 0;
-        if (s) ui_round(hit, 6, s == 2 ? theme.pressed : theme.hover);
-        ui_icon(P.recursive ? "square-check" : "square", cell, 20, P.recursive ? theme.accent : theme.text_dim);
-        ui_text_box(P.folders == 1 && P.uris.n == 1 ? "Apply to everything inside" : "Apply to everything inside the folders",
-                    (Rectangle){cell.x + DP(32), cell.y, hit.width - DP(36), cell.height}, 14, FONT_REGULAR, theme.text, ALIGN_LEFT, 0);
-        L.y += cell.height;
+        if (check_row("props-recursive", P.recursive,
+                      P.folders == 1 && P.uris.n == 1 ? "Apply to everything inside" : "Apply to everything inside the folders"))
+            P.recursive = !P.recursive, P.error[0] = 0;
         if (P.recursive) {
+            static const char *const only[] = {"Files and folders", "Files only", "Folders only"};
+            label("Bits go to", row_h());
+            int p = pills("props-only", only, 3, (int)P.only);
+            if (p >= 0) P.only = (fr_perm_only)p;
+            L.y += row_h() + DP(4);
+            if (check_row("props-exec-x", P.exec_x, "Execute only for folders and files already executable (X)")) P.exec_x = !P.exec_x;
             float lh = ui_line_height(13);
-            const char *note = "Files get exactly these; folders also get execute wherever they get read.";
+            const char *note = P.only == PERM_FILES ? "Folders keep their bits; files get exactly these."
+                               : P.only == PERM_FOLDERS ? "Files keep their bits; folders inside also get execute wherever they get read."
+                                                        : "Files get exactly these; folders inside also get execute wherever they get read.";
             int lines = ui_text_wrapped(note, (Rectangle){L.x + L.lw, L.y, L.w - L.lw, 0}, 13, FONT_REGULAR, theme.text_faint, 1);
             L.y += lines * lh + DP(4);
         }
@@ -750,9 +871,6 @@ static void filesystem(void)
 
 /* ---- applying ---- */
 
-static void apply_work(void *arg);
-static void applied(void *arg);
-
 static void apply(void)
 {
     uint32_t set = 0, clear = 0;
@@ -760,70 +878,31 @@ static void apply(void)
         if (P.bit[i] == BIT_ON) set |= bit_mask(i);
         if (P.bit[i] == BIT_OFF) clear |= bit_mask(i);
     }
+    if (P.special >= 0) set |= (uint32_t)P.special & 07000, clear |= ~(uint32_t)P.special & 07000;
+    fr_perm_change c = {.set = set, .clear = clear, .recursive = P.recursive && P.folders, .uid = -1, .gid = -1};
+    if (c.recursive) c.only = P.only, c.exec_x = P.exec_x;
+    uint32_t id;
+    if (P.all_local && owner_changed() && P.owner.len) {
+        if (fr_owner_lookup(P.owner.buf, 0, &id)) {
+            snprintf(P.error, sizeof P.error, "There is no user \"%.200s\" here", P.owner.buf);
+            return;
+        }
+        c.uid = id;
+    }
+    if (P.all_local && group_changed() && P.group.len) {
+        if (fr_owner_lookup(P.group.buf, 1, &id)) {
+            snprintf(P.error, sizeof P.error, "There is no group \"%.200s\" here", P.group.buf);
+            return;
+        }
+        c.gid = id;
+    }
     fr_strs targets = {0};
     for (int i = 0; i < P.uris.n; i++)
         if (P.ents[i].name && !P.ents[i].is_link) FR_PUSH(targets, fr_strdup(P.uris.v[i]));
-    if (P.recursive && P.folders) {
-        fr_job_submit_chmod(&targets, set, clear);
-        fr_strs_free(&targets);
-        props_close();
-        return;
-    }
+    /* as a job, off the window thread for any storage: it shows its progress, says what failed and can be undone */
+    if (targets.n) fr_job_submit_perms(&targets, &c);
     fr_strs_free(&targets);
-    gathered *g = gathered_new();
-    g->set = set, g->clear = clear;
-    g->ents = fr_realloc(NULL, sizeof *g->ents * (size_t)P.uris.n);
-    for (int i = 0; i < P.uris.n; i++) {
-        g->ents[i] = (fr_entry){0};
-        if (P.ents[i].name) g->ents[i] = P.ents[i], g->ents[i].name = fr_strdup(P.ents[i].name);
-    }
-    if (fr_uri_local(P.uris.v[0])) {
-        apply_work(g);
-        applied(g);
-        return;
-    }
-    P.applying = 1;
-    fr_async_run(apply_work, applied, g);
-}
-
-static void apply_work(void *arg)
-{
-    gathered *g = arg;
-    for (int i = 0; i < g->uris.n; i++) {
-        fr_entry *e = &g->ents[i];
-        if (!e->name || e->is_link) continue;
-        int rc = fr_vfs_set_mode(g->uris.v[i], fr_mode_edit(e->mode, g->set, g->clear, 0));
-        if (rc && !g->failed++) g->apply_err = rc, g->failed_name = fr_strdup(e->name);
-    }
-}
-
-static void applied(void *arg)
-{
-    gathered *g = arg;
-    int targets = 0;
-    for (int i = 0; i < g->uris.n; i++) targets += g->ents[i].name && !g->ents[i].is_link;
-    if (!P.open || g->serial != load_serial) {
-        if (g->failed) ui_toast("%d %s could not be changed", g->failed, g->failed == 1 ? "item" : "items");
-        else ui_toast("Permissions changed");
-        gathered_free(g);
-        return;
-    }
-    P.applying = 0;
-    int failed = g->failed, first_err = g->apply_err;
-    const char *first_name = g->failed_name;
-    if (failed == 1 && targets == 1)
-        snprintf(P.error, sizeof P.error, "Could not change the permissions: %s", fr_vfs_error(first_err));
-    else if (failed)
-        snprintf(P.error, sizeof P.error, "%d of %d items could not be changed. %s: %s", failed, targets, first_name, fr_vfs_error(first_err));
-    else {
-        P.error[0] = 0;
-        ui_toast("Permissions changed");
-    }
-    if (failed && (first_err == -EPERM || first_err == -EACCES) && P.uris.n == 1 && P.local)
-        strncat(P.error, " (only the owner or root can change them)", sizeof P.error - strlen(P.error) - 1);
-    gathered_free(g);
-    load();
-    browser_reload();
+    props_close();
 }
 
 /* ---- the panel ---- */
@@ -877,6 +956,7 @@ int props_draw(void)
     L.lw = fminf(DP(124), L.w * 0.34f);
     L.top = L.y = body.y + DP(8) - P.scroll.offset;
     ui_clip_begin(body);
+    submitted = 0;
     if (!P.ents) {
         ui_icon("loader-circle", (Rectangle){L.x, L.y, DP(24), row_h()}, 16, theme.text_dim);
         ui_text_box("Loading...", (Rectangle){L.x + DP(32), L.y, L.w - DP(32), row_h()}, 14, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 0);
@@ -884,10 +964,8 @@ int props_draw(void)
     } else {
         general();
         checksums();
-        if (P.local) {
-            dates();
-            ownership();
-        }
+        if (P.local) dates();
+        ownership();
         permissions();
         filesystem();
     }
@@ -897,11 +975,11 @@ int props_draw(void)
 
     int open = 1, changed = dirty();
     float by = card.y + h - DP(16) - bh, aw = ui_button_width("Apply"), cw = ui_button_width("Close");
-    int can_apply = changed && P.can_set && !P.applying;
+    int can_apply = changed && P.can_set;
     if (P.editable) apply_button((Rectangle){card.x + w - pad - aw, by, aw, bh}, can_apply);
     float cx = card.x + w - pad - (P.editable ? aw + DP(8) : 0) - cw;
     if (ui_button(ui_id("props-close", 0), (Rectangle){cx, by, cw, bh}, "Close", 0)) open = 0;
-    if (P.open && can_apply && (ui_key(KEY_ENTER, 0) || ui_key(KEY_KP_ENTER, 0))) apply();
+    if (P.open && can_apply && (submitted || ui_key(KEY_ENTER, 0) || ui_key(KEY_KP_ENTER, 0))) apply();
     if (ui_key(KEY_ESCAPE, 0) || ui_key(KEY_BACK, 0)) open = 0;
     if (ui_live() && ui.pressed && !changed && !CheckCollisionPointRec(ui.mouse, card)) open = 0;
     ui_layer(0);

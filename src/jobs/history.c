@@ -14,6 +14,12 @@ void fr_steps_add_chmod(fr_steps *s, const char *a, uint32_t old_mode, uint32_t 
     FR_PUSH(*s, st);
 }
 
+void fr_steps_add_chown(fr_steps *s, const char *a, uint32_t old_uid, uint32_t old_gid, uint32_t uid, uint32_t gid)
+{
+    fr_step st = {.kind = STEP_CHOWN, .a = fr_strdup(a), .uid = uid, .gid = gid, .old_uid = old_uid, .old_gid = old_gid};
+    FR_PUSH(*s, st);
+}
+
 void fr_steps_free(fr_steps *s)
 {
     for (int i = 0; i < s->n; i++) free(s->v[i].a), free(s->v[i].b);
@@ -53,6 +59,20 @@ fr_steps fr_steps_inverse(const fr_steps *s)
         case STEP_UNTRASH: inv.kind = STEP_TRASH, inv.a = fr_strdup(st->a); break;
         case STEP_CHMOD:
             inv.kind = STEP_CHMOD, inv.a = fr_strdup(st->a), inv.mode = st->old_mode, inv.old_mode = st->mode;
+            break;
+        case STEP_REPLACED:
+        case STEP_UNREPLACED:
+            inv.kind = st->kind == STEP_REPLACED ? STEP_UNREPLACED : STEP_REPLACED;
+            inv.a = fr_strdup(st->a), inv.b = fr_strdup(st->b);
+            break;
+        case STEP_LINKED:
+        case STEP_UNLINKED:
+            inv.kind = st->kind == STEP_LINKED ? STEP_UNLINKED : STEP_LINKED;
+            inv.a = fr_strdup(st->a), inv.b = fr_strdup(st->b);
+            break;
+        case STEP_CHOWN:
+            inv.kind = STEP_CHOWN, inv.a = fr_strdup(st->a);
+            inv.uid = st->old_uid, inv.gid = st->old_gid, inv.old_uid = st->uid, inv.old_gid = st->gid;
             break;
         }
         FR_PUSH(r, inv);

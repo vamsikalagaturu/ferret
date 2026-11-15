@@ -105,6 +105,8 @@ static void rename_items(void)
     if (ui_menu_item("Find and replace in names", "pencil", -1)) ops_bulk_rename(0);
 }
 
+static int link_here(void) { return !ui.touch && links_ready() && br.uri && fr_uri_local(br.uri) && !br.results; }
+
 static void draw_menus(void)
 {
     if (ui_menu_begin(app.menu_more)) {
@@ -155,8 +157,11 @@ static void draw_menus(void)
         if (k >= 0) kinds_set((fr_kind_filter)(k + 1));
         ui_menu_separator();
         tabs_menu_items();
+        compare_menu_items();
         ui_menu_separator();
         if (ui_menu_item("Show hidden", "eye", br.show_hidden)) br.show_hidden = !br.show_hidden, browser_rebuild_view();
+        if (!ui.touch && ui_menu_item("Show git status", "list-checks", settings.git_status)) settings.git_status = !settings.git_status;
+        if (link_here() && ui_menu_item("Paste as link", "link", -1)) links_paste(-1);
         if (ui_menu_item("Search names below", "search", -1)) search_prompt(0);
         if (ui_menu_item("Search inside files", "file-text", -1)) search_prompt(1);
         if (ui_menu_item("Find duplicates below", "file-stack", -1)) dupes_start();
@@ -194,6 +199,7 @@ static void draw_menus(void)
         if (ui_menu_item("Cut", "scissors", -1)) ops_copy(1);
         if (app_split() && ui_menu_item("Copy to the other pane", "copy", -1)) ops_to_other_pane(0);
         if (app_split() && ui_menu_item("Move to the other pane", "scissors", -1)) ops_to_other_pane(1);
+        if (!ui.touch && br.uri && fr_uri_local(br.uri) && ui_menu_item("Copy as link", "link", -1)) links_yank();
         if (it && it->e.is_dir && br.nselected <= 1 && ui_menu_item("Open in a new tab", "plus", -1)) view_open_in_tab(br.cursor);
         if (it && it->e.is_dir && ui_menu_item(sizes_running() ? "Stop measuring folders" : "Measure the size", "ruler", -1)) sizes_measure(0);
         if (br.nselected == 1 && ui_menu_item("Rename", "pencil", -1)) ops_rename_start();
@@ -217,6 +223,11 @@ static void draw_menus(void)
         if (ui_menu_item("New folder", "folder-plus", -1)) ops_new_folder_start();
         if (ui_menu_item("New file", "file-plus", -1)) ops_new_start();
         if (clip.uris.n && ui_menu_item("Paste", "clipboard-paste", -1)) ops_paste();
+        if (link_here()) {
+            if (ui_menu_item("Paste as link", "link", -1)) links_paste(-1);
+            if (ui_menu_item(settings.relative_links ? "Paste as absolute link" : "Paste as relative link", "link", -1))
+                links_paste(!settings.relative_links);
+        }
         if (ui_menu_item("Select all", "check-check", -1)) browser_select_all();
         if (br.uri) {
             int fav = favorite_index(br.uri) >= 0;
@@ -308,6 +319,13 @@ static const char *const shortcuts[][2] = {
     {"middle click", "a folder: open it in a new tab; a tab: close it"},
     {"F3", "split view: two panes side by side, or back to one"},
     {"Tab", "the keys to the other pane"}, {"F5 / F6", "split view: copy / move to the other pane"},
+    {"=", "compare the panes: tints and chips for only here, newer, older, differs"},
+    {"+", "select what differs from the other pane"},
+    {"> / <", "sync: copy what is missing or newer to the right / left pane (shows what first)"},
+    {NULL, "Links, permissions, git"},
+    {"yl", "take the targets to link to"},     {"P", "make links here to them (relative, see settings)"},
+    {"Alt+Enter", "properties: permissions, owner and group of the selection"},
+    {"M S U C", "git: modified, staged, untracked, conflict; ignored is dimmed"},
     {NULL, "Disks"},
     {"h / l, arrows", "previous / next partition"}, {"j / k, arrows", "next / previous disk"},
     {"0 / $", "first / last partition"},   {"gg / G", "first / last disk"},
@@ -399,7 +417,8 @@ static int frame(void)
         ui_redraw_in(0.5);
         return 0;
     }
-    int modal = ops_dialog_open() || connect_dialog_open() || ui_menu_is_open() || app.help_open || dview_modal() || bookmarks_panel_is_open();
+    int modal = ops_dialog_open() || connect_dialog_open() || ui_menu_is_open() || app.help_open || dview_modal() || bookmarks_panel_is_open() ||
+                compare_dialog_open();
     Rectangle s = ui.safe;
     if (app_wide()) {
         float sw = DP(240);
@@ -417,6 +436,7 @@ static int frame(void)
         list.y += th, list.height -= th;
         list.height -= ops_draw_jobs(list);
         list.height -= draw_paste_bar(list);
+        list.height -= compare_bar_draw(list);
         panes_draw(list);
         const char *chord = keys_pending();
         if (*chord) {
@@ -447,6 +467,7 @@ static int frame(void)
     }
     draw_menus();
     ops_draw_dialogs();
+    compare_draw_dialog();
     connect_draw_dialogs();
     draw_help();
     bookmarks_draw(list);
@@ -473,6 +494,8 @@ static void between_frames(int keys)
     disks_poll();
     dview_poll();
     browser_poll();
+    compare_poll();
+    git_poll();
     settings_poll();
 }
 

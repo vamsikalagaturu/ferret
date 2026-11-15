@@ -589,7 +589,7 @@ void ops_poll_jobs(void)
         }
         changed = 1;
         static const char *done[] = {"Copied", "Moved", "Deleted", "Moved to the trash", "Changed the permissions of",
-                                     "Extracted", "Compressed", "Renamed", "Made", "Did"};
+                                     "Extracted", "Compressed", "Renamed", "Made", "Did", "Opened", "Synced", "Linked"};
         if (undo_job_done(&st[i])) {
         } else if (st[i].state == JOB_CANCELLED) ui_toast("Cancelled");
         else if (st[i].failed) {
@@ -640,12 +640,12 @@ float ops_draw_jobs(Rectangle area)
     ui_rect(r, theme.surface);
     ui_hline(r.x, r.y, r.width, theme.border);
     static const char *verbs[] = {"Copying", "Moving", "Deleting", "Moving to the trash", "Changing the permissions of",
-                                  "Extracting", "Compressing", "Renaming", "Making"};
+                                  "Extracting", "Compressing", "Renaming", "Making", "", "Opening", "Syncing", "Linking"};
     char line[640];
     const char *what = j->items == 1 && j->current[0] ? j->current : NULL;
     if (j->kind == JOB_FETCH) snprintf(line, sizeof line, "Opening %s", j->dest_name);
     else if (j->kind == JOB_RENAME || j->kind == JOB_CREATE) snprintf(line, sizeof line, "%s %s", verbs[j->kind], j->dest_name);
-    else if (j->kind <= JOB_MOVE || j->kind == JOB_EXTRACT || j->kind == JOB_COMPRESS) {
+    else if (j->kind <= JOB_MOVE || j->kind == JOB_EXTRACT || j->kind == JOB_COMPRESS || j->kind == JOB_SYNC || j->kind == JOB_LINK) {
         if (what) snprintf(line, sizeof line, "%s %s to %s", verbs[j->kind], what, j->dest_name);
         else snprintf(line, sizeof line, "%s %d items to %s", verbs[j->kind], j->items, j->dest_name);
     } else if (j->kind == JOB_STEPS) snprintf(line, sizeof line, "%s %s", j->what, what ? what : "");

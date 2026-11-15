@@ -13,6 +13,11 @@ typedef enum {
     STEP_TRASH,   /* a went to the trash */
     STEP_UNTRASH, /* a came back from the trash */
     STEP_CHMOD,   /* a's permission bits went from old_mode to mode */
+    STEP_REPLACED,   /* what was at b went to the trash, and a was copied there */
+    STEP_UNREPLACED, /* b, still the copy of a, was removed and what the trash had there came back */
+    STEP_LINKED,     /* a was made, a symbolic link to b (as written in it) */
+    STEP_UNLINKED,   /* a, a symbolic link to b, was removed */
+    STEP_CHOWN,      /* a's owner and group went from old_uid:old_gid to uid:gid */
 } fr_step_kind;
 
 typedef struct {
@@ -21,6 +26,7 @@ typedef struct {
     int is_dir;
     int may_remove; /* STEP_TRASH: where there is no trash, removing a when it is empty will do */
     uint32_t mode, old_mode;
+    uint32_t uid, gid, old_uid, old_gid;
 } fr_step;
 
 typedef struct {
@@ -30,6 +36,7 @@ typedef struct {
 
 void fr_steps_add(fr_steps *s, fr_step_kind kind, const char *a, const char *b);
 void fr_steps_add_chmod(fr_steps *s, const char *a, uint32_t old_mode, uint32_t mode);
+void fr_steps_add_chown(fr_steps *s, const char *a, uint32_t old_uid, uint32_t old_gid, uint32_t uid, uint32_t gid);
 void fr_steps_free(fr_steps *s);
 fr_steps fr_steps_copy(const fr_steps *s);
 /* the steps that take back s: reversed, each turned around (a copy goes to the trash, a creation too) */

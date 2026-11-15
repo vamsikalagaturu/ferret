@@ -202,8 +202,10 @@ typedef struct {
     char *last_folder, *start_folder; /* URIs, NULL when not set */
     fr_strs last_tabs; /* URIs: the tabs' folders when ferret last ran with more than one */
     fr_bookmarks bookmarks; /* [bookmarks]: URIs by key */
-    fr_strs recent;    /* URIs of the folders visited last, newest first, no passwords (core/recent.h) */
-    int scheme;        /* SCHEME_*, [theme] scheme */
+    fr_strs recent;     /* URIs of the folders visited last, newest first, no passwords (core/recent.h) */
+    int scheme;         /* SCHEME_*, [theme] scheme */
+    int git_status;     /* git's marks in folders inside a work tree (desktop) */
+    int relative_links; /* links made relative to their folder, else absolute */
 } fr_settings;
 enum { SCHEME_DARK, SCHEME_LIGHT, SCHEME_SYSTEM };
 extern fr_settings settings;
@@ -373,6 +375,33 @@ void trash_empty(void);   /* asks first */
 
 /* ---- files dropped on the window (drop.c), between frames ---- */
 void drop_poll(void);
+
+/* ---- the split view's panes compared, and synced (compare.c) ---- */
+int compare_on(void);
+void compare_toggle(void);             /* marks what differs between the panes, or stops */
+void compare_select_differences(void); /* in the pane with the keys */
+void compare_sync(int to_right);       /* a preview of what copying across does, then the job */
+void compare_poll(void);               /* between frames: results, and comparing again when a pane changed */
+int compare_state(const char *name);   /* br's item's fr_cmp_state (jobs/compare.h); -1 when not compared */
+float compare_bar_draw(Rectangle area); /* the bar at the bottom of area while comparing; its height */
+int compare_dialog_open(void);
+void compare_draw_dialog(void);
+void compare_menu_items(void);
+
+/* ---- git's view of the folder, on the desktop (git.c) ---- */
+void git_poll(void);              /* between frames: runs git status for the panes shown, takes what it said */
+int git_flags(const char *name);  /* br's item's GIT_* (jobs/gitstatus.h), 0 none */
+
+/* ---- the marks of compare and git on rows and tiles (marks.c) ---- */
+void marks_tint(const fr_item *it, Rectangle r, float radius); /* behind the row; radius 0 square */
+/* right-aligned in r, leaving keep of it (the compare chip goes first): the width they took */
+float marks_chips(const fr_item *it, Rectangle r, float keep);
+int marks_dimmed(const fr_item *it);                           /* git ignores it */
+
+/* ---- symbolic links (links.c) ---- */
+void links_yank(void);          /* yl: the targets, to link to */
+void links_paste(int relative); /* links here to them (else to the clipboard's); 1, 0, or -1 as the settings say */
+int links_ready(void);
 
 /* ---- bookmarks (bookmarks.c): m<key> marks the folder, '<key> goes there ('' to the last folder), "<key> unmarks ---- */
 void bookmark_key(int prefix, int key); /* the chord prefix (m ' ") and the key after it */

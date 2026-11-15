@@ -196,6 +196,44 @@ int fr_utf8_encode(int cp, char out[4])
     return 4;
 }
 
+/* the next path component of *p (skipping slashes): its start, length in *len; NULL at the end */
+static const char *component(const char **p, size_t *len)
+{
+    while (**p == '/') (*p)++;
+    if (!**p) return NULL;
+    const char *start = *p;
+    while (**p && **p != '/') (*p)++;
+    *len = (size_t)(*p - start);
+    return start;
+}
+
+char *fr_path_relative(const char *from_dir, const char *to)
+{
+    const char *a = from_dir, *b = to;
+    for (;;) {
+        const char *a0 = a, *b0 = b;
+        size_t al = 0, bl = 0;
+        const char *ca = component(&a, &al), *cb = component(&b, &bl);
+        if (!ca || !cb || al != bl || memcmp(ca, cb, al)) {
+            a = a0, b = b0;
+            break;
+        }
+    }
+    size_t up = 0, len;
+    for (const char *p = a; component(&p, &len);) up++;
+    while (*b == '/') b++;
+    size_t rest = strlen(b);
+    while (rest && b[rest - 1] == '/') rest--;
+    if (!up && !rest) return fr_strdup(".");
+    char *out = fr_realloc(NULL, up * 3 + rest + 1), *o = out;
+    for (size_t i = 0; i < up; i++) memcpy(o, "../", 3), o += 3;
+    memcpy(o, b, rest);
+    o += rest;
+    if (!rest && o > out) o--;
+    *o = 0;
+    return out;
+}
+
 double fr_now(void)
 {
     struct timespec ts;
