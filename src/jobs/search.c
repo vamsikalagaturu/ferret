@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #define BLOCK (64 * 1024)
@@ -168,6 +169,161 @@ int fr_search_file(const char *uri, const char *term)
     return r;
 }
 
+/* ---- the name index ---- */
+
+/* Every path below one local root, collected once by a thread of its own (fr_search_index); a name search of that
+ * root then scores the paths in memory instead of walking the disk per term, and looks up size and date only for
+ * the best FR_SEARCH_SHOWN. Guarded by lock, grown while it is built; grew signals each batch. */
+static struct {
+    char *root;
+    int hidden, building, done, stop;
+    struct ix_entry {
+        char *rel;
+        int base; /* where the name starts in rel */
+    } *v;
+    int n, cap;
+    pthread_t thread;
+    int have_thread;
+} ix;
+static pthread_cond_t grew = PTHREAD_COND_INITIALIZER;
+
+static void ix_walk(int dirfd, const char *rel, int at_slash);
+
+static void ix_add(const char *rel, int base)
+{
+    pthread_mutex_lock(&lock);
+    if (ix.n == ix.cap) ix.cap = ix.cap ? ix.cap * 2 : 4096, ix.v = fr_realloc(ix.v, sizeof *ix.v * (size_t)ix.cap);
+    ix.v[ix.n++] = (struct ix_entry){fr_strdup(rel), base};
+    if (!(ix.n & 1023)) pthread_cond_broadcast(&grew);
+    pthread_mutex_unlock(&lock);
+}
+
+/* the kernel's own trees, not files anyone looks for, and endless */
+static int pseudo(const char *rel) { return !strcmp(rel, "proc") || !strcmp(rel, "sys") || !strcmp(rel, "dev") || !strcmp(rel, "run"); }
+
+static void ix_walk(int dirfd, const char *rel, int at_slash)
+{
+    DIR *d = fdopendir(dirfd);
+    if (!d) {
+        close(dirfd);
+        return;
+    }
+    struct dirent *de;
+    while (!__atomic_load_n(&ix.stop, __ATOMIC_RELAXED) && (de = readdir(d))) {
+        const char *name = de->d_name;
+        if (!strcmp(name, ".") || !strcmp(name, "..") || (name[0] == '.' && !ix.hidden)) continue;
+        int type = de->d_type;
+        if (type == DT_UNKNOWN) {
+            struct stat st;
+            if (fstatat(dirfd, name, &st, AT_SYMLINK_NOFOLLOW)) continue;
+            type = S_ISDIR(st.st_mode) ? DT_DIR : DT_REG;
+        }
+        char *krel = rel ? fr_format("%s/%s", rel, name) : fr_strdup(name);
+        ix_add(krel, rel ? (int)strlen(rel) + 1 : 0);
+        if (type == DT_DIR && !(at_slash && pseudo(name))) {
+            int fd = openat(dirfd, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+            if (fd >= 0) ix_walk(fd, krel, 0);
+        }
+        free(krel);
+    }
+    closedir(d);
+}
+
+static void *ix_run(void *arg)
+{
+    const char *path = arg;
+    int fd = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (fd >= 0) ix_walk(fd, NULL, !strcmp(path, "/"));
+    pthread_mutex_lock(&lock);
+    ix.building = 0, ix.done = !ix.stop;
+    pthread_cond_broadcast(&grew);
+    pthread_mutex_unlock(&lock);
+    return NULL;
+}
+
+void fr_search_index_drop(void)
+{
+    __atomic_store_n(&ix.stop, 1, __ATOMIC_RELAXED);
+    if (ix.have_thread) pthread_join(ix.thread, NULL);
+    ix.have_thread = 0;
+    for (int i = 0; i < ix.n; i++) free(ix.v[i].rel);
+    free(ix.v), free(ix.root);
+    ix = (typeof(ix)){0};
+}
+
+void fr_search_index(const char *root, int hidden)
+{
+    const char *path = fr_uri_local(root);
+    if (!path) return;
+    fr_search_stop();
+    fr_search_index_drop();
+    ix.root = fr_strdup(root), ix.hidden = hidden, ix.building = 1;
+    if (pthread_create(&ix.thread, NULL, ix_run, (void *)fr_uri_local(ix.root))) ix.building = 0;
+    else ix.have_thread = 1;
+}
+
+static int ix_serves(const search *s)
+{
+    return !s->content && ix.root && !strcmp(ix.root, s->root) && ix.hidden == s->hidden && (ix.building || ix.done);
+}
+
+typedef struct {
+    int i, score;
+} scored;
+
+static int by_score(const void *a, const void *b)
+{
+    const scored *x = a, *y = b;
+    return x->score != y->score ? y->score - x->score : x->i - y->i;
+}
+
+/* scores the index as it grows (waiting for the build), then keeps the best FR_SEARCH_SHOWN */
+static void ix_search(search *s)
+{
+    int glob = strpbrk(s->term, "*?") != NULL, at = 0, total = 0;
+    struct {
+        scored *v;
+        int n, cap;
+    } hits = {0};
+    for (;;) {
+        pthread_mutex_lock(&lock);
+        while (at == ix.n && ix.building && !cancelled()) {
+            struct timespec t;
+            clock_gettime(CLOCK_REALTIME, &t);
+            t.tv_nsec += 100 * 1000000L;
+            if (t.tv_nsec >= 1000000000L) t.tv_sec++, t.tv_nsec -= 1000000000L;
+            pthread_cond_timedwait(&grew, &lock, &t);
+        }
+        /* in batches under the lock, as the build may move the array; it waits a few milliseconds at most */
+        int end = ix.n < at + 8192 ? ix.n : at + 8192, more = ix.building || end < ix.n;
+        for (; at < end; at++) {
+            const char *name = ix.v[at].rel + ix.v[at].base;
+            int score = glob ? (fr_glob_match(s->term, name) ? 1 : -1) : fr_fuzzy_score(s->term, name);
+            if (score < 0) continue;
+            total++;
+            FR_PUSH(hits, ((scored){at, score}));
+        }
+        status.files = ix.n;
+        pthread_mutex_unlock(&lock);
+        if (cancelled() || !more) break;
+        wake(0);
+    }
+    if (!cancelled() && hits.n) {
+        qsort(hits.v, (size_t)hits.n, sizeof *hits.v, by_score);
+        for (int k = 0; k < hits.n && k < FR_SEARCH_SHOWN && !cancelled(); k++) {
+            pthread_mutex_lock(&lock);
+            char *rel = fr_strdup(ix.v[hits.v[k].i].rel);
+            pthread_mutex_unlock(&lock);
+            add(s, rel);
+            free(rel);
+        }
+        pthread_mutex_lock(&lock);
+        status.found = total;
+        pthread_mutex_unlock(&lock);
+    }
+    free(hits.v);
+}
+
 /* ---- walking ---- */
 
 static char *child_rel(const char *rel, const char *name) { return rel ? fr_format("%s/%s", rel, name) : fr_strdup(name); }
@@ -193,9 +349,6 @@ static void walk_vfs(search *s, const char *uri, const char *rel)
     }
     fr_entries_free(&kids);
 }
-
-/* the kernel's own trees, not files anyone looks for, and endless */
-static int pseudo(const char *rel) { return !strcmp(rel, "proc") || !strcmp(rel, "sys") || !strcmp(rel, "dev") || !strcmp(rel, "run"); }
 
 static void walk_local(search *s, int dirfd, const char *rel, int at_slash)
 {
@@ -239,7 +392,11 @@ static void *run(void *arg)
 {
     search *s = arg;
     const char *path = fr_uri_local(s->root);
-    if (path) {
+    pthread_mutex_lock(&lock);
+    int indexed = ix_serves(s);
+    pthread_mutex_unlock(&lock);
+    if (indexed) ix_search(s);
+    else if (path) {
         int fd = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
         if (fd >= 0) walk_local(s, fd, NULL, !strcmp(path, "/"));
         else count(0, 0, 1);
