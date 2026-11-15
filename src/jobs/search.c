@@ -189,6 +189,8 @@ typedef struct {
 } ix_index;
 
 static ix_index *ix_live, *ix_next; /* searched; being built to replace it (NULL when none) */
+static void ix_save(const ix_index *x);
+static void ix_release(ix_index *x);
 static pthread_cond_t grew = PTHREAD_COND_INITIALIZER;
 
 static void ix_free(ix_index *x)
@@ -209,44 +211,77 @@ static void ix_add(ix_index *x, const char *rel, int base)
 /* the kernel's own trees, not files anyone looks for, and endless */
 static int pseudo(const char *rel) { return !strcmp(rel, "proc") || !strcmp(rel, "sys") || !strcmp(rel, "dev") || !strcmp(rel, "run"); }
 
-/* Android's internal storage keeps apps' data and caches in Android/ (most of its entries, and slow to list through
- * the storage layer); the everywhere search leaves it out, and a search from inside it walks it */
-static int skipped(const char *name, int top)
+/* The walk reads folders on IX_WORKERS threads at once: each read waits on the storage (on Android, a round trip
+ * through its FUSE layer), so one thread at a time leaves the walk waiting, not working. Measured on a phone's
+ * internal storage (44k entries, 2026-11-15): 1 thread 8.5-9.8 s, 2 to 8 threads 0.8-2.5 s with no clear best. The
+ * folders still to read are a shared stack; a worker that finds it empty waits until no worker is reading. */
+#define IX_WORKERS 4
+
+typedef struct {
+    ix_index *x;
+    int rootfd, at_slash;
+    pthread_mutex_t m;
+    pthread_cond_t more;
+    char **todo; /* folders below the root still to read; NULL is the root itself */
+    int ntodo, cap, reading;
+} ix_walk_state;
+
+static void ix_push(ix_walk_state *w, char *rel)
 {
-#ifdef __ANDROID__
-    return top && !strcmp(name, "Android");
-#else
-    (void)name, (void)top;
-    return 0;
-#endif
+    if (w->ntodo == w->cap) w->cap = w->cap ? w->cap * 2 : 256, w->todo = fr_realloc(w->todo, sizeof *w->todo * (size_t)w->cap);
+    w->todo[w->ntodo++] = rel;
 }
 
-static void ix_walk(ix_index *x, int dirfd, const char *rel, int at_slash)
+static void ix_read(ix_walk_state *w, const char *rel)
 {
-    DIR *d = fdopendir(dirfd);
+    ix_index *x = w->x;
+    int fd = rel ? openat(w->rootfd, rel, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) : dup(w->rootfd);
+    DIR *d = fd >= 0 ? fdopendir(fd) : NULL;
     if (!d) {
-        close(dirfd);
+        if (fd >= 0) close(fd);
         return;
     }
     struct dirent *de;
     while (!__atomic_load_n(&x->stop, __ATOMIC_RELAXED) && (de = readdir(d))) {
         const char *name = de->d_name;
-        if (!strcmp(name, ".") || !strcmp(name, "..") || (name[0] == '.' && !x->hidden) || skipped(name, !rel)) continue;
+        if (!strcmp(name, ".") || !strcmp(name, "..") || (name[0] == '.' && !x->hidden)) continue;
         int type = de->d_type;
         if (type == DT_UNKNOWN) {
             struct stat st;
-            if (fstatat(dirfd, name, &st, AT_SYMLINK_NOFOLLOW)) continue;
+            if (fstatat(dirfd(d), name, &st, AT_SYMLINK_NOFOLLOW)) continue;
             type = S_ISDIR(st.st_mode) ? DT_DIR : DT_REG;
         }
         char *krel = rel ? fr_format("%s/%s", rel, name) : fr_strdup(name);
         ix_add(x, krel, rel ? (int)strlen(rel) + 1 : 0);
-        if (type == DT_DIR && !(at_slash && pseudo(name))) {
-            int fd = openat(dirfd, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-            if (fd >= 0) ix_walk(x, fd, krel, 0);
-        }
-        free(krel);
+        if (type == DT_DIR && !(!rel && w->at_slash && pseudo(name))) {
+            pthread_mutex_lock(&w->m);
+            ix_push(w, krel);
+            pthread_cond_signal(&w->more);
+            pthread_mutex_unlock(&w->m);
+        } else free(krel);
     }
     closedir(d);
+}
+
+static void *ix_worker(void *arg)
+{
+    ix_walk_state *w = arg;
+    pthread_mutex_lock(&w->m);
+    for (;;) {
+        while (!w->ntodo && w->reading) pthread_cond_wait(&w->more, &w->m);
+        if (!w->ntodo || __atomic_load_n(&w->x->stop, __ATOMIC_RELAXED)) break;
+        char *rel = w->todo[--w->ntodo];
+        w->reading++;
+        pthread_mutex_unlock(&w->m);
+        ix_read(w, rel);
+        free(rel);
+        pthread_mutex_lock(&w->m);
+        w->reading--;
+        pthread_cond_broadcast(&w->more);
+    }
+    pthread_cond_broadcast(&w->more);
+    pthread_mutex_unlock(&w->m);
+    return NULL;
 }
 
 /* builds x; when it replaces a finished index, that one goes once no search reads it */
@@ -254,10 +289,27 @@ static void *ix_run(void *arg)
 {
     ix_index *x = arg;
     const char *path = fr_uri_local(x->root);
-    int fd = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-    if (fd >= 0) ix_walk(x, fd, NULL, !strcmp(path, "/"));
+    ix_walk_state w = {.x = x, .rootfd = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC), .at_slash = !strcmp(path, "/")};
+    if (w.rootfd >= 0) {
+        pthread_mutex_init(&w.m, NULL);
+        pthread_cond_init(&w.more, NULL);
+        ix_push(&w, NULL);
+        pthread_t t[IX_WORKERS];
+        int started = 0;
+        for (int i = 0; i < IX_WORKERS; i++)
+            if (!pthread_create(&t[started], NULL, ix_worker, &w)) started++;
+        if (!started) ix_worker(&w);
+        for (int i = 0; i < started; i++) pthread_join(t[i], NULL);
+        for (int i = 0; i < w.ntodo; i++) free(w.todo[i]);
+        free(w.todo);
+        pthread_cond_destroy(&w.more);
+        pthread_mutex_destroy(&w.m);
+        close(w.rootfd);
+    }
     ix_index *old = NULL;
     pthread_mutex_lock(&lock);
+    /* a root that could not be opened gives no index rather than an empty one in place of a good one */
+    if (w.rootfd < 0) x->stop = 1;
     x->building = 0, x->done = !x->stop;
     if (x->stop) {
         if (ix_next == x) ix_next = NULL;
@@ -267,18 +319,88 @@ static void *ix_run(void *arg)
         old = ix_live, ix_live = x, ix_next = NULL;
         if (old) old->retired = 1;
     }
-    int free_x = x->retired && !x->users, free_old = old && !old->users;
+    int free_x = x->retired && !x->users, free_old = old && !old->users, save = x->done && !x->retired;
+    if (save) x->users++;
     pthread_cond_broadcast(&grew);
     pthread_mutex_unlock(&lock);
     if (free_old) ix_free(old);
     if (free_x) ix_free(x);
+    if (save) {
+        ix_save(x);
+        ix_release(x);
+    }
     return NULL;
 }
 
-static ix_index *ix_start(const char *root, int hidden)
+/* ---- the index kept on disk ---- */
+
+/* The last finished index, so a search right after start has every name: ~/.cache/ferret/search-index (the app's
+ * cache folder on a phone). A first line naming the format, the root and the hidden setting, then each path ended
+ * by a NUL. Written beside and renamed over, so a reader never sees half a file. */
+#define IX_FILE_HEAD "ferret search index 1"
+
+static char *ix_file(void)
+{
+    const char *xdg = getenv("XDG_CACHE_HOME"), *home = getenv("HOME");
+    if (xdg && xdg[0] == '/') return fr_format("%s/ferret/search-index", xdg);
+    return fr_format("%s/.cache/ferret/search-index", home && *home ? home : "/tmp");
+}
+
+static void ix_save(const ix_index *x)
+{
+    char *path = ix_file(), *tmp = fr_format("%s.new", path), *dir = fr_strdup(path);
+    *strrchr(dir, '/') = 0;
+    fr_mkdirs(dir);
+    FILE *f = fopen(tmp, "wb");
+    int ok = f && fprintf(f, "%s\n%s\n%d\n", IX_FILE_HEAD, x->root, x->hidden) > 0;
+    for (int i = 0; ok && i < x->n; i++) ok = fwrite(x->v[i].rel, strlen(x->v[i].rel) + 1, 1, f) == 1;
+    if (f && fclose(f)) ok = 0;
+    if (ok) ok = !rename(tmp, path);
+    if (!ok) unlink(tmp);
+    free(path), free(tmp), free(dir);
+}
+
+/* the saved index of root and hidden, finished; NULL when there is none for them */
+static ix_index *ix_load(const char *root, int hidden)
+{
+    char *path = ix_file();
+    FILE *f = fopen(path, "rb");
+    free(path);
+    if (!f) return NULL;
+    char head[64], saved_root[4096];
+    int saved_hidden = -1;
+    int ok = fgets(head, sizeof head, f) && !strcmp(head, IX_FILE_HEAD "\n") && fgets(saved_root, sizeof saved_root, f) &&
+             fscanf(f, "%d", &saved_hidden) == 1 && fgetc(f) == '\n';
+    if (ok) saved_root[strcspn(saved_root, "\n")] = 0;
+    if (!ok || strcmp(saved_root, root) || saved_hidden != hidden) {
+        fclose(f);
+        return NULL;
+    }
+    ix_index *x = fr_realloc(NULL, sizeof *x);
+    *x = (ix_index){.root = fr_strdup(root), .hidden = hidden, .done = 1};
+    char *line = NULL;
+    size_t cap = 0;
+    ssize_t len;
+    while ((len = getdelim(&line, &cap, '\0', f)) > 1) {
+        if (x->n == x->cap) x->cap = x->cap ? x->cap * 2 : 4096, x->v = fr_realloc(x->v, sizeof *x->v * (size_t)x->cap);
+        const char *slash = strrchr(line, '/');
+        x->v[x->n++] = (ix_entry){fr_strdup(line), slash ? (int)(slash - line) + 1 : 0};
+    }
+    free(line);
+    fclose(f);
+    return x;
+}
+
+/* published as the live index, or as the next one, before its builder starts: a build that finishes at once must
+ * find itself in place to swap in */
+static void ix_start(const char *root, int hidden, int as_next)
 {
     ix_index *x = fr_realloc(NULL, sizeof *x);
     *x = (ix_index){.root = fr_strdup(root), .hidden = hidden, .building = 1};
+    pthread_mutex_lock(&lock);
+    if (as_next) ix_next = x;
+    else ix_live = x;
+    pthread_mutex_unlock(&lock);
     pthread_t t;
     pthread_attr_t attr;
     pthread_attr_init(&attr);
@@ -286,10 +408,12 @@ static ix_index *ix_start(const char *root, int hidden)
     int failed = pthread_create(&t, &attr, ix_run, x);
     pthread_attr_destroy(&attr);
     if (failed) {
+        pthread_mutex_lock(&lock);
+        if (ix_next == x) ix_next = NULL;
+        if (ix_live == x) ix_live = NULL;
+        pthread_mutex_unlock(&lock);
         ix_free(x);
-        return NULL;
     }
-    return x;
 }
 
 /* stops the builds and waits for them; a search still reading the live index frees it */
@@ -317,16 +441,16 @@ void fr_search_index(const char *root, int hidden)
     if (same && busy) return;
     if (!same) {
         fr_search_index_drop();
-        ix_index *x = ix_start(root, hidden);
-        pthread_mutex_lock(&lock);
-        ix_live = x;
-        pthread_mutex_unlock(&lock);
-        return;
+        /* the saved one answers at once while the walk refreshes it */
+        ix_index *saved = ix_load(root, hidden);
+        if (saved) {
+            pthread_mutex_lock(&lock);
+            ix_live = saved;
+            pthread_mutex_unlock(&lock);
+            same = 1;
+        }
     }
-    ix_index *x = ix_start(root, hidden);
-    pthread_mutex_lock(&lock);
-    ix_next = x;
-    pthread_mutex_unlock(&lock);
+    ix_start(root, hidden, same);
 }
 
 /* the index a name search of s->root reads, held (ix_release), NULL when there is none */
