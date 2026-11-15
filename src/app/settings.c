@@ -228,7 +228,8 @@ static char *settings_text(void)
     fr_toml_comment(&o, "Start in this folder every time instead (a path, \"~\" for home, or a URI), for example:");
     if (start_written) fr_toml_string(&o, "start_folder", start_written);
     else fr_toml_comment(&o, "start_folder = \"~/Downloads\"");
-    fr_toml_comment(&o, "Servers in the sidebar's Network section: smb://[user@]host/share, sftp://[user@]host[:port]/path.");
+    fr_toml_comment(&o, "Servers in the sidebar's Network section: smb://[user@]host/share, sftp://[user@]host[:port]/path,");
+    fr_toml_comment(&o, "ftp:// and ftps:// (TLS), dav:// and davs:// (WebDAV over http and https), nfs://host/export.");
     fr_toml_comment(&o, "Passwords are not kept here: the system's keystore has them when you ask ferret to remember one.");
     fr_toml_strings(&o, "servers", &settings.servers);
     fr_toml_comment(&o, "");

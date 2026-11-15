@@ -28,6 +28,11 @@ static const fr_backend *backends[] = {
 #endif
     &fr_backend_smb,
     &fr_backend_sftp,
+    &fr_backend_ftp,
+    &fr_backend_ftps,
+    &fr_backend_dav,
+    &fr_backend_davs,
+    &fr_backend_nfs,
 };
 
 static size_t scheme_len(const char *uri)
