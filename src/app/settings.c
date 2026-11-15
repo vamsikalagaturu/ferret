@@ -386,6 +386,15 @@ void settings_poll(void)
     theme_apply();
 }
 
+/* on the way out: settings_poll() waits half a second for changes to settle, and a quit inside it lost them */
+void settings_flush(void)
+{
+    if (!path) return;
+    state now = live();
+    if (!saved_valid || differs(&now, &saved)) save();
+    fr_strs_free(&now.tabs);
+}
+
 static int shown_light = -1;
 
 static int want_light(void)

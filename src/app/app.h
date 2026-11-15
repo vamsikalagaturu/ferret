@@ -215,6 +215,7 @@ extern fr_settings settings;
 #define TEXT_SCALE_MAX 2.0
 void settings_load(void);
 void settings_poll(void); /* saves what changed (sort, layout, hidden, favorites); reloads after a hand edit */
+void settings_flush(void); /* saves what changed and is not saved yet */
 char *settings_start_uri(void); /* start_folder, else last_folder, when it is a folder that is there; else NULL */
 /* without a start_folder: last_tabs' folders that are still there, and in *current the one last_folder names
  * (-1 none); fewer than two: none */

@@ -565,6 +565,7 @@ int fr_app_main(int argc, char **argv)
             plat_wait(wait);
         }
     }
+    settings_flush();
     dview_shutdown();
     fr_watch_stop();
     fr_jobs_stop();
