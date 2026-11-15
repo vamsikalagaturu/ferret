@@ -193,6 +193,13 @@ static void select_now(const char *s, int n)
         fr_item *it = browser_item(v);
         if (differs(compare_state(it->e.name))) browser_set_selected(br.view.v[v], 1), k++;
     }
+    /* F5, F6, D and X act on the cursor row alone when it is outside the selection */
+    fr_item *cur = browser_item(br.cursor);
+    for (int v = 0; k && (!cur || !cur->selected) && v < br.view.n; v++)
+        if (browser_item(v)->selected) {
+            move_cursor(v, 0);
+            break;
+        }
     ui_toast(k ? "%d %s selected" : "Nothing differs here", k, k == 1 ? "item" : "items");
 }
 
