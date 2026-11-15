@@ -50,7 +50,7 @@ key j
 expect cursor notes.txt
 key esc
 
-# nothing found, then Esc on the prompt does not search
+# nothing found, then Esc on the field leaves the search for the folder
 key f
 key f
 type no-such-name
@@ -59,7 +59,7 @@ expect rows 0
 key f
 key f
 key esc
-expect rows 0
+expect rows 9
 key esc
 expect rows 9
 

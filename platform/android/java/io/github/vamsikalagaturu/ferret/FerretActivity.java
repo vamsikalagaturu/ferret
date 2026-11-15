@@ -246,6 +246,12 @@ public class FerretActivity extends NativeActivity {
         }
     }
 
+    /* ---- the system's font size (Settings > Display > Font size) ---- */
+
+    public String fontScale() {
+        return Float.toString(getResources().getConfiguration().fontScale);
+    }
+
     /* ---- haptics ---- */
 
     public String haptic() {

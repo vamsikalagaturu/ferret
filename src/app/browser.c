@@ -82,6 +82,12 @@ static int cmp_items(const void *pa, const void *pb)
 {
     const fr_item *a = &br.items.v[*(const int *)pa], *b = &br.items.v[*(const int *)pb];
     if (br.dupes && a->group != b->group) return a->group - b->group;
+    /* name search results sorted by name: the closest match first, scored on the name, not the folders above it */
+    if (br.results && !br.dupes && !br.search_content && br.search_term && br.sort == SORT_NAME && !strpbrk(br.search_term, "*?")) {
+        const char *na = strrchr(a->e.name, '/'), *nb = strrchr(b->e.name, '/');
+        int x = fr_fuzzy_score(br.search_term, na ? na + 1 : a->e.name), y = fr_fuzzy_score(br.search_term, nb ? nb + 1 : b->e.name);
+        if (x != y) return y - x;
+    }
     if (a->e.is_dir != b->e.is_dir) return a->e.is_dir ? -1 : 1;
     int c = 0;
     uint64_t sa = a->e.is_dir ? a->tree_size : a->e.size, sb = b->e.is_dir ? b->tree_size : b->e.size;

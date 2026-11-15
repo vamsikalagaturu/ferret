@@ -3,6 +3,7 @@
 #include "core/recent.h"
 #include "core/toml.h"
 #include <errno.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -173,10 +174,11 @@ static void apply(const fr_toml *t)
     if ((v = fr_toml_get(t, "", "git_status", TOML_BOOL))) settings.git_status = v->b;
     if ((v = fr_toml_get(t, "", "relative_links", TOML_BOOL))) settings.relative_links = v->b;
     if ((v = fr_toml_get(t, "", "tabs", TOML_STRING)) && (i = find(tabs_at_names, COUNT(tabs_at_names), v->str)) >= 0) settings.tabs_at = i;
-    if ((v = fr_toml_get(t, "", "ui_scale", TOML_NUMBER)) && v->num >= UI_SCALE_MIN && v->num <= UI_SCALE_MAX)
+    if (!plat_touch() && (v = fr_toml_get(t, "", "ui_scale", TOML_NUMBER)) && v->num >= UI_SCALE_MIN && v->num <= UI_SCALE_MAX)
         ui.user_scale = (float)v->num;
-    if ((v = fr_toml_get(t, "", "font_scale", TOML_NUMBER)) && v->num >= TEXT_SCALE_MIN && v->num <= TEXT_SCALE_MAX)
+    if (!plat_touch() && (v = fr_toml_get(t, "", "font_scale", TOML_NUMBER)) && v->num >= TEXT_SCALE_MIN && v->num <= TEXT_SCALE_MAX)
         ui.text_scale = (float)v->num;
+    if (plat_touch()) ui.user_scale = 1, ui.text_scale = fmaxf((float)TEXT_SCALE_MIN, fminf((float)TEXT_SCALE_MAX, plat_font_scale()));
     if ((v = fr_toml_get(t, "", "favorites", TOML_STRINGS))) {
         fr_strs_free(&settings.favorites);
         for (i = 0; i < v->strs.n; i++) {

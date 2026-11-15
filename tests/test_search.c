@@ -70,9 +70,14 @@ int main(void)
     CHECK(!fr_glob_match("", "a"));
     CHECK(fr_glob_match("*a*a*a*b", "aaaaaaaaaaaaaaaaaaab"));
     CHECK(!fr_glob_match("*a*a*a*b", "aaaaaaaaaaaaaaaaaaaa"));
-    /* a term without wildcards is a substring */
+    /* a term without wildcards is fuzzy: its characters in order */
     CHECK(fr_name_matches("port", "Report.pdf"));
     CHECK(!fr_name_matches("port", "rep.pdf"));
+    CHECK(fr_name_matches("rpt", "Report.pdf"));
+    CHECK(!fr_name_matches("tpr", "Report.pdf"));
+    CHECK(fr_fuzzy_score("rep", "Report.pdf") > fr_fuzzy_score("rep", "my_great_ep.txt"));
+    CHECK(fr_fuzzy_score("tp", "trip-plan.md") > fr_fuzzy_score("tp", "setup.c"));
+    CHECK(fr_fuzzy_score("", "x") == 0 && fr_fuzzy_score("x", "") == -1);
     CHECK(fr_name_matches("rep*.pdf", "Report.pdf"));
     CHECK(!fr_name_matches("port*", "Report.pdf"));
 
@@ -129,7 +134,10 @@ int main(void)
     fr_search_wait();
     fr_entries es = {0};
     fr_search_take(&es, NULL);
-    CHECK(es.n == 1 && es.n && es.v[0].size == 19 && !es.v[0].is_dir);
+    int at = -1;
+    for (int i = 0; i < es.n; i++)
+        if (!strcmp(es.v[i].name, "docs/report.txt")) at = i;
+    CHECK(at >= 0 && es.v[at].size == 19 && !es.v[at].is_dir);
     fr_entries_free(&es);
 
     /* a new search drops the old one's results */

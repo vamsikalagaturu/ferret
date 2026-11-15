@@ -140,9 +140,7 @@ void fr_format_time(int64_t t, int64_t now, char *buf, size_t len)
     struct tm a, b;
     localtime_r(&tt, &a);
     localtime_r(&nn, &b);
-    const char *fmt = a.tm_year == b.tm_year && a.tm_yday == b.tm_yday ? "%H:%M"
-                      : a.tm_year == b.tm_year                          ? "%d %b"
-                                                                        : "%d %b %Y";
+    const char *fmt = a.tm_year == b.tm_year ? "%-d %b %H:%M" : "%-d %b %Y";
     strftime(buf, len, fmt, &a);
 }
 

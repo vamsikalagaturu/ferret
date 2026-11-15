@@ -18,6 +18,7 @@ void plat_wait(double seconds); /* sleeps until input, plat_wake() or the timeou
 void plat_wake(void);          /* any thread; does nothing once the window is closed */
 void plat_close_window(void);  /* closes the window; later plat_wake() calls are dropped */
 float plat_scale(void);        /* pixels per dp */
+float plat_font_scale(void);   /* the system's font size over its default: Android's setting, 1 elsewhere */
 Vector2 plat_mouse(void);      /* the pointer in framebuffer pixels */
 int plat_touch(void);          /* a touchscreen is the pointer */
 /* screen pixels covered by system bars, the cutout or the soft keyboard */

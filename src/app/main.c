@@ -135,15 +135,18 @@ static void view_items(void)
     ui_menu_separator();
 }
 
+/* phones follow the system's display and font size */
 static void size_theme_items(void)
 {
-    char pct[16];
-    snprintf(pct, sizeof pct, "%d%%", (int)lroundf(ui.user_scale * 100));
-    int d = ui_menu_stepper("Interface", "zoom-in", pct);
-    if (d) app_zoom(d == 2 ? 0 : d);
-    snprintf(pct, sizeof pct, "%d%%", (int)lroundf(ui.text_scale * 100));
-    d = ui_menu_stepper("Text", "a-large-small", pct);
-    if (d) app_text_zoom(d == 2 ? 0 : d);
+    if (!ui.touch) {
+        char pct[16];
+        snprintf(pct, sizeof pct, "%d%%", (int)lroundf(ui.user_scale * 100));
+        int d = ui_menu_stepper("Interface", "zoom-in", pct);
+        if (d) app_zoom(d == 2 ? 0 : d);
+        snprintf(pct, sizeof pct, "%d%%", (int)lroundf(ui.text_scale * 100));
+        d = ui_menu_stepper("Text", "a-large-small", pct);
+        if (d) app_text_zoom(d == 2 ? 0 : d);
+    }
     ui_menu_heading("Theme", NULL, NULL);
     static const char *const schemes[] = {"Dark", "Light", "System"}, *const scheme_icons[] = {"moon", "sun", "monitor"};
     int sc = ui_menu_segments(schemes, scheme_icons, 3, settings.scheme);
@@ -176,11 +179,13 @@ static void draw_menus(void)
             }
         }
         ui_menu_separator();
-        if (!ui.touch) view_items();
-        tabs_menu_items();
-        compare_menu_items();
-        ui_menu_separator();
-        if (!ui.touch && ui_menu_item("Show hidden", "eye", br.show_hidden)) br.show_hidden = !br.show_hidden, browser_rebuild_view();
+        view_items();
+        if (!ui.touch) {
+            tabs_menu_items();
+            compare_menu_items();
+            ui_menu_separator();
+        }
+        if (ui_menu_item("Show hidden", "eye", br.show_hidden)) br.show_hidden = !br.show_hidden, browser_rebuild_view();
         if (!ui.touch && ui_menu_item("Show git status", "list-checks", settings.git_status)) settings.git_status = !settings.git_status;
         if (link_here() && ui_menu_item("Paste as link", "link", -1)) links_paste(-1);
         if (ui_menu_item("Find duplicates below", "file-stack", -1)) dupes_start();
@@ -192,9 +197,8 @@ static void draw_menus(void)
         if (undo_can(0) && ui_menu_item("Undo", "undo-2", -1)) undo_run(0);
         if (undo_can(1) && ui_menu_item("Redo", "redo-2", -1)) undo_run(1);
         ui_menu_separator();
-        int open_view = ui.touch && ui_menu_item("View and settings...", "eye", -1);
+        size_theme_items();
         if (!ui.touch) {
-            size_theme_items();
             ui_menu_heading("Tabs", NULL, NULL);
             static const char *const places[] = {"Top", "Bottom", "Left", "Right"},
                                      *const place_icons[] = {"arrow-up", "arrow-down", "arrow-left", "arrow-right"};
@@ -206,15 +210,6 @@ static void draw_menus(void)
             ops_terminal_here();
         ui_menu_separator();
         if (ui_menu_item("Refresh", "refresh-cw", -1)) browser_reload();
-        ui_menu_end();
-        /* after the end: opened inside, the sheet would be drawn with this menu's rows for a frame */
-        if (open_view) ui_menu_open(app.menu_view, (Rectangle){ui.safe.x + ui.safe.width - DP(8), ui.safe.y + DP(8), 0, 0});
-    }
-    if (ui_menu_begin(app.menu_view)) {
-        view_items();
-        if (ui_menu_item("Show hidden", "eye", br.show_hidden)) br.show_hidden = !br.show_hidden, browser_rebuild_view();
-        ui_menu_separator();
-        size_theme_items();
         ui_menu_end();
     }
     place_menu_draw();
@@ -589,7 +584,7 @@ int fr_app_main(int argc, char **argv)
     static const fr_secret_store keystore = {plat_secret_load, plat_secret_save, plat_secret_forget};
     if (plat_secret_available()) fr_creds_set_store(&keystore);
     thumbs_start();
-    app.menu_more = ui_id("menu-more", 0), app.menu_row = ui_id("menu-row", 0), app.menu_bg = ui_id("menu-bg", 0), app.menu_view = ui_id("menu-view", 0);
+    app.menu_more = ui_id("menu-more", 0), app.menu_row = ui_id("menu-row", 0), app.menu_bg = ui_id("menu-bg", 0);
     app.menu_selection = ui_id("menu-selection", 0);
     char *start = NULL;
     if (argc > 1) {

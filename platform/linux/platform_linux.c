@@ -145,6 +145,8 @@ int plat_color_scheme(void)
     return gs_value;
 }
 
+float plat_font_scale(void) { return 1; }
+
 /* Wayland's content scale; on X11 the content scale when set (Xft.dpi), else the monitor's physical DPI over 96
  * in quarter steps */
 float plat_scale(void)

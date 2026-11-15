@@ -5,10 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static float bar_height(void) { return fmaxf(DP(ui.touch ? 56 : 48), ui_line_height(15) + DP(26)); }
-static float scopes_height(void) { return DP(44); }
-
-float header_height(void) { return bar_height() + (find_open() ? scopes_height() : 0); }
+float header_height(void) { return fmaxf(DP(ui.touch ? 56 : 48), ui_line_height(15) + DP(26)); }
 
 typedef struct {
     char *label, *uri;
@@ -240,12 +237,6 @@ void header_draw(Rectangle r)
     ui_rect(r, app_split() && active ? ui_mix(theme.bg, theme.accent, 0.10f) : theme.bg);
     /* the keys went to the other pane, or another tab: the field they typed into goes */
     if (editing && browser_by_id(editing) != tabs_current(&tabs)) path_edit_stop();
-    if (find_open() && r.height > bar_height() + 1) {
-        Rectangle strip = {r.x, r.y + bar_height(), r.width, r.height - bar_height()};
-        r.height = bar_height();
-        find_scopes(strip);
-        ui_hline(strip.x, strip.y + strip.height - DP(1), strip.width, theme.border);
-    }
     float b = DP(ui.touch ? 48 : 36), x = r.x + DP(4), right = r.x + r.width - DP(4), cy = r.y + (r.height - b) / 2;
     Rectangle btn = {x, cy, b, b};
     if (br.nselected) {
@@ -295,7 +286,7 @@ void header_draw(Rectangle r)
         x += b + DP(4);
         right = kinds_chip(r, right - DP(4));
         Rectangle field = {x, r.y + DP(8), right - x - DP(4), r.height - DP(16)};
-        int res = ui_text_field(ui_id("filter", 0), &br.filter, field, "Filter this folder (* and ? work)");
+        int res = ui_text_field(ui_id("filter", 0), &br.filter, field, "Filter this folder");
         if (res & TEXT_CHANGED) browser_rebuild_view();
         if (res & TEXT_CANCEL) filter_stop();
         if (res & TEXT_SUBMIT) {
@@ -325,7 +316,7 @@ void header_draw(Rectangle r)
     if (ui_icon_button(ui_id("more", 0), (Rectangle){right, cy, b, b}, "ellipsis-vertical", theme.text))
         ui_menu_open(app.menu_more, (Rectangle){right, cy, b, b});
     right -= b;
-    if (ui_icon_button(ui_id("search", 0), (Rectangle){right, cy, b, b}, "search", theme.text)) filter_start(0);
+    if (ui_icon_button(ui_id("search", 0), (Rectangle){right, cy, b, b}, "search", theme.text)) search_everywhere();
     right = kinds_chip(r, right - DP(4)) + DP(4);
     Rectangle crumbs = {x + DP(4), r.y, right - x - DP(8), r.height};
     double flash = ui.now - app.path_flash_at;

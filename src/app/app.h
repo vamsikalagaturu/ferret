@@ -123,7 +123,7 @@ typedef struct {
     fr_disks disks;
     unsigned disks_serial;
     Rectangle pane_rect[2]; /* where the current tab's panes were drawn, by side (only [0] when not split) */
-    unsigned menu_more, menu_row, menu_bg, menu_selection, menu_view;
+    unsigned menu_more, menu_row, menu_bg, menu_selection;
     int help_open; /* the keyboard shortcuts sheet */
     double path_flash_at; /* the folder's path was copied then: the breadcrumb flashes */
 } fr_app;
@@ -327,10 +327,9 @@ float ops_draw_jobs(Rectangle area); /* the job strip at the bottom of area; ret
 void ops_poll_jobs(void);
 
 /* ---- searching below the folder (search.c) ---- */
+void search_everywhere(void);     /* the field for a name anywhere below the home folder */
 void search_prompt(int content); /* a field in the header for a name (content 0) or the text inside files */
 int search_header(Rectangle r);  /* draws the field or the results' bar; 0 when neither shows */
-int find_open(void);           /* the filter or the search field shows in this browser */
-void find_scopes(Rectangle r); /* the row under it: this folder, subfolders too, inside files */
 void search_poll(void);          /* between frames: the results found meanwhile into the list */
 int search_running(void);
 void search_reveal(void);        /* the cursor row's result, shown in its folder */

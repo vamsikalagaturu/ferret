@@ -34,10 +34,39 @@ int fr_glob_match(const char *p, const char *s)
     return !*p;
 }
 
+static int word_start(const char *name, int i)
+{
+    if (!i) return 1;
+    char p = name[i - 1], c = name[i];
+    return strchr(" _-./()[]", p) || (p >= 'a' && p <= 'z' && c >= 'A' && c <= 'Z') || ((p < '0' || p > '9') && c >= '0' && c <= '9');
+}
+
+/* The term's characters in order, others between allowed; ASCII case ignored. Greedy from the left, which can miss a
+ * better placement further on but never a match. Matches at word starts and runs of adjacent characters score most,
+ * gaps cost a little, a whole-substring match gets a bonus; -1 when the name does not hold the term. */
+int fr_fuzzy_score(const char *term, const char *name)
+{
+    if (!*term) return 0;
+    int score = 0, run = 0, last = -1, ti = 0;
+    for (int i = 0; name[i] && term[ti]; i++) {
+        if (lower((unsigned char)name[i]) != lower((unsigned char)term[ti])) continue;
+        int bonus = 1;
+        if (word_start(name, i)) bonus += 8;
+        if (last == i - 1) run++, bonus += 4 * run;
+        else run = 0;
+        if (last >= 0) score -= i - last - 1 > 6 ? 6 : i - last - 1;
+        score += bonus;
+        last = i, ti++;
+    }
+    if (term[ti]) return -1;
+    if (fr_contains_nocase(name, term)) score += 20;
+    return score < 0 ? 0 : score;
+}
+
 int fr_name_matches(const char *term, const char *name)
 {
     if (strpbrk(term, "*?")) return fr_glob_match(term, name);
-    return fr_contains_nocase(name, term);
+    return fr_fuzzy_score(term, name) >= 0;
 }
 
 static int digits(const char **p, int *out)

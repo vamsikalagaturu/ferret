@@ -14,25 +14,30 @@ static struct {
     fr_search_status st;
     fr_entries pending; /* found, not in the list yet */
     double added_at;
+    double typed_at;    /* the field changed then, not searched for yet */
+    char *from;         /* the folder shown before the results, to go back to */
+    int everywhere;     /* the search is of the home folder, not the folder shown */
 } s;
 
 static unsigned field_id(void) { return ui_id("search-field", 0); }
 
 int search_running(void) { return s.st.running && s.owner == br.id; }
 
-/* text NULL: the last term of this kind, when the results shown are of it */
-static void prompt_with(int content, const char *text)
+/* the last term of this kind, when the results shown are of it */
+static void prompt(int content, int everywhere)
 {
     if (!br.uri) return;
     if (br.filtering) filter_stop();
     s.prompting = br.id;
     s.content = content;
-    text_set(&s.field, text ? text : br.results && br.search_term && br.search_content == content ? br.search_term : "");
+    if (!br.results) s.everywhere = everywhere;
+    text_set(&s.field, br.results && br.search_term && br.search_content == content ? br.search_term : "");
     ui.focus = field_id();
     ui.dirty = 1;
 }
 
-void search_prompt(int content) { prompt_with(content, NULL); }
+void search_prompt(int content) { prompt(content, 0); }
+void search_everywhere(void) { prompt(0, 1); }
 
 static void prompt_stop(void)
 {
@@ -42,40 +47,17 @@ static void prompt_stop(void)
     ui.dirty = 1;
 }
 
-int find_open(void) { return br.filtering || (s.prompting && s.prompting == br.id); }
-
-static void scope_now(const char *text, int scope)
-{
-    if (scope) {
-        prompt_with(scope - 1, text);
-        return;
-    }
-    prompt_stop();
-    filter_start(0);
-    text_set(&br.filter, text);
-    browser_rebuild_view();
-}
-
-/* under the find field: where it looks, the filter of this folder or a search below it; the typed text goes along */
-void find_scopes(Rectangle r)
-{
-    static const char *const labels[] = {"This folder", "Subfolders too", "Inside files"};
-    int scope = br.filtering ? 0 : 1 + s.content;
-    const char *text = br.filtering ? br.filter.buf : s.field.buf;
-    float h = DP(30), x = r.x + DP(12), y = r.y + (r.height - h) / 2;
-    for (int i = 0; i < 3; i++) {
-        float w = ui_text_width(labels[i], 13, FONT_SEMIBOLD) + DP(24);
-        Rectangle c = {x, y, w, h};
-        int state, on = i == scope;
-        if (ui_clickable(ui_id("find-scope", i), c, &state) && !on) app_defer(scope_now, text, i);
-        ui_round(c, 15, on ? ui_mix(theme.bg, theme.accent, 0.25f) : state ? theme.hover : theme.surface);
-        ui_text_box(labels[i], c, 13, FONT_SEMIBOLD, on ? theme.accent : theme.text_dim, ALIGN_CENTER, 0);
-        x += w + DP(8);
-    }
-}
-
+/* below the folder shown, or everywhere: the home folder (internal storage on a phone), whatever folder is shown;
+ * leaving those results goes back to that folder */
 static void begin_now(const char *term, int content)
 {
+    if (s.everywhere) {
+        char *root = plat_home_uri();
+        if (!root) return;
+        if (!br.results) free(s.from), s.from = br.uri ? fr_strdup(br.uri) : NULL;
+        if (!br.uri || strcmp(br.uri, root)) free(br.uri), br.uri = root;
+        else free(root);
+    }
     if (!br.uri) return;
     fr_entries_free(&s.pending);
     free(br.search_term);
@@ -90,11 +72,27 @@ static void begin_now(const char *term, int content)
 
 static void leave_now(const char *str, int n)
 {
-    if (s.owner == br.id) fr_search_cancel();
+    if (s.owner == br.id) {
+        fr_search_cancel();
+        if (s.from && br.results) free(br.uri), br.uri = s.from, s.from = NULL;
+    }
     browser_results_leave();
 }
 
-void search_poll(void)
+/* typing searches after a pause; an emptied field shows the folder again */
+static void typed_poll(void)
+{
+    if (!s.typed_at || ui.now - s.typed_at < 0.3) {
+        if (s.typed_at) ui_redraw_in(0.3 - (ui.now - s.typed_at));
+        return;
+    }
+    s.typed_at = 0;
+    if (!s.prompting || s.prompting != br.id) return;
+    if (s.field.len) begin_now(s.field.buf, s.content);
+    else if (br.results) leave_now(NULL, 0);
+}
+
+static void poll_results(void)
 {
     fr_browser *b = browser_by_id(s.owner);
     if (!b || !b->results || b->dupes) {
@@ -117,6 +115,12 @@ void search_poll(void)
     }
     if (was || s.st.running) ui.dirty = 1;
     if (s.pending.n || s.st.running) ui_redraw_in(0.25);
+}
+
+void search_poll(void)
+{
+    typed_poll();
+    poll_results();
 }
 
 void search_reveal(void)
@@ -147,18 +151,19 @@ int search_header(Rectangle r)
     if (!prompting && br.dupes) return dupes_header(r);
     float b = DP(ui.touch ? 48 : 36), x = r.x + DP(4), right = r.x + r.width - DP(4), cy = r.y + (r.height - b) / 2;
     if (prompting) {
-        if (ui_icon_button(ui_id("search-close", 0), (Rectangle){x, cy, b, b}, "arrow-left", theme.text)) {
-            prompt_stop();
-            return 1;
-        }
+        int close = ui_icon_button(ui_id("search-close", 0), (Rectangle){x, cy, b, b}, "arrow-left", theme.text);
         x += b + DP(4);
         Rectangle field = {x, r.y + DP(8), right - x - DP(4), r.height - DP(16)};
         ui.focus = field_id();
-        int res = ui_text_field(field_id(), &s.field, field,
-                                s.content ? "Text inside the files here and in subfolders" : "Names here and in subfolders (* and ? work)");
-        if (res & TEXT_CANCEL) prompt_stop();
-        else if (res & TEXT_SUBMIT && s.field.len) {
-            app_defer(begin_now, s.field.buf, s.content);
+        int res = ui_text_field(field_id(), &s.field, field, s.content ? "Search inside the files below here" : s.everywhere ? "Search all files" : "Search names below here");
+        if (res & TEXT_CHANGED) s.typed_at = ui.now;
+        if (close || res & TEXT_CANCEL) {
+            s.typed_at = 0;
+            prompt_stop();
+            app_defer(leave_now, NULL, 0);
+        } else if (res & TEXT_SUBMIT && s.field.len) {
+            if (s.typed_at || !br.results) app_defer(begin_now, s.field.buf, s.content);
+            s.typed_at = 0;
             prompt_stop();
         }
         ui_hline(r.x, r.y + r.height - DP(1), r.width, theme.border);

@@ -503,6 +503,14 @@ void plat_close_window(void) { CloseWindow(); }
 
 float plat_scale(void) { return GetWindowScaleDPI().x; }
 
+float plat_font_scale(void)
+{
+    char *s = java("fontScale", 0);
+    float f = s ? strtof(s, NULL) : 1;
+    free(s);
+    return f > 0 ? f : 1;
+}
+
 Vector2 plat_mouse(void) { return GetMousePosition(); }
 
 int plat_touch(void) { return 1; }
