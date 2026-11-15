@@ -2,6 +2,7 @@
  * the environment the shared sources expect (HOME, XDG_*), touch, mouse and keys fed to input.c's queue, the soft
  * keyboard, and what FerretActivity.java does in Java. Everything runs on the android_main thread except
  * plat_wake() and native_text(), which the soft keyboard calls on the UI thread. */
+#include "android.h"
 #include "platform.h"
 #include "ui.h"
 #include "vfs/vfs.h"
@@ -11,7 +12,6 @@
 #include <android/looper.h>
 #include <android/native_activity.h>
 #include <android_native_app_glue.h>
-#include <dirent.h>
 #include <jni.h>
 #include <math.h>
 #include <pthread.h>
@@ -28,12 +28,28 @@ struct android_app *GetAndroidApp(void); /* rcore_android.c; not declared in ray
 
 /* ---- JNI ---- */
 
-/* raylib attaches and detaches this thread around its own JNI calls, so the env is looked up every time */
+static pthread_t main_thread;
+static pthread_key_t detach_key;
+static pthread_once_t detach_once = PTHREAD_ONCE_INIT;
+
+/* ART aborts the process when a thread it knows exits still attached */
+static void detach(void *vm) { (*(JavaVM *)vm)->DetachCurrentThread((JavaVM *)vm); }
+static void detach_key_make(void) { pthread_key_create(&detach_key, detach); }
+
+int android_main_thread(void) { return pthread_equal(pthread_self(), main_thread); }
+
+/* raylib attaches and detaches this thread around its own JNI calls, so the env is looked up every time. Any
+ * other thread (jobs, properties) stays attached until it exits. */
 static JNIEnv *jni(void)
 {
     JavaVM *vm = GetAndroidApp()->activity->vm;
     JNIEnv *env = NULL;
-    if ((*vm)->GetEnv(vm, (void **)&env, JNI_VERSION_1_6) != JNI_OK) (*vm)->AttachCurrentThread(vm, &env, NULL);
+    if ((*vm)->GetEnv(vm, (void **)&env, JNI_VERSION_1_6) == JNI_OK) return env;
+    if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK) return NULL;
+    if (!android_main_thread()) {
+        pthread_once(&detach_once, detach_key_make);
+        pthread_setspecific(detach_key, vm);
+    }
     return env;
 }
 
@@ -68,17 +84,16 @@ static char *jstr(JNIEnv *e, jobject s)
     return r;
 }
 
-/* FerretActivity.<method>(String x nargs) returning String, nargs at most 2; malloc'd, NULL for Java null or an
- * exception */
-static char *java(const char *method, int nargs, ...)
+char *java(const char *method, int nargs, ...)
 {
     JNIEnv *e = jni();
+    if (!e) return NULL;
     (*e)->PushLocalFrame(e, 16);
     char sig[96] = "(";
-    jvalue args[2] = {0};
+    jvalue args[3] = {0};
     va_list ap;
     va_start(ap, nargs);
-    for (int i = 0; i < nargs && i < 2; i++) {
+    for (int i = 0; i < nargs && i < 3; i++) {
         const char *s = va_arg(ap, const char *);
         args[i].l = s ? (*e)->NewStringUTF(e, s) : NULL;
         strcat(sig, "Ljava/lang/String;");
@@ -537,8 +552,6 @@ static void add(fr_places *p, const char *label, const char *path, const char *i
     FR_PUSH(*p, ((fr_place){fr_strdup(label), fr_uri_from_path(path), fr_strdup(icon), removable}));
 }
 
-static int by_name(const void *a, const void *b) { return strcmp(*(char *const *)a, *(char *const *)b); }
-
 void plat_places(fr_places *out)
 {
     add(out, "Internal storage", INTERNAL, "smartphone", 0);
@@ -551,21 +564,7 @@ void plat_places(fr_places *out)
         add(out, dirs[i].name, p, dirs[i].icon, 0);
         free(p);
     }
-    /* SD cards and USB drives: /storage/<volume id> */
-    fr_strs vols = {0};
-    DIR *d = opendir("/storage");
-    struct dirent *de;
-    while (d && (de = readdir(d)))
-        if (de->d_name[0] != '.' && strcmp(de->d_name, "emulated") && strcmp(de->d_name, "self"))
-            FR_PUSH(vols, fr_strdup(de->d_name));
-    if (d) closedir(d);
-    if (vols.n) qsort(vols.v, (size_t)vols.n, sizeof *vols.v, by_name);
-    for (int i = 0; i < vols.n; i++) {
-        char *p = fr_format("/storage/%s", vols.v[i]);
-        add(out, vols.v[i], p, "hard-drive", 1);
-        free(p);
-    }
-    fr_strs_free(&vols);
+    saf_places(out);
 }
 
 char *plat_home_uri(void) { return fr_uri_from_path(INTERNAL); }
@@ -580,6 +579,7 @@ int plat_disk_done(fr_disk_done *out) { return 0; }
 int main(int argc, char **argv)
 {
     struct android_app *a = GetAndroidApp();
+    main_thread = pthread_self();
     setup_environment();
     char arg0[] = "ferret";
     fr_app_main(1, (char *[]){arg0, NULL});

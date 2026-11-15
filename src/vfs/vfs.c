@@ -4,7 +4,16 @@
 #include <stdlib.h>
 #include <string.h>
 
-static const fr_backend *backends[] = {&fr_backend_file};
+#ifdef __ANDROID__
+extern const fr_backend fr_backend_saf; /* platform/android/saf.c */
+#endif
+
+static const fr_backend *backends[] = {
+    &fr_backend_file,
+#ifdef __ANDROID__
+    &fr_backend_saf,
+#endif
+};
 
 static size_t scheme_len(const char *uri)
 {

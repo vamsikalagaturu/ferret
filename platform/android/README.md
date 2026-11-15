@@ -36,10 +36,30 @@ adb shell appops set --uid io.github.vamsikalagaturu.ferret MANAGE_EXTERNAL_STOR
 
 | File | What |
 | --- | --- |
-| `android_main.c` | `platform.h` for Android and `main()`: environment (`HOME`, `XDG_*` in the app's files folder), touch to clicks, long press and wheel scrolling, keys and the soft keyboard, Back, insets, places under `/storage`. |
+| `android_main.c` | `platform.h` for Android and `main()`: environment (`HOME`, `XDG_*` in the app's files folder), touch to clicks, long press and wheel scrolling, keys and the soft keyboard, Back, insets, places. The `java()` JNI helper (`android.h`). |
+| `saf.c` | The `saf://` VFS backend: SD cards and USB drives through the Storage Access Framework. |
 | `java/.../FerretActivity.java` | `NativeActivity` subclass: storage permission, opening files, soft keyboard text, clipboard, haptics, insets. |
+| `java/.../Saf.java` | Removable volumes, their granted folder trees and the `DocumentsContract` calls behind `saf.c`. |
 | `java/.../OpenProvider.java` | Serves a file read-only to the app it is opened in (`content://<package>.files/<path>`). |
 | `res/mipmap-*/ic_launcher.png` | Lucide `folder-search` in #88C0D0 on #2E3440. |
+
+## SD cards and USB drives
+
+All files access reads removable volumes at `/storage/XXXX-XXXX`, but writes there fail. The drawer lists each
+mounted removable volume (`StorageManager.getStorageVolumes()`, named by its description, "SD card") as
+`saf://<tree URI, percent-encoded>/`. Opening one without a grant opens the system's folder picker at that volume;
+the chosen tree's permission is persisted and remembered per volume UUID (shared preferences `saf`). Listing,
+`stat` and reading use the `/storage` path when it is readable; creating, writing, renaming, moving and deleting
+go through `DocumentsContract` (`openFileDescriptor()` hands `saf.c` a detached fd). Moves to another folder use
+`moveDocument()` where the provider supports it, else `-EXDEV` makes the job copy. No trash, permissions or
+modification times there.
+
+JNI from the jobs thread: `java()` works on any thread. A thread other than `android_main` that it attaches stays
+attached until it exits, when a `pthread` key destructor detaches it (ART aborts a process whose attached thread
+exits).
+
+Testing without a card: `adb shell sm set-virtual-disk true` adds a virtual removable disk (format it as portable
+storage when Android asks).
 
 Touch: a tap clicks on release, a moving finger scrolls (60 dp = one wheel notch) and flings, a finger held 0.4 s
 right-clicks.

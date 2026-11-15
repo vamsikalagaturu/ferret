@@ -27,7 +27,7 @@ target_link_libraries(raylib PUBLIC log android EGL GLESv2 OpenSLES m)
 
 fr_embed_assets(${CMAKE_CURRENT_BINARY_DIR}/generated)
 file(GLOB FR_UI_SOURCES CONFIGURE_DEPENDS ${FR_ROOT}/src/ui/*.c ${FR_ROOT}/src/app/*.c)
-add_library(ferret SHARED ${FR_UI_SOURCES} android_main.c ${FR_ASSET_SOURCES})
+add_library(ferret SHARED ${FR_UI_SOURCES} android_main.c saf.c ${FR_ASSET_SOURCES})
 target_include_directories(ferret PRIVATE ${FR_ROOT}/src/ui ${FR_ROOT}/src/app ${FR_ROOT}/thirdparty/nanosvg)
 target_compile_options(ferret PRIVATE -Wall -Wextra -Wno-unused-parameter)
 # -u keeps the glue's entry point, which nothing in the library references
