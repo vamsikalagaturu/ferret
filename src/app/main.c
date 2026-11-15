@@ -183,8 +183,6 @@ static void draw_menus(void)
         if (!ui.touch && ui_menu_item("Show hidden", "eye", br.show_hidden)) br.show_hidden = !br.show_hidden, browser_rebuild_view();
         if (!ui.touch && ui_menu_item("Show git status", "list-checks", settings.git_status)) settings.git_status = !settings.git_status;
         if (link_here() && ui_menu_item("Paste as link", "link", -1)) links_paste(-1);
-        if (ui_menu_item("Search names below", "search", -1)) search_prompt(0);
-        if (ui_menu_item("Search inside files", "file-text", -1)) search_prompt(1);
         if (ui_menu_item("Find duplicates below", "file-stack", -1)) dupes_start();
         if (br.dupes && br.view.n && ui_menu_item("Select all but the first of each group", "list-checks", -1)) dupes_select_copies();
         if (ui_menu_item(sizes_running() ? "Stop measuring folders" : "Measure the folders' sizes", "ruler", -1)) sizes_measure(1);

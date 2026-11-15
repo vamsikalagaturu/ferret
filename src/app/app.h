@@ -329,6 +329,8 @@ void ops_poll_jobs(void);
 /* ---- searching below the folder (search.c) ---- */
 void search_prompt(int content); /* a field in the header for a name (content 0) or the text inside files */
 int search_header(Rectangle r);  /* draws the field or the results' bar; 0 when neither shows */
+int find_open(void);           /* the filter or the search field shows in this browser */
+void find_scopes(Rectangle r); /* the row under it: this folder, subfolders too, inside files */
 void search_poll(void);          /* between frames: the results found meanwhile into the list */
 int search_running(void);
 void search_reveal(void);        /* the cursor row's result, shown in its folder */

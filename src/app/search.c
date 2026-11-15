@@ -20,16 +20,19 @@ static unsigned field_id(void) { return ui_id("search-field", 0); }
 
 int search_running(void) { return s.st.running && s.owner == br.id; }
 
-void search_prompt(int content)
+/* text NULL: the last term of this kind, when the results shown are of it */
+static void prompt_with(int content, const char *text)
 {
     if (!br.uri) return;
     if (br.filtering) filter_stop();
     s.prompting = br.id;
     s.content = content;
-    text_set(&s.field, br.results && br.search_term && br.search_content == content ? br.search_term : "");
+    text_set(&s.field, text ? text : br.results && br.search_term && br.search_content == content ? br.search_term : "");
     ui.focus = field_id();
     ui.dirty = 1;
 }
+
+void search_prompt(int content) { prompt_with(content, NULL); }
 
 static void prompt_stop(void)
 {
@@ -37,6 +40,38 @@ static void prompt_stop(void)
     if (ui.focus == field_id()) ui.focus = 0;
     ui.nchars = 0;
     ui.dirty = 1;
+}
+
+int find_open(void) { return br.filtering || (s.prompting && s.prompting == br.id); }
+
+static void scope_now(const char *text, int scope)
+{
+    if (scope) {
+        prompt_with(scope - 1, text);
+        return;
+    }
+    prompt_stop();
+    filter_start(0);
+    text_set(&br.filter, text);
+    browser_rebuild_view();
+}
+
+/* under the find field: where it looks, the filter of this folder or a search below it; the typed text goes along */
+void find_scopes(Rectangle r)
+{
+    static const char *const labels[] = {"This folder", "Subfolders too", "Inside files"};
+    int scope = br.filtering ? 0 : 1 + s.content;
+    const char *text = br.filtering ? br.filter.buf : s.field.buf;
+    float h = DP(30), x = r.x + DP(12), y = r.y + (r.height - h) / 2;
+    for (int i = 0; i < 3; i++) {
+        float w = ui_text_width(labels[i], 13, FONT_SEMIBOLD) + DP(24);
+        Rectangle c = {x, y, w, h};
+        int state, on = i == scope;
+        if (ui_clickable(ui_id("find-scope", i), c, &state) && !on) app_defer(scope_now, text, i);
+        ui_round(c, 15, on ? ui_mix(theme.bg, theme.accent, 0.25f) : state ? theme.hover : theme.surface);
+        ui_text_box(labels[i], c, 13, FONT_SEMIBOLD, on ? theme.accent : theme.text_dim, ALIGN_CENTER, 0);
+        x += w + DP(8);
+    }
 }
 
 static void begin_now(const char *term, int content)
@@ -120,7 +155,7 @@ int search_header(Rectangle r)
         Rectangle field = {x, r.y + DP(8), right - x - DP(4), r.height - DP(16)};
         ui.focus = field_id();
         int res = ui_text_field(field_id(), &s.field, field,
-                                s.content ? "Text inside the files below this folder" : "Names below this folder; * and ? match any");
+                                s.content ? "Text inside the files here and in subfolders" : "Names here and in subfolders (* and ? work)");
         if (res & TEXT_CANCEL) prompt_stop();
         else if (res & TEXT_SUBMIT && s.field.len) {
             app_defer(begin_now, s.field.buf, s.content);

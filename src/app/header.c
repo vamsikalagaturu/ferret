@@ -5,7 +5,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-float header_height(void) { return fmaxf(DP(ui.touch ? 56 : 48), ui_line_height(15) + DP(26)); }
+static float bar_height(void) { return fmaxf(DP(ui.touch ? 56 : 48), ui_line_height(15) + DP(26)); }
+static float scopes_height(void) { return DP(44); }
+
+float header_height(void) { return bar_height() + (find_open() ? scopes_height() : 0); }
 
 typedef struct {
     char *label, *uri;
@@ -237,6 +240,12 @@ void header_draw(Rectangle r)
     ui_rect(r, app_split() && active ? ui_mix(theme.bg, theme.accent, 0.10f) : theme.bg);
     /* the keys went to the other pane, or another tab: the field they typed into goes */
     if (editing && browser_by_id(editing) != tabs_current(&tabs)) path_edit_stop();
+    if (find_open() && r.height > bar_height() + 1) {
+        Rectangle strip = {r.x, r.y + bar_height(), r.width, r.height - bar_height()};
+        r.height = bar_height();
+        find_scopes(strip);
+        ui_hline(strip.x, strip.y + strip.height - DP(1), strip.width, theme.border);
+    }
     float b = DP(ui.touch ? 48 : 36), x = r.x + DP(4), right = r.x + r.width - DP(4), cy = r.y + (r.height - b) / 2;
     Rectangle btn = {x, cy, b, b};
     if (br.nselected) {
