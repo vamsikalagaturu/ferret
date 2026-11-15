@@ -1,4 +1,5 @@
 #include "app.h"
+#include "core/match.h"
 #include "core/watch.h"
 #include "jobs/async.h"
 #include <dirent.h>
@@ -112,7 +113,7 @@ static void rebuild(const char *kept)
             continue;
         }
         if (it->e.hidden && !br.show_hidden) continue;
-        if (br.filtering && br.filter.len && !fr_contains_nocase(it->e.name, br.filter.buf)) continue;
+        if (br.filtering && br.filter.len && !fr_name_matches(br.filter.buf, it->e.name)) continue;
         if (!kind_filter_shows(br.kinds, it->kind)) continue;
         FR_PUSH(br.view, i);
     }

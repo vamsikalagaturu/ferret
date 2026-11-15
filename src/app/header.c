@@ -286,7 +286,7 @@ void header_draw(Rectangle r)
         x += b + DP(4);
         right = kinds_chip(r, right - DP(4));
         Rectangle field = {x, r.y + DP(8), right - x - DP(4), r.height - DP(16)};
-        int res = ui_text_field(ui_id("filter", 0), &br.filter, field, "Filter this folder");
+        int res = ui_text_field(ui_id("filter", 0), &br.filter, field, "Filter this folder (* and ? work)");
         if (res & TEXT_CHANGED) browser_rebuild_view();
         if (res & TEXT_CANCEL) filter_stop();
         if (res & TEXT_SUBMIT) {
