@@ -1,8 +1,11 @@
-# ? opens the keyboard shortcuts sheet, which takes the keys until ? or Esc or a click outside closes it.
+# ? opens the keyboard shortcuts sheet, which takes the keys until ? or Esc or a click outside closes it. Typing
+# filters it; then ? is typed too, and Esc empties the filter before it closes.
 key ?
 key j
 expect cursor alpha
 shot help.png
+key ?
+key esc
 key ?
 key j
 expect cursor beta

@@ -344,24 +344,60 @@ static const char *const shortcuts[][2] = {
     {"q, Esc", "back to the disks"},
 };
 
+static int help_matches(int i, const char *q)
+{
+    return !*q || (shortcuts[i][0] && (strcasestr(shortcuts[i][0], q) || strcasestr(shortcuts[i][1], q)));
+}
+
+/* typing filters the rows by key or description; a heading stays while one of its rows does. ? closes only with an
+ * empty filter, Esc empties the filter first */
 static void draw_help(void)
 {
-    if (!app.help_open) return;
+    static fr_text filter;
+    static int was_open;
+    static fr_scroll scroll;
+    unsigned fid = ui_id("help-filter", 0);
+    if (!app.help_open) {
+        was_open = 0;
+        return;
+    }
+    if (!was_open) text_set(&filter, ""), ui.focus = fid, scroll.offset = 0, was_open = 1;
+    int typed_q = 0;
+    for (int i = 0; !filter.len && i < ui.nchars; i++)
+        if (ui.chars[i] == '?') typed_q = 1;
+    if (typed_q) {
+        app.help_open = 0, ui.nchars = 0, ui.focus = 0;
+        return;
+    }
     ui_layer(1);
     ui_rect((Rectangle){0, 0, ui.w, ui.h}, theme.scrim);
     int n = (int)(sizeof shortcuts / sizeof *shortcuts);
-    float lh = DP(26), pad = DP(24), kw = DP(200);
-    float w = fminf(ui.safe.width - DP(32), DP(620)), h = fminf(ui.safe.height - DP(48), pad * 2 + DP(40) + n * lh);
+    float lh = DP(26), pad = DP(24), kw = DP(200), top = DP(40) + DP(36) + DP(12);
+    float w = fminf(ui.safe.width - DP(32), DP(620)), h = fminf(ui.safe.height - DP(48), pad * 2 + top + n * lh);
     Rectangle card = {ui.safe.x + (ui.safe.width - w) / 2, ui.safe.y + (ui.safe.height - h) / 2, w, h};
     ui_round(card, 14, theme.surface_hi);
     ui_round_line(card, 14, theme.border);
     ui_text_box("Keyboard shortcuts", (Rectangle){card.x + pad, card.y + pad, w - 2 * pad, DP(28)}, 18, FONT_SEMIBOLD, theme.text, ALIGN_LEFT, 0);
-    Rectangle body = {card.x + pad, card.y + pad + DP(40), w - 2 * pad, h - 2 * pad - DP(40)};
-    static fr_scroll scroll;
-    ui_scroll(ui_id("help-list", 0), &scroll, body, n * lh);
-    ui_clip_begin(body);
+    int res = ui_text_field(fid, &filter, (Rectangle){card.x + pad, card.y + pad + DP(40), w - 2 * pad, DP(36)}, "Search keys and actions");
+    if (res & TEXT_CHANGED) scroll.offset = 0;
+    const char *q = filter.buf;
+    int show[sizeof shortcuts / sizeof *shortcuts], shown = 0;
     for (int i = 0; i < n; i++) {
-        float y = body.y + i * lh - scroll.offset;
+        if (shortcuts[i][0]) {
+            if (help_matches(i, q)) show[shown++] = i;
+            continue;
+        }
+        int any = 0;
+        for (int k = i + 1; k < n && shortcuts[k][0] && !any; k++) any = help_matches(k, q);
+        if (any) show[shown++] = i;
+    }
+    Rectangle body = {card.x + pad, card.y + pad + top, w - 2 * pad, h - 2 * pad - top};
+    ui_scroll(ui_id("help-list", 0), &scroll, body, shown * lh);
+    ui_clip_begin(body);
+    if (!shown) ui_text_box("No shortcut matches", (Rectangle){body.x, body.y, body.width, lh}, 14, FONT_REGULAR, theme.text_faint, ALIGN_LEFT, 0);
+    for (int j = 0; j < shown; j++) {
+        int i = show[j];
+        float y = body.y + j * lh - scroll.offset;
         if (!shortcuts[i][0]) {
             ui_text_box(shortcuts[i][1], (Rectangle){body.x, y + DP(4), body.width, lh}, 13, FONT_SEMIBOLD, theme.text_dim, ALIGN_LEFT, 0);
             continue;
@@ -370,11 +406,9 @@ static void draw_help(void)
         ui_text_box(shortcuts[i][1], (Rectangle){body.x + kw, y, body.width - kw, lh}, 14, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 0);
     }
     ui_clip_end();
-    int typed_q = 0;
-    for (int i = 0; i < ui.nchars; i++)
-        if (ui.chars[i] == '?') typed_q = 1;
-    if (typed_q || ui_key(KEY_ESCAPE, 0) || ui_key(KEY_BACK, 0) || (ui.pressed && !CheckCollisionPointRec(ui.mouse, card)))
-        app.help_open = 0, ui.nchars = 0;
+    int esc = (res & TEXT_CANCEL) || (ui.focus != fid && (ui_key(KEY_ESCAPE, 0) || ui_key(KEY_BACK, 0)));
+    if (esc && filter.len) text_set(&filter, ""), ui.focus = fid, scroll.offset = 0;
+    else if (esc || (ui.pressed && !CheckCollisionPointRec(ui.mouse, card))) app.help_open = 0, ui.nchars = 0, ui.focus = 0;
     ui_layer(0);
 }
 
