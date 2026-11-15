@@ -62,7 +62,7 @@ static void leave_now(const char *str, int n)
 void search_poll(void)
 {
     fr_browser *b = browser_by_id(s.owner);
-    if (!b || !b->results) {
+    if (!b || !b->results || b->dupes) {
         if (s.st.running) fr_search_cancel();
         s.st.running = 0;
         fr_entries_free(&s.pending);
@@ -109,6 +109,7 @@ int search_header(Rectangle r)
     if (s.prompting && browser_by_id(s.prompting) != tabs_current(&tabs)) prompt_stop();
     int prompting = s.prompting && s.prompting == br.id;
     if (!prompting && !br.results) return 0;
+    if (!prompting && br.dupes) return dupes_header(r);
     float b = DP(ui.touch ? 48 : 36), x = r.x + DP(4), right = r.x + r.width - DP(4), cy = r.y + (r.height - b) / 2;
     if (prompting) {
         if (ui_icon_button(ui_id("search-close", 0), (Rectangle){x, cy, b, b}, "arrow-left", theme.text)) {

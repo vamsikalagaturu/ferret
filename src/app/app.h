@@ -1,5 +1,6 @@
 #ifndef FR_APP_H
 #define FR_APP_H
+#include "core/bookmarks.h"
 #include "core/tabs.h"
 #include "jobs/jobs.h"
 #include "platform.h"
@@ -26,6 +27,9 @@ typedef struct {
     int selected;
     int placeholder; /* the row of a file or folder being named, not on disk yet */
     double flash_at; /* yanked (copied, cut, path copied) then: the row flashes */
+    int group;       /* duplicate results (dupes.c): its group, from 1; 0 none */
+    int sized;       /* folders: tree_size is known (sizes.c) */
+    uint64_t tree_size; /* the bytes of the files below */
 } fr_item;
 
 /* one per pane of each tab (core/tabs.h) */
@@ -62,6 +66,8 @@ typedef struct fr_browser {
     float shown_w;      /* views.c: the width view_draw last had, which the layout in effect and the grid follow */
     char *shown_uri;    /* and the folder it drew */
     int reveal_pending;
+    int dupes;          /* the results are groups of duplicate files (dupes.c) */
+    char *prev_uri;     /* the folder shown before this one, which '' goes back to */
 } fr_browser;
 
 /* The tabs, and the browser the code works on as br: between frames the pane with the keys; while a pane is drawn,
@@ -188,6 +194,7 @@ typedef struct {
     char *theme[THEME_ROLES]; /* [theme] values as written, NULL for roles not set */
     char *last_folder, *start_folder; /* URIs, NULL when not set */
     fr_strs last_tabs; /* URIs: the tabs' folders when ferret last ran with more than one */
+    fr_bookmarks bookmarks; /* [bookmarks]: URIs by key */
 } fr_settings;
 extern fr_settings settings;
 #define UI_SCALE_MIN 0.5
@@ -312,4 +319,30 @@ void trash_empty(void);   /* asks first */
 
 /* ---- files dropped on the window (drop.c), between frames ---- */
 void drop_poll(void);
+
+/* ---- bookmarks (bookmarks.c): m<key> marks the folder, '<key> goes there ('' to the last folder), "<key> unmarks ---- */
+void bookmark_key(int prefix, int key); /* the chord prefix (m ' ") and the key after it */
+void bookmarks_draw(Rectangle list);    /* the marks while a chord waits for its key, over list; the panel */
+void bookmarks_panel_open(void);        /* the list to tap, for touch (the overflow menu's Bookmarks) */
+int bookmarks_panel_is_open(void);
+
+/* ---- folder sizes, everything below each added up, on demand (sizes.c); kept until the window closes ---- */
+void sizes_measure(int all); /* the target folders (all, or no folder targeted: every folder shown); again: stops */
+int sizes_running(void);     /* for br */
+/* a folder being measured (1, *bytes so far) or waiting its turn (2); 0 neither */
+int sizes_progress(const fr_item *it, uint64_t *bytes);
+void sizes_apply(void); /* br's folders take the sizes known: after a listing */
+void sizes_poll(void);  /* between frames, after the jobs: a finished job forgets what it may have changed */
+
+/* ---- duplicate files below the folder (dupes.c), shown as results grouped ---- */
+void dupes_start(void);
+void dupes_select_copies(void); /* every file of each group but the first shown */
+int dupes_running(void);        /* for br */
+int dupes_header(Rectangle r);  /* the results' bar */
+void dupes_poll(void);
+
+/* ---- a picture at the size it is shown, local or not (preview.c) ---- */
+/* uri (e its entry) fitted in box: 1 drawn, 0 on its way, -1 none (not an image, too big, or it failed) */
+int preview_image_draw(const char *uri, const fr_entry *e, Rectangle box);
+void preview_poll(void); /* between frames: starts what the frame asked for */
 #endif
