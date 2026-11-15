@@ -1,0 +1,79 @@
+# ff searches the names below the folder, fg the text inside the files; the results replace the list until Esc
+# (or Backspace's history); gr opens the folder a result is in, on it.
+key f
+key f
+expect mode NORMAL
+type notes
+key enter
+expect rows 2
+shot names.png
+key g
+key g
+expect cursor beta/notes.txt
+key j
+expect cursor notes.txt
+
+# Esc leaves the results for the folder's own list, the cursor staying on the same file
+key esc
+expect rows 9
+expect cursor notes.txt
+
+# glob patterns, then gr on a result in a folder below
+key f
+key f
+type *.txt
+key enter
+expect rows 7
+key /
+type deep
+key enter
+expect cursor alpha/sub/deep.txt
+key g
+key r
+expect folder alpha/sub
+expect cursor deep.txt
+expect rows 1
+
+# the history keeps folders, not results: back is the folder's own list
+key backspace
+expect folder .
+expect rows 9
+
+# fg: the text inside the files; the field opens with the last term of its kind
+key f
+key g
+type notes
+key enter
+expect rows 2
+expect cursor beta/notes.txt
+key j
+expect cursor notes.txt
+key esc
+
+# nothing found, then Esc on the prompt does not search
+key f
+key f
+type no-such-name
+key enter
+expect rows 0
+key f
+key f
+key esc
+expect rows 0
+key esc
+expect rows 9
+
+# a rename from the results renames the file where it is
+key f
+key f
+type b1
+key enter
+expect cursor beta/b1.txt
+key r
+key ctrl+a
+type b2.txt
+key enter
+expect exists beta/b2.txt
+expect missing beta/b1.txt
+expect cursor beta/b2.txt
+quit

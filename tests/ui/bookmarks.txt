@@ -1,0 +1,72 @@
+# m<key> bookmarks the folder shown, '<key> goes there, '' back to the folder shown before, "<key> forgets one.
+# The marks list shows over the files while the chord waits; they are saved in settings.toml.
+key '
+key a
+expect toast No bookmark a
+expect folder .
+
+dclick row alpha
+key m
+shot marks.png
+key a
+expect toast Bookmark a:
+key l
+expect folder alpha/sub
+key m
+key 1
+expect toast Bookmark 1:
+
+key g
+key h
+expect folder ../home
+key '
+key a
+expect folder alpha
+key '
+key 1
+expect folder alpha/sub
+
+# '' goes back to the folder before, and again back
+key '
+key '
+expect folder alpha
+key '
+key '
+expect folder alpha/sub
+
+# a key that is no letter or digit
+key m
+key ,
+expect toast letter or a digit
+
+# setting a key again moves it
+key h
+key h
+expect folder .
+key m
+key a
+key '
+key 1
+key '
+key a
+expect folder .
+wait 120
+expect exists ../config/ferret/settings.toml
+
+# Esc while the chord waits types nothing
+key '
+key esc
+key j
+expect cursor beta
+
+# "<key> forgets it
+key "
+key a
+expect toast Bookmark a removed
+key '
+key a
+expect toast No bookmark a
+key "
+key a
+expect toast No bookmark a
+quit

@@ -1,0 +1,110 @@
+# The Trash place lists what went to the trash. Its row menu restores (to where the item was), deletes for
+# good and empties the trash; each delete asks first.
+click place Trash
+expect folder trash:///
+expect rows 0
+key backspace
+expect folder .
+
+# three items to the trash
+key G
+expect cursor zeta.md
+key D
+key enter
+key g
+key g
+expect cursor alpha
+key D
+key enter
+key G
+expect cursor report.tar.gz
+key D
+key enter
+expect missing zeta.md
+expect missing alpha
+expect missing report.tar.gz
+
+click place Trash
+expect folder trash:///
+expect rows 3
+shot trash.png
+
+# Restore, the menu's first item
+rclick row zeta.md
+key down
+key enter
+expect exists zeta.md
+expect missing ../data/Trash/files/zeta.md
+expect missing ../data/Trash/info/zeta.md.trashinfo
+expect rows 2
+expect toast Restored to
+
+# a folder comes back whole
+rclick row alpha
+key down
+key enter
+expect exists alpha/sub/deep.txt
+expect rows 1
+
+# Delete permanently: Esc keeps it, Enter deletes it
+rclick row report.tar.gz
+key down
+key down
+key down
+key enter
+key esc
+expect exists ../data/Trash/files/report.tar.gz
+rclick row report.tar.gz
+key down
+key down
+key down
+key enter
+key enter
+expect missing ../data/Trash/files/report.tar.gz
+expect missing ../data/Trash/info/report.tar.gz.trashinfo
+expect rows 0
+expect missing report.tar.gz
+
+# Empty trash, from the menu of any row
+key backspace
+expect folder .
+key g
+key g
+key j
+expect cursor beta
+key D
+key enter
+key j
+key D
+key enter
+click place Trash
+expect rows 2
+rclick row beta
+key down
+key down
+key down
+key down
+key enter
+key enter
+expect rows 0
+expect missing ../data/Trash/files/beta
+expect missing ../data/Trash/files/gamma
+
+# restoring where the name is taken again: it comes back under a free name
+key backspace
+key G
+expect cursor zeta.md
+key D
+key enter
+key a
+type zeta.md
+key enter
+expect exists zeta.md
+click place Trash
+rclick row zeta.md
+key down
+key enter
+expect toast Restored to
+expect exists zeta (2).md
+expect rows 0
+quit

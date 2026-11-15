@@ -1,0 +1,28 @@
+# Alt+Enter opens Properties for the cursor row or the selection (a selection gets the batch permissions and
+# owner section); Esc closes, Enter with nothing changed changes nothing. Its checkboxes take clicks only, so the
+# batch change itself is not scripted.
+key G
+expect cursor zeta.md
+key alt+enter
+wait 10
+shot one.png
+key esc
+key j
+expect cursor zeta.md
+
+key g
+key g
+key v
+key j
+key j
+expect selected 3
+key alt+enter
+wait 10
+shot batch.png
+key enter
+key esc
+expect selected 3
+expect exists alpha/sub/deep.txt
+key esc
+expect selected 0
+quit

@@ -1,0 +1,103 @@
+# R renames the selection (or the cursor row) as text, one name per line, Ctrl+Enter to rename; E by a find and
+# replace rule, Enter to rename. A bulk rename is one step for u / U.
+
+# a swap of two names goes through temporary names
+key G
+expect cursor zeta.md
+key space
+key g
+key g
+key j
+key j
+key j
+key j
+expect cursor a.txt
+key space
+key k
+expect selected 2
+key R
+expect mode NORMAL
+shot as-text.png
+key ctrl+a
+type zeta.md
+key enter
+type a.txt
+key ctrl+enter
+expect toast Renamed 2 items
+expect text a.txt # zeta
+expect text zeta.md a
+expect selected 0
+
+# u and U undo and redo it whole
+key u
+expect toast Undid: renamed 2 items
+expect text a.txt a
+expect text zeta.md # zeta
+key U
+expect toast Redid: renamed 2 items
+expect text a.txt # zeta
+key u
+expect text a.txt a
+
+# a line count that does not match, and a name with a slash: the dialog stays, nothing changes
+expect cursor a.txt
+key R
+key ctrl+a
+type one
+key enter
+type two
+key ctrl+enter
+expect toast 2 lines for 1 item
+key ctrl+a
+type a/b
+key ctrl+enter
+expect toast cannot be named
+key esc
+expect exists a.txt
+expect missing one
+key R
+key esc
+key j
+expect cursor notes.txt
+
+# E: find and replace inside the names of beta's files
+dclick row beta
+expect folder beta
+key ctrl+a
+expect selected 2
+key E
+type notes
+key tab
+type memo
+shot rule.png
+key enter
+expect toast Renamed 1 item
+expect exists beta/memo.txt
+expect exists beta/b1.txt
+expect missing beta/notes.txt
+
+# an empty Find replaces the whole stem; {n:2} numbers the items in the order shown
+key ctrl+a
+key E
+key tab
+type file-{n:2}
+key enter
+expect exists beta/file-01.txt
+expect exists beta/file-02.txt
+expect text beta/file-01.txt beta one
+expect text beta/file-02.txt the other notes
+key u
+expect exists beta/b1.txt
+expect exists beta/memo.txt
+
+# a rule that changes nothing renames nothing and closes
+key ctrl+a
+key E
+type zzz
+key tab
+type yyy
+key enter
+expect exists beta/b1.txt
+expect mode NORMAL
+key j
+quit

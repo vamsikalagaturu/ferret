@@ -1,0 +1,59 @@
+# yl takes the cursor row or the selection to link to, P makes the links in the folder shown (relative, as the
+# settings say by default); the taken set stays for more folders until the next yl.
+key P
+expect toast Nothing to link to
+
+key G
+expect cursor zeta.md
+key y
+key l
+expect toast 1 item to link to
+dclick row alpha
+expect folder alpha
+key P
+expect link alpha/zeta.md ../zeta.md
+expect text alpha/zeta.md # zeta
+
+# again, into a folder deeper down
+key l
+expect folder alpha/sub
+key P
+expect link alpha/sub/zeta.md ../../zeta.md
+
+# again where the name is taken: asked, as a paste is; Esc skips it
+key P
+shot taken.png
+key esc
+expect link alpha/sub/zeta.md ../../zeta.md
+expect missing alpha/sub/zeta (2).md
+key P
+key enter
+expect link alpha/sub/zeta.md ../../zeta.md
+expect exists ../data/Trash/files/zeta.md
+
+# a folder and a file at once
+key h
+key h
+key g
+key g
+key j
+expect cursor beta
+key space
+key space
+expect selected 2
+key k
+expect cursor empty
+key y
+key l
+dclick row gamma
+key P
+expect link gamma/beta ../beta
+expect link gamma/empty ../empty
+expect exists gamma/beta/b1.txt
+
+# undo takes the links away, not what they point to
+key u
+expect missing gamma/beta
+expect missing gamma/empty
+expect exists beta/b1.txt
+quit

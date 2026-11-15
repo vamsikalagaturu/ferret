@@ -8,11 +8,15 @@
  *   wheel DY, wait FRAMES, shot FILE.png, quit
  *   expect folder|cursor|selected|exists|missing|mode|clipboard|layout|toast VALUE
  *   expect tabs N, tab N (the current one, from 1), pane single|left|right (the one with the keys)
+ *   expect rows N (in the view), text PATH TEXT (the file holds TEXT and a newline), link PATH TARGET (a symlink to
+ *   TARGET, as it was written), size NAME BYTES (the folder row's measured size), marked NAME STATE (its comparison
+ *   with the other pane: none, only, newer, older, differs, same, folder, inside; off when not compared)
  * Between commands the window runs until it is idle: nothing to redraw, no queued input, no job running, no
- * thumbnail being made.
+ * thumbnail being made, no comparison running.
  * Relative paths start at FOLDER. Failures go to stderr as SCRIPT:LINE: ...; the exit status is 1 after any. */
 #define _GNU_SOURCE
 #include "app.h"
+#include "jobs/compare.h"
 #include "rlgl.h"
 #include <errno.h>
 #include <stdarg.h>
@@ -183,6 +187,67 @@ static char *resolve(const char *path)
     return fr_format("%s/%s", rp.base, path);
 }
 
+static fr_item *row_named(const char *name, size_t len)
+{
+    for (int v = 0; v < br.view.n; v++) {
+        fr_item *it = browser_item(v);
+        if (strlen(it->e.name) == len && !strncmp(it->e.name, name, len)) return it;
+    }
+    return NULL;
+}
+
+/* "PATH VALUE" split at the first space, "NAME VALUE" (a row's name may hold spaces) at the last; 0 when no value */
+static int split(const char *s, int at_last, char **left, const char **right)
+{
+    const char *sp = at_last ? strrchr(s, ' ') : strchr(s, ' ');
+    if (!sp || sp == s || !sp[1]) return 0;
+    *left = fr_strndup(s, (size_t)(sp - s));
+    *right = sp + 1;
+    return 1;
+}
+
+static void expect_pair(const command *c, const char *verb, const char *value)
+{
+    static const char *states[] = {[CMP_NONE] = "none",   [CMP_ONLY] = "only",     [CMP_NEWER] = "newer",
+                                   [CMP_OLDER] = "older", [CMP_DIFFERENT] = "differs", [CMP_SAME] = "same",
+                                   [CMP_FOLDER] = "folder", [CMP_INSIDE] = "inside"};
+    char *left;
+    const char *right;
+    int by_row = !strcmp(verb, "size") || !strcmp(verb, "marked");
+    if (!split(value, by_row, &left, &right)) {
+        fail(c, "expect %s takes two values", verb);
+        return;
+    }
+    fr_item *it = by_row ? row_named(left, strlen(left)) : NULL;
+    if (by_row && !it) fail(c, "no row \"%s\" in %s", left, br.uri ? br.uri : "(no folder)");
+    else if (!strcmp(verb, "size")) {
+        unsigned long long want = strtoull(right, NULL, 10);
+        if (!it->sized) fail(c, "\"%s\" has no measured size", left);
+        else if (it->tree_size != want) fail(c, "expected \"%s\" to measure %llu bytes, got %llu", left, want, (unsigned long long)it->tree_size);
+    } else if (!strcmp(verb, "marked")) {
+        int s = compare_state(left);
+        const char *got = s >= 0 && s < (int)(sizeof states / sizeof *states) && states[s] ? states[s] : "off";
+        if (strcmp(got, right)) fail(c, "expected \"%s\" marked %s, got %s", left, right, got);
+    } else if (!strcmp(verb, "link")) {
+        char *path = resolve(left), to[4096];
+        ssize_t n = readlink(path, to, sizeof to - 1);
+        if (n < 0) fail(c, "%s is no link: %s", path, strerror(errno));
+        else if (to[n] = 0, strcmp(to, right)) fail(c, "expected %s to link to %s, got %s", path, right, to);
+        free(path);
+    } else {
+        char *path = resolve(left), got[4096];
+        FILE *f = fopen(path, "rb");
+        size_t n = f ? fread(got, 1, sizeof got - 1, f) : 0;
+        got[n] = 0;
+        if (!f) fail(c, "cannot read %s: %s", path, strerror(errno));
+        else if (n != strlen(right) + 1 || strncmp(got, right, n - 1) || got[n - 1] != '\n')
+            fail(c, "expected %s to hold \"%s\", got \"%.*s\"", path, right, (int)(n && got[n - 1] == '\n' ? n - 1 : n), got);
+        if (f) fclose(f);
+        free(path);
+    }
+    free(left);
+}
+
 static void expect(const command *c)
 {
     const char *a = c->arg, *value = a + strcspn(a, " ");
@@ -229,6 +294,12 @@ static void expect(const command *c)
     } else if (IS("toast")) {
         const char *got = ui_toast_shown();
         if (!*got || !strstr(got, value)) fail(c, "expected a toast with \"%s\", got \"%s\"", value, got);
+    } else if (IS("rows")) {
+        if (br.view.n != atoi(value)) fail(c, "expected %d rows, got %d", atoi(value), br.view.n);
+    } else if (IS("text") || IS("link") || IS("size") || IS("marked")) {
+        char verb[8];
+        snprintf(verb, sizeof verb, "%.*s", (int)sl, a);
+        expect_pair(c, verb, value);
     }
 #undef IS
 }
@@ -300,7 +371,7 @@ void replay_capture(void)
 
 int replay_frame(void)
 {
-    int idle = !ui.dirty && !ui_events_pending() && !jobs_busy() && !thumbs_busy();
+    int idle = !ui.dirty && !ui_events_pending() && !jobs_busy() && !thumbs_busy() && !compare_busy();
     ui.dirty = 1;
     if (rp.wait > 0) return rp.wait--, 1;
     if (!idle && ++rp.settling < IDLE_FRAMES_MAX) return 1;
@@ -341,12 +412,13 @@ static const char *check(const char *verb, const char *arg)
     if (!strcmp(verb, "quit")) return *arg ? "quit takes nothing" : NULL;
     if (!strcmp(verb, "expect")) {
         static const char *subjects[] = {"folder", "cursor", "selected", "exists", "missing", "mode", "clipboard", "layout", "toast",
-                                         "tabs", "tab", "pane"};
+                                         "tabs", "tab", "pane", "rows", "text", "link", "size", "marked"};
         size_t sl = strcspn(arg, " ");
         for (size_t k = 0; k < sizeof subjects / sizeof *subjects; k++)
             if (sl == strlen(subjects[k]) && !strncmp(arg, subjects[k], sl))
                 return arg[sl] || !strcmp(subjects[k], "clipboard") ? NULL : "expect what?";
-        return "expect folder, cursor, selected, exists, missing, mode, clipboard, layout, toast, tabs, tab or pane";
+        return "expect folder, cursor, selected, exists, missing, mode, clipboard, layout, toast, tabs, tab, pane, rows, text, link, "
+               "size or marked";
     }
     return "unknown command";
 }

@@ -1,0 +1,66 @@
+# fi fv fa fo fz fc show only images, video, audio, documents, archives or code (folders stay to walk through);
+# the same chord again, fx or Esc shows everything.
+expect rows 9
+key f
+key i
+expect rows 5
+key G
+expect cursor photo.png
+shot images.png
+key f
+key i
+expect rows 9
+
+key f
+key z
+expect rows 5
+key G
+expect cursor report.tar.gz
+key f
+key x
+expect rows 9
+
+# documents take text too
+key f
+key o
+expect rows 7
+key G
+expect cursor zeta.md
+key esc
+expect rows 9
+
+# no file of the kind here: only the folders
+key f
+key v
+expect rows 4
+key f
+key a
+expect rows 4
+key f
+key c
+expect rows 4
+
+# with the name filter on top
+key f
+key o
+key /
+type no
+key enter
+expect rows 1
+expect cursor notes.txt
+key esc
+expect rows 7
+key esc
+expect rows 9
+
+# a folder with no folders and no such file
+dclick row gamma
+expect folder gamma
+key f
+key i
+expect rows 0
+shot none.png
+key f
+key x
+expect rows 1
+quit

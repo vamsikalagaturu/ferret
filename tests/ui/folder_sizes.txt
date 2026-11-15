@@ -1,0 +1,75 @@
+# dc measures the folder on the cursor row, or the selected folders, on a thread; the size shows in the list and
+# ss sorts by it. alpha holds 13 + 7 bytes, beta 9 + 16, gamma 2, empty nothing.
+expect cursor alpha
+key d
+key c
+wait 30
+expect size alpha 20
+shot measured.png
+
+key j
+key space
+key space
+key space
+expect selected 3
+key k
+key d
+key c
+wait 30
+expect size beta 25
+expect size empty 0
+expect size gamma 2
+key esc
+
+# ss: the folders by their size, smallest first; S reverses
+key s
+key s
+key g
+key g
+shot by-size.png
+expect cursor empty
+key j
+expect cursor gamma
+key S
+key g
+key g
+expect cursor beta
+key S
+key s
+key n
+
+# on a file row: every folder here
+key G
+key d
+key c
+expect toast Measuring 4 folders
+wait 30
+expect size alpha 20
+
+# in a folder with none
+key g
+key g
+key j
+key j
+key l
+expect folder empty
+key d
+key c
+expect toast No folders here to measure
+key h
+
+# a change below a measured folder: the size goes stale and is measured again
+key g
+key g
+key l
+expect folder alpha
+key a
+type more.txt
+key enter
+key h
+expect cursor alpha
+key d
+key c
+wait 30
+expect size alpha 20
+quit

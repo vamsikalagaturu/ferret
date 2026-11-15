@@ -171,6 +171,7 @@ static void apply(const char *uri, fr_entries *es, int rc)
     if (same && naming) push_placeholder();
     br.dir_mtime = fr_uri_local(uri) ? dir_mtime(uri) : 0;
     br.checked_at = ui.now;
+    br.loads++;
     if (!same) {
         free(br.uri);
         br.uri = fr_strdup(uri);

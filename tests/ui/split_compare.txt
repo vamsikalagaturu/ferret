@@ -1,0 +1,74 @@
+# The split view (F3; Tab moves the keys), F5 / F6 copy and move to the other pane, = compares the two folders
+# (a chip on each row), + selects what differs, > and < preview a sync to the right or left pane, Enter runs it.
+key =
+expect toast split view
+key f3
+expect pane right
+key =
+expect toast same folder
+
+# left: beta, right: empty
+key j
+key j
+expect cursor empty
+key l
+expect folder empty
+key tab
+expect pane left
+key j
+key l
+expect folder beta
+expect cursor b1.txt
+key f5
+expect exists empty/b1.txt
+
+# compare
+key =
+wait 30
+shot compared.png
+expect marked b1.txt same
+expect marked notes.txt only
+expect cursor b1.txt
+key +
+expect selected 1
+expect toast 1 item selected
+expect cursor notes.txt
+key esc
+key tab
+expect pane right
+expect marked b1.txt same
+key +
+expect toast Nothing differs here
+key tab
+
+# > from the left pane: the preview, Esc closes it, Enter copies
+key >
+shot sync.png
+key esc
+expect missing empty/notes.txt
+key >
+key enter
+expect exists empty/notes.txt
+expect text empty/notes.txt the other notes
+wait 30
+expect marked notes.txt same
+
+# something only on the right; < brings it to the left
+key tab
+key a
+type extra.txt
+key enter
+wait 30
+expect marked extra.txt only
+key <
+key enter
+expect exists beta/extra.txt
+wait 30
+expect marked extra.txt same
+
+# = again turns it off
+key =
+expect marked extra.txt off
+key f3
+expect pane single
+quit

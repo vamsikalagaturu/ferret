@@ -19,7 +19,7 @@ typedef struct {
 typedef struct {
     unsigned id; /* the browser's */
     char *uri;
-    int64_t mtime;
+    unsigned loads;
     int jobs_seen;
     double at;
     int rc; /* of the last run: -ENOENT no work tree, -ETIMEDOUT, ... */
@@ -70,7 +70,7 @@ static void start(pane_git *p, const fr_browser *b)
     if (pthread_create(&th, &attr, task_run, t)) t->rc = -EAGAIN, t->done = 1, t->refs = 1;
     pthread_attr_destroy(&attr);
     p->task = t;
-    p->mtime = b->dir_mtime;
+    p->loads = b->loads;
     p->jobs_seen = fr_jobs_finished();
     p->at = ui.now;
 }
@@ -110,7 +110,7 @@ static void poll_one(fr_browser *b)
         return;
     }
     /* outside a work tree, or where git was too slow, only a change of the folder asks again */
-    int changed = p->mtime != b->dir_mtime || p->jobs_seen != fr_jobs_finished();
+    int changed = p->loads != b->loads || p->jobs_seen != fr_jobs_finished();
     /* by age only on a frame drawn anyway: an idle window runs no git */
     if (changed || (!p->rc && ui.now - p->at >= GIT_REFRESH_S)) start(p, b);
 }

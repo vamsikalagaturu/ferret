@@ -22,7 +22,7 @@ static struct {
     /* what the result (or the task running) is of */
     unsigned left_id, right_id;
     char *left, *right;
-    int64_t left_mtime, right_mtime;
+    unsigned left_loads, right_loads;
     int jobs_seen;
     cmp_task *task;
     fr_cmp_items items;
@@ -70,7 +70,6 @@ static void forget(void)
     C.left_id = C.right_id = 0;
 }
 
-static int64_t mtime_of(const fr_browser *b) { return b->dir_mtime; }
 
 static void start(fr_browser *l, fr_browser *r)
 {
@@ -78,7 +77,7 @@ static void start(fr_browser *l, fr_browser *r)
     free(C.left), free(C.right);
     C.left = fr_strdup(l->uri), C.right = fr_strdup(r->uri);
     C.left_id = l->id, C.right_id = r->id;
-    C.left_mtime = mtime_of(l), C.right_mtime = mtime_of(r);
+    C.left_loads = l->loads, C.right_loads = r->loads;
     C.jobs_seen = fr_jobs_finished();
     cmp_task *t = fr_realloc(NULL, sizeof *t);
     *t = (cmp_task){.left = fr_strdup(C.left), .right = fr_strdup(C.right), .opt = C.opt, .refs = 2};
@@ -107,6 +106,7 @@ static int panes(fr_browser **l, fr_browser **r, const char **why)
 }
 
 int compare_on(void) { return C.on; }
+int compare_busy(void) { return C.on && C.task; }
 
 void compare_toggle(void)
 {
@@ -156,7 +156,7 @@ void compare_poll(void)
         ui.dirty = 1;
     }
     int moved = l->id != C.left_id || r->id != C.right_id || !C.left || strcmp(l->uri, C.left) || strcmp(r->uri, C.right);
-    int changed = mtime_of(l) != C.left_mtime || mtime_of(r) != C.right_mtime || fr_jobs_finished() != C.jobs_seen;
+    int changed = l->loads != C.left_loads || r->loads != C.right_loads || fr_jobs_finished() != C.jobs_seen;
     if (moved) fr_cmp_items_free(&C.items), C.have = 0;
     if ((moved || changed) && !C.preview) start(l, r);
 }

@@ -1,0 +1,91 @@
+# zc packs the cursor row or the selection into a zip, l opens an archive as a folder, ze extracts what it holds
+# here, zf into a new folder named after it; several archives each go into a folder of their own.
+# The fixture's report.tar.gz is no archive, so the real ones are made here first.
+expect cursor alpha
+key z
+key c
+expect exists alpha.zip
+expect cursor alpha.zip
+
+# inside: the folder as it was packed
+key l
+expect cursor alpha
+key l
+expect cursor sub
+key j
+expect cursor inner.txt
+key h
+key h
+expect folder .
+expect cursor alpha.zip
+
+# a selection of two files: the zip is named after the folder they are in
+key G
+expect cursor zeta.md
+key space
+key g
+key g
+key j
+key j
+key j
+key j
+expect cursor a.txt
+key space
+key k
+expect selected 2
+key z
+key c
+expect selected 0
+expect exists tree.zip
+
+# ze: the archive's top level into the folder shown
+dclick row empty
+key h
+key /
+type alpha.zip
+key enter
+key d
+key d
+key esc
+dclick row empty
+expect folder empty
+key p
+expect exists empty/alpha.zip
+expect missing alpha.zip
+key z
+key e
+expect exists empty/alpha/inner.txt
+expect text empty/alpha/sub/deep.txt in sub
+
+# zf: into a folder of its own, named after the archive; that name is taken here, so another one
+key z
+key f
+expect exists empty/alpha (2)/alpha/inner.txt
+expect exists empty/alpha/inner.txt
+
+# inside an archive there is nothing to extract from and nothing to pack into
+key G
+expect cursor alpha.zip
+key l
+expect cursor alpha
+key z
+key e
+expect toast Choose archives to extract
+key z
+key c
+expect toast Archives are made outside archives
+key h
+expect folder empty
+
+# a file named like an archive that is none: opening it shows an error, and back works
+key h
+key /
+type report
+key enter
+expect cursor report.tar.gz
+key l
+shot not-an-archive.png
+key backspace
+expect folder .
+expect exists report.tar.gz
+quit

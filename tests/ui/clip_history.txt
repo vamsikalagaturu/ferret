@@ -1,0 +1,58 @@
+# yh lists the sets copied (yy) and cut (dd) this session, newest first; the one picked is pasted here and becomes
+# the clipboard again. A set that was cut and pasted leaves the list.
+key y
+key h
+expect toast Nothing copied or cut yet
+
+key G
+expect cursor zeta.md
+key y
+key y
+key k
+expect cursor report.tar.gz
+key y
+key y
+key g
+key g
+key j
+key j
+key j
+expect cursor gamma
+key d
+key d
+
+# (gamma cut, report.tar.gz, zeta.md) into alpha: the third row, zeta.md's copy
+dclick row alpha
+key y
+key h
+shot history.png
+key j
+key j
+key enter
+expect exists alpha/zeta.md
+expect missing alpha/report.tar.gz
+expect exists zeta.md
+
+# (zeta.md, gamma cut, report.tar.gz) a digit picks a row: the cut moves gamma
+key y
+key h
+key 2
+expect exists alpha/gamma/g.txt
+expect missing gamma
+
+# (zeta.md, report.tar.gz) moved, the cut set is gone; a digit past the list picks nothing
+key y
+key h
+key 3
+key 2
+expect exists alpha/report.tar.gz
+key y
+key h
+key esc
+expect missing alpha/sub/zeta.md
+
+# the picked set is the clipboard: p pastes it again, here with a name conflict to skip
+key p
+key esc
+expect missing alpha/report (2).tar.gz
+quit

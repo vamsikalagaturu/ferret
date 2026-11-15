@@ -1,0 +1,99 @@
+# u undoes the last change and U redoes it (Ctrl+Z, Ctrl+Shift+Z too): renames, new items, copies, moves and the
+# trash, the newest first.
+key u
+expect toast Nothing to undo
+key U
+expect toast Nothing to redo
+
+# a rename
+key G
+expect cursor zeta.md
+key r
+key end
+type .bak
+key enter
+expect exists zeta.md.bak
+key u
+expect toast Undid: renamed zeta.md -> zeta.md.bak
+expect exists zeta.md
+expect missing zeta.md.bak
+key U
+expect toast Redid
+expect exists zeta.md.bak
+key ctrl+z
+expect exists zeta.md
+
+# a new folder and a new file
+key a
+type made/
+key enter
+expect exists made
+key a
+type made.txt
+key enter
+expect exists made.txt
+key u
+expect missing made.txt
+expect exists made
+key u
+expect missing made
+key U
+expect exists made
+key ctrl+shift+z
+expect exists made.txt
+
+# a copy: undo takes the copy away, to the trash, the source stays
+key g
+key g
+key j
+expect cursor beta
+key y
+key y
+key k
+key l
+expect folder alpha
+key p
+expect exists alpha/beta/b1.txt
+key u
+expect missing alpha/beta
+expect exists beta/b1.txt
+key U
+expect exists alpha/beta/notes.txt
+
+# a move: undo puts it back
+key h
+key G
+expect cursor zeta.md
+key d
+key d
+dclick row gamma
+key p
+expect exists gamma/zeta.md
+expect missing zeta.md
+key u
+expect exists zeta.md
+expect missing gamma/zeta.md
+
+# the trash: undo restores it where it was
+key h
+key G
+expect cursor zeta.md
+key D
+key enter
+expect missing zeta.md
+key u
+expect exists zeta.md
+expect toast Undid: moved zeta.md to the trash
+key U
+expect missing zeta.md
+key u
+expect exists zeta.md
+
+# a new change after an undo drops what U could have redone
+key u
+key a
+type after.txt
+key enter
+key U
+expect toast Nothing to redo
+quit

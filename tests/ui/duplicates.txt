@@ -1,0 +1,71 @@
+# fd lists the files below the folder that have the same contents, a group's files together, as results; fD
+# selects every copy but the first of each group, for D or X. Esc leaves the list.
+key f
+key D
+expect toast First look for duplicates
+key f
+key d
+wait 30
+expect rows 0
+shot none.png
+key esc
+expect rows 9
+
+# copies of zeta.md into alpha and gamma, of a.txt into empty
+key G
+expect cursor zeta.md
+key y
+key y
+dclick row alpha
+key p
+key h
+dclick row gamma
+key p
+key h
+key g
+key g
+key j
+key j
+key j
+key j
+expect cursor a.txt
+key y
+key y
+key k
+key k
+expect cursor empty
+key l
+key p
+key h
+expect exists alpha/zeta.md
+expect exists gamma/zeta.md
+expect exists empty/a.txt
+
+key f
+key d
+wait 30
+shot groups.png
+expect rows 5
+key f
+key D
+expect selected 3
+expect toast Selected 3 copies
+expect cursor gamma/zeta.md
+key D
+key enter
+expect rows 0
+key esc
+expect rows 8
+expect exists alpha/zeta.md
+expect exists a.txt
+expect missing zeta.md
+expect missing gamma/zeta.md
+expect missing empty/a.txt
+
+# none left
+key f
+key d
+wait 30
+expect rows 0
+key esc
+quit

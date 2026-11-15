@@ -1,0 +1,68 @@
+# g- lists the folders visited last, newest first, without the one shown; j/k or the arrows move, Enter or l
+# opens, a digit opens that row, Esc or q closes. They are saved in settings.toml.
+dclick row alpha
+key l
+expect folder alpha/sub
+key g
+key h
+expect folder ../home
+
+key g
+key -
+shot recent.png
+key enter
+expect folder alpha/sub
+
+# the list now: home, alpha, the tree
+key g
+key -
+key j
+key l
+expect folder alpha
+key g
+key -
+key 3
+expect folder .
+
+# closing changes nothing
+key g
+key -
+key esc
+expect folder .
+key g
+key -
+key q
+expect folder .
+key j
+expect cursor beta
+key g
+key -
+key down
+key down
+key up
+key enter
+expect folder alpha/sub
+
+# (the list: alpha, the tree, sub, home) a folder deleted since is still listed; opening it shows the error
+key backspace
+expect folder .
+key g
+key g
+key j
+key j
+key j
+expect cursor gamma
+key l
+expect folder gamma
+key h
+key X
+key enter
+expect missing gamma
+key g
+key -
+key enter
+expect folder gamma
+shot gone.png
+key backspace
+expect folder .
+quit

@@ -62,6 +62,7 @@ typedef struct fr_browser {
     int recent_pending;   /* opened since the last listing: one that works makes it a recent folder */
     int64_t dir_mtime;
     double checked_at;
+    unsigned loads;       /* listings applied, for views kept from the items (compare, git): mtimes count whole seconds */
     int watch;            /* core/watch.h's handle on the folder, -1: polled every 1.5 s */
     char *watch_uri;      /* the folder watch is for (or polled, when it could not be watched) */
     unsigned watch_seen;  /* the handle's serial when last acted on */
@@ -379,6 +380,7 @@ void drop_poll(void);
 
 /* ---- the split view's panes compared, and synced (compare.c) ---- */
 int compare_on(void);
+int compare_busy(void);
 void compare_toggle(void);             /* marks what differs between the panes, or stops */
 void compare_select_differences(void); /* in the pane with the keys */
 void compare_sync(int to_right);       /* a preview of what copying across does, then the job */

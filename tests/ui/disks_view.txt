@@ -1,0 +1,26 @@
+# gd opens the Disks view over the files, q (or Esc) closes it. Nothing here touches a disk: the view is opened,
+# looked at and closed only.
+key g
+key d
+wait 30
+shot disks.png
+key q
+expect folder .
+key j
+expect cursor beta
+
+key g
+key d
+wait 30
+key esc
+key j
+expect cursor empty
+
+# the file keys do not reach the files while it is open
+key g
+key d
+key j
+key j
+key q
+expect cursor empty
+quit
