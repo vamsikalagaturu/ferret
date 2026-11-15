@@ -26,3 +26,12 @@ if [ ! -f "$RAYLIB_OUT/lib/libraylib.a" ]; then
         -DCMAKE_INSTALL_PREFIX="$RAYLIB_OUT" -DCMAKE_INSTALL_LIBDIR=lib >/dev/null
     cmake --build "$ROOT/raylib-build-$BUILD_TAG" --target install -j"$JOBS" >/dev/null
 fi
+
+step "libsmb2 $LIBSMB2_VERSION, libssh2 $LIBSSH2_VERSION (over the system's libcrypto)"
+fetch_net_sources "$REPO"
+NET_OUT=$ROOT/net-smb2-$LIBSMB2_VERSION-ssh2-$LIBSSH2_VERSION-$BUILD_TAG
+if [ ! -f "$NET_OUT/smb2/lib/libsmb2.a" ] || [ ! -f "$NET_OUT/ssh2/lib/libssh2.a" ]; then
+    command -v ninja >/dev/null || { echo "missing: ninja" >&2; exit 1; }
+    pkg-config --exists libcrypto || { echo "missing: OpenSSL's libcrypto (libssl-dev)" >&2; exit 1; }
+    build_net "$NET_OUT"
+fi

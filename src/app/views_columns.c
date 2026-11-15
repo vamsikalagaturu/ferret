@@ -1,4 +1,5 @@
 #include "views.h"
+#include "jobs/async.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,6 +10,7 @@ typedef struct {
     char *uri;
     fr_entries es;
     int err, show_hidden;
+    int loading, arrived; /* a remote folder, listed on a thread of its own; its entries came since the last frame */
     fr_scroll scroll;
 } listing;
 
@@ -29,6 +31,27 @@ static void listing_clear(listing *l)
     *l = (listing){0};
 }
 
+static void keep(listing *l, fr_entries *all, int rc)
+{
+    l->err = rc;
+    for (int i = 0; i < all->n; i++) {
+        if (all->v[i].hidden && !l->show_hidden) fr_entry_free(&all->v[i]);
+        else FR_PUSH(l->es, all->v[i]);
+    }
+    free(all->v);
+    *all = (fr_entries){0};
+    if (l->es.n > 1) qsort(l->es.v, (size_t)l->es.n, sizeof *l->es.v, cmp_entries);
+    ui.dirty = 1;
+}
+
+static void listed(const char *uri, fr_entries *all, int rc, void *ctx)
+{
+    listing *l = ctx;
+    if (!l->loading || !l->uri || strcmp(l->uri, uri)) return;
+    l->loading = 0, l->arrived = 1;
+    keep(l, all, rc);
+}
+
 /* 1 when it was (re)loaded */
 static int listing_load(listing *l, const char *uri)
 {
@@ -36,15 +59,14 @@ static int listing_load(listing *l, const char *uri)
     listing_clear(l);
     l->uri = fr_strdup(uri);
     l->show_hidden = br.show_hidden;
-    fr_entries all = {0};
-    l->err = fr_vfs_list(uri, &all);
-    for (int i = 0; i < all.n; i++) {
-        if (all.v[i].hidden && !br.show_hidden) fr_entry_free(&all.v[i]);
-        else FR_PUSH(l->es, all.v[i]);
+    if (!fr_uri_local(uri) && fr_vfs_backend(uri)) {
+        l->loading = 1;
+        net_prepare(uri);
+        fr_async_list(uri, listed, l);
+        return 1;
     }
-    free(all.v);
-    if (l->es.n > 1) qsort(l->es.v, (size_t)l->es.n, sizeof *l->es.v, cmp_entries);
-    ui.dirty = 1;
+    fr_entries all = {0};
+    keep(l, &all, fr_vfs_list(uri, &all));
     return 1;
 }
 
@@ -64,7 +86,8 @@ static void draw_parent(Rectangle r)
     char *up = fr_uri_parent(br.uri);
     if (!up) return;
     float rh = app_row_height();
-    int fresh = listing_load(&parent, up);
+    int fresh = listing_load(&parent, up) || parent.arrived;
+    parent.arrived = 0;
     char *here = fr_uri_name(br.uri);
     int at = -1;
     for (int i = 0; i < parent.es.n; i++)
@@ -128,6 +151,10 @@ static void draw_file_info(Rectangle r, const fr_item *it)
 static void draw_folder_preview(Rectangle r, const char *uri)
 {
     if (listing_load(&preview, uri)) preview.scroll = (fr_scroll){0};
+    if (preview.loading) {
+        view_draw_empty(r, "loader-circle", "Loading...", NULL, 0);
+        return;
+    }
     if (preview.err) {
         view_draw_empty(r, "triangle-alert", "Cannot be read", fr_vfs_error(preview.err), 0);
         return;

@@ -1,10 +1,11 @@
 #include "vfs.h"
+#include "net/net.h"
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-static const fr_backend *backends[] = {&fr_backend_file};
+static const fr_backend *backends[] = {&fr_backend_file, &fr_backend_smb, &fr_backend_sftp};
 
 static size_t scheme_len(const char *uri)
 {
@@ -100,6 +101,11 @@ const char *fr_vfs_error(int err)
     switch (-err) {
     case EPROTONOSUPPORT: return "This kind of location is not supported";
     case ENOTSUP: return "Not supported here";
+    case FR_EAUTH: return "The server wants a user name and password";
+    case FR_EUNTRUSTED: return "The server is not trusted yet";
+    case FR_EIDCHANGED: return "The server's identity changed since it was trusted: ferret will not connect (remove "
+                               "its line from ~/.config/ferret/known_hosts if the change is expected)";
+    case EHOSTUNREACH: return "The server cannot be reached";
     default: return strerror(-err);
     }
 }

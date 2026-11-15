@@ -528,6 +528,45 @@ int plat_storage_granted(void)
 
 void plat_request_storage(void) { free(java("requestStorage", 0)); }
 
+/* FerretActivity's sealed file: server key -> "user\npassword" */
+static void wipe(char *s)
+{
+    if (!s) return;
+    volatile char *p = s;
+    while (*p) *p++ = 0;
+    free(s);
+}
+
+int plat_secret_available(void) { return 1; }
+
+int plat_secret_load(const char *key, char **user, char **password)
+{
+    char *v = java("secretGet", 1, key), *nl = v ? strchr(v, '\n') : NULL;
+    if (nl) {
+        *user = fr_strndup(v, (size_t)(nl - v));
+        *password = fr_strdup(nl + 1);
+    }
+    wipe(v);
+    return nl ? 0 : -1;
+}
+
+int plat_secret_save(const char *key, const char *user, const char *password)
+{
+    char *v = fr_format("%s\n%s", user, password), *r = java("secretPut", 2, key, v);
+    int ok = r != NULL;
+    wipe(v);
+    free(r);
+    return ok ? 0 : -1;
+}
+
+int plat_secret_forget(const char *key)
+{
+    char *r = java("secretDelete", 1, key);
+    int ok = r != NULL;
+    free(r);
+    return ok ? 0 : -1;
+}
+
 #define INTERNAL "/storage/emulated/0"
 
 static void add(fr_places *p, const char *label, const char *path, const char *icon, int removable)

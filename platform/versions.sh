@@ -17,12 +17,61 @@ NANOSVG_H_SHA256=e34fd5d084be106cea972d19ce5d27fd96d17ba89f8d06bdceee058420c8b2b
 NANOSVGRAST_H_SHA256=79a9c5f4db19debf9f3a648a1589e96d92854f245a5cb4f3d823f263785234d8
 NANOSVG_LICENSE_SHA256=e82bc3dd03400aecabe12201219ba14750dbc4b36faab58663a7a6068548d372
 
+# Network storage, linked statically: SMB (libsmb2, LGPL-2.1: ferret's own sources are open, as the licence asks of
+# a static link) and SFTP (libssh2, BSD-3-Clause) over OpenSSL's libcrypto
+LIBSMB2_VERSION=6.3
+LIBSMB2_URL=https://github.com/sahlberg/libsmb2/archive/refs/tags/libsmb2-$LIBSMB2_VERSION.tar.gz
+LIBSMB2_SHA256=5011003fd091513f897e1ebbb8e1a40af634386df7199716348b7f77569a2790
+LIBSSH2_VERSION=1.11.1
+LIBSSH2_URL=https://www.libssh2.org/download/libssh2-$LIBSSH2_VERSION.tar.gz
+LIBSSH2_SHA256=d9ec76cbe34db98eec3539fe2c899d26b0c837cb3eb466a56b0f109cabf658f7
+# Android has no libcrypto to link against; Linux uses the system's. 3.5 is the LTS line (to April 2030).
+OPENSSL_VERSION=3.5.9
+OPENSSL_URL=https://github.com/openssl/openssl/releases/download/openssl-$OPENSSL_VERSION/openssl-$OPENSSL_VERSION.tar.gz
+OPENSSL_SHA256=603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a
+
 # download $1 to $2 once and check it against SHA-256 $3
 fetch() {
     [ -f "$2" ] || { curl -fL -o "$2.part" "$1" && mv "$2.part" "$2"; }
     local sum
     sum=$( (sha256sum "$2" 2>/dev/null || shasum -a 256 "$2") | cut -d' ' -f1)
     [ "$sum" = "$3" ] || { echo "checksum mismatch for $2: $sum" >&2; return 1; }
+}
+
+# tarball $1 (checked against $2) unpacked as thirdparty/$3 ($4 = repo root)
+fetch_tarball() {
+    [ -d "$4/thirdparty/$3" ] && return 0
+    fetch "$1" "$4/thirdparty/$3.tar.gz" "$2"
+    mkdir -p "$4/thirdparty/$3.part"
+    tar -xzf "$4/thirdparty/$3.tar.gz" -C "$4/thirdparty/$3.part" --strip-components=1
+    mv "$4/thirdparty/$3.part" "$4/thirdparty/$3"
+}
+
+# libsmb2 and libssh2 into thirdparty/ ($1 = repo root); OpenSSL too with $2 = openssl
+fetch_net_sources() {
+    fetch_tarball "$LIBSMB2_URL" "$LIBSMB2_SHA256" "libsmb2-$LIBSMB2_VERSION" "$1"
+    fetch_tarball "$LIBSSH2_URL" "$LIBSSH2_SHA256" "libssh2-$LIBSSH2_VERSION" "$1"
+    if [ "${2:-}" = openssl ]; then fetch_tarball "$OPENSSL_URL" "$OPENSSL_SHA256" "openssl-$OPENSSL_VERSION" "$1"; fi
+}
+
+# cmake project $1 built and installed into $2, with the extra arguments after them
+build_static() {
+    local src=$1 out=$2
+    shift 2
+    cmake -Wno-deprecated -S "$src" -B "$out.build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS_RELEASE="$SIZE_CFLAGS -DNDEBUG" \
+        -DBUILD_SHARED_LIBS=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+        -DCMAKE_INSTALL_PREFIX="$out" -DCMAKE_INSTALL_LIBDIR=lib "$@" >/dev/null
+    cmake --build "$out.build" --target install -j"$JOBS" >/dev/null
+}
+
+# libsmb2 (no Kerberos: NTLM sign-in) and libssh2 (OpenSSL backend) into $1; the rest goes to cmake (the toolchain)
+build_net() {
+    local out=$1
+    shift
+    build_static "$REPO/thirdparty/libsmb2-$LIBSMB2_VERSION" "$out/smb2" -DENABLE_LIBKRB5=OFF -DENABLE_GSSAPI=OFF \
+        -DENABLE_EXAMPLES=OFF "$@"
+    build_static "$REPO/thirdparty/libssh2-$LIBSSH2_VERSION" "$out/ssh2" -DCRYPTO_BACKEND=OpenSSL -DBUILD_STATIC_LIBS=ON \
+        -DBUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF -DENABLE_ZLIB_COMPRESSION=OFF "$@"
 }
 
 # raylib and nanosvg sources into thirdparty/ ($1 = repo root)

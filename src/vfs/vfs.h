@@ -93,4 +93,6 @@ char *fr_uri_free_name(const char *dir, const char *name, int is_dir);
 int fr_name_valid(const char *name);
 
 extern const fr_backend fr_backend_file;
+extern const fr_backend fr_backend_smb;  /* vfs_smb.c */
+extern const fr_backend fr_backend_sftp; /* vfs_sftp.c */
 #endif
