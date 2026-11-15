@@ -32,6 +32,7 @@ for ABI in $ABIS; do
     cmake --fresh -S "$HERE" -B "$ROOT/build-$ABI" -G Ninja \
         -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
         -DANDROID_ABI=$ABI -DANDROID_PLATFORM=android-$MIN_API -DCMAKE_BUILD_TYPE=Release \
+        -DFR_LIBARCHIVE_DIR="$(libarchive_dir $ABI)" -DFR_NET_PREFIX="$(net_prefix $ABI)" \
         -DCMAKE_C_FLAGS_RELEASE="$SIZE_CFLAGS -DNDEBUG" >/dev/null
     cmake --build "$ROOT/build-$ABI" --target ferret -j"$JOBS"
 done

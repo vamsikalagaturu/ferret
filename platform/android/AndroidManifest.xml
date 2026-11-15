@@ -3,6 +3,8 @@
     package="io.github.vamsikalagaturu.ferret">
 
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <!-- SMB and SFTP servers -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <application
         android:label="ferret"
         android:icon="@mipmap/ic_launcher"

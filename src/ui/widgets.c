@@ -77,12 +77,34 @@ static void text_insert(fr_text *t, const char *s, int n)
     t->caret = t->anchor = t->caret + n;
 }
 
+/* what a field shows: its text, or a dot per character of a secret one; shown_at() maps a byte index of the text to
+ * one of that */
+#define DOT "\xe2\x80\xa2"
+static const char *shown(const fr_text *t, char *dots, size_t cap)
+{
+    if (!t->secret) return t->buf;
+    size_t n = 0;
+    for (int i = 0; i < t->len && n + 4 <= cap; i = fr_utf8_next(t->buf, t->len, i)) memcpy(dots + n, DOT, 3), n += 3;
+    dots[n] = 0;
+    return dots;
+}
+
+static int shown_at(const fr_text *t, int i)
+{
+    if (!t->secret) return i;
+    int k = 0;
+    for (int j = 0; j < i && j < t->len; j = fr_utf8_next(t->buf, t->len, j)) k += 3;
+    return k;
+}
+
 static int index_at(const fr_text *t, float x)
 {
+    char dots[sizeof t->buf * 3];
+    const char *s = shown(t, dots, sizeof dots);
     float prev = 0;
     for (int i = 0; i < t->len;) {
         int n = fr_utf8_next(t->buf, t->len, i);
-        float w = ui_text_width_n(t->buf, n, 15, FONT_REGULAR);
+        float w = ui_text_width_n(s, shown_at(t, n), 15, FONT_REGULAR);
         if (x < (prev + w) / 2) return i;
         prev = w, i = n;
     }
@@ -144,7 +166,7 @@ int ui_text_field(unsigned id, fr_text *t, Rectangle r, const char *placeholder)
                 t->caret = t->len;
                 if (!shift) t->anchor = t->len;
             } else if (k == KEY_A && m == MOD_CTRL) text_select(t, 0, t->len);
-            else if ((k == KEY_C || k == KEY_X) && m == MOD_CTRL && t->caret != t->anchor) {
+            else if ((k == KEY_C || k == KEY_X) && m == MOD_CTRL && t->caret != t->anchor && !t->secret) {
                 int a = t->anchor < t->caret ? t->anchor : t->caret, b = t->anchor < t->caret ? t->caret : t->anchor;
                 char *s = fr_strndup(t->buf + a, (size_t)(b - a));
                 plat_set_clipboard(s);
@@ -169,7 +191,9 @@ int ui_text_field(unsigned id, fr_text *t, Rectangle r, const char *placeholder)
 
     ui_round(r, 8, theme.surface);
     ui_round_line(r, 8, focused ? theme.accent : theme.border);
-    float caret_x = ui_text_width_n(t->buf, t->caret, 15, FONT_REGULAR);
+    char dots[sizeof t->buf * 3];
+    const char *s = shown(t, dots, sizeof dots);
+    float caret_x = ui_text_width_n(s, shown_at(t, t->caret), 15, FONT_REGULAR);
     if (caret_x - t->scroll > inner.width - DP(2)) t->scroll = caret_x - inner.width + DP(2);
     if (caret_x < t->scroll) t->scroll = caret_x;
     if (t->scroll < 0) t->scroll = 0;
@@ -180,10 +204,10 @@ int ui_text_field(unsigned id, fr_text *t, Rectangle r, const char *placeholder)
     else if (!t->len && placeholder) ui_text(placeholder, inner.x + DP(2), ty, 15, FONT_REGULAR, theme.text_faint);
     if (focused && t->caret != t->anchor) {
         int a = t->anchor < t->caret ? t->anchor : t->caret, b = t->anchor < t->caret ? t->caret : t->anchor;
-        float xa = ui_text_width_n(t->buf, a, 15, FONT_REGULAR), xb = ui_text_width_n(t->buf, b, 15, FONT_REGULAR);
+        float xa = ui_text_width_n(s, shown_at(t, a), 15, FONT_REGULAR), xb = ui_text_width_n(s, shown_at(t, b), 15, FONT_REGULAR);
         ui_rect((Rectangle){inner.x + xa - t->scroll, ty, xb - xa, (float)f.baseSize}, theme.selection);
     }
-    ui_text(t->buf, inner.x - t->scroll, ty, 15, FONT_REGULAR, theme.text);
+    ui_text(s, inner.x - t->scroll, ty, 15, FONT_REGULAR, theme.text);
     if (focused) {
         double phase = fmod(ui.now - caret_moved_at, 1.0);
         if (phase < 0.6) ui_rect((Rectangle){roundf(inner.x + caret_x - t->scroll), ty, fmaxf(1, roundf(DP(1.5f))), (float)f.baseSize}, theme.accent);
@@ -527,6 +551,7 @@ int ui_dialog(const fr_dialog *d)
     int msg_lines = d->message ? ui_text_wrapped(d->message, (Rectangle){0, 0, inner, 0}, 15, FONT_REGULAR, BLANK, 0) : 0;
     if (msg_lines) h += msg_lines * msg_lh + DP(8);
     if (d->field) h += field_h + DP(12);
+    if (d->field2) h += field_h + DP(12);
     if (d->check) h += check_h;
     float buttons_w = 0;
     for (int i = 0; i < d->nbuttons; i++) buttons_w += ui_button_width(d->buttons[i]) + (i ? gap : 0);
@@ -548,12 +573,23 @@ int ui_dialog(const fr_dialog *d)
         cy += msg_lines * msg_lh + DP(8);
     }
     if (d->field) {
-        unsigned fid = ui_id("dialog-field", 0);
-        ui.focus = fid;
-        int r = ui_text_field(fid, d->field, (Rectangle){x + pad, cy + DP(4), inner, field_h}, NULL);
+        unsigned fid = ui_id("dialog-field", 0), fid2 = ui_id("dialog-field", 1);
+        if (!d->field2) ui.focus = fid;
+        else if (ui.focus != fid && ui.focus != fid2) ui.focus = d->field->len ? fid2 : fid;
+        else if (ui_key(KEY_TAB, 0) || ui_key(KEY_TAB, MOD_SHIFT)) ui.focus = ui.focus == fid ? fid2 : fid;
+        int on_first = ui.focus == fid;
+        int r = ui_text_field(fid, d->field, (Rectangle){x + pad, cy + DP(4), inner, field_h}, d->hint);
+        cy += field_h + DP(12);
+        if (d->field2) {
+            /* Enter in the first moves on; the second takes keys from the next frame, not this one's again */
+            int move = (r & TEXT_SUBMIT) && on_first;
+            if (move) r &= ~TEXT_SUBMIT;
+            r |= ui_text_field(fid2, d->field2, (Rectangle){x + pad, cy + DP(4), inner, field_h}, d->hint2);
+            if (move) ui.focus = fid2;
+            cy += field_h + DP(12);
+        }
         if (r & TEXT_SUBMIT) chosen = d->nbuttons - 1;
         if (r & TEXT_CANCEL) chosen = d->cancel;
-        cy += field_h + DP(12);
     }
     if (d->check) {
         Rectangle row = {x + pad - DP(8), cy, inner + DP(16), check_h};

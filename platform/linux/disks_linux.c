@@ -1,8 +1,9 @@
 /* The desktop's disks (platform.h) from UDisks2 over the system D-Bus. One thread keeps the list, rebuilt on
  * UDisks2's signals; each request runs on a thread and connection of its own, as polkit may hold it while it asks
- * for a password. */
+ * for a password. Phones and cameras over MTP (src/vfs/vfs_mtp.c) follow the disks, opened by URI. */
 #define _GNU_SOURCE
 #include "platform.h"
+#include "vfs/vfs_mtp.h"
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
@@ -309,6 +310,7 @@ static void start(void)
 {
     pthread_t t;
     if (!pthread_create(&t, NULL, watch, NULL)) pthread_detach(t);
+    fr_mtp_start(plat_wake);
 }
 
 unsigned plat_disks_serial(void)
@@ -318,7 +320,7 @@ unsigned plat_disks_serial(void)
     pthread_mutex_lock(&lock);
     unsigned s = serial;
     pthread_mutex_unlock(&lock);
-    return s;
+    return s + fr_mtp_serial();
 }
 
 static int running_index(const char *id)
@@ -340,6 +342,14 @@ void plat_disks(fr_disks *out)
         FR_PUSH(*out, d);
     }
     pthread_mutex_unlock(&lock);
+    fr_mtp_devices mtp = {0};
+    fr_mtp_list_devices(&mtp);
+    for (int i = 0; i < mtp.n; i++) {
+        fr_disk d = {.id = fr_strdup(mtp.v[i].uri), .label = fr_strdup(mtp.v[i].label), .device = fr_strdup(""),
+                     .uri = fr_strdup(mtp.v[i].uri), .size = mtp.v[i].size, .removable = 1};
+        FR_PUSH(*out, d);
+    }
+    fr_mtp_devices_free(&mtp);
 }
 
 /* ---- requests ---- */

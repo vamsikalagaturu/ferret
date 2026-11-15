@@ -49,6 +49,13 @@ void plat_set_clipboard(const char *text);
 char *plat_clipboard(void); /* malloc'd, NULL for none */
 void plat_haptic(void);
 
+/* Server passwords in the system's keystore (platform/linux/secret_linux.c: libsecret; Android: the Android
+ * Keystore): 0 done, -1 not (or no keystore: plat_secret_available() is 0). Window thread. */
+int plat_secret_available(void);
+int plat_secret_load(const char *key, char **user, char **password); /* both malloc'd */
+int plat_secret_save(const char *key, const char *user, const char *password);
+int plat_secret_forget(const char *key);
+
 /* Storage permission: 1 granted, 0 not yet; plat_request_storage() opens the system's settings for it. */
 int plat_storage_granted(void);
 void plat_request_storage(void);
@@ -75,6 +82,7 @@ typedef struct {
     char *id; /* names it in requests */
     char *label, *device;
     fr_strs mounts; /* none: not mounted */
+    char *uri;      /* a device opened as this location instead of mounted (a phone over MTP), else NULL */
     uint64_t size;
     int removable, locked;
     int busy; /* the DISK_* request running on it, 0 none */

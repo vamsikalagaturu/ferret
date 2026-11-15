@@ -20,7 +20,7 @@ typedef struct {
     int desc, hidden;
     fr_layout layout;
     float ui_scale, font_scale;
-    fr_strs favorites;
+    fr_strs favorites, servers;
     char *folder;
 } state;
 
@@ -32,26 +32,33 @@ static int64_t file_mtime;
 
 static state live(void)
 {
-    return (state){br.sort, br.desc, br.show_hidden, app.layout, ui.user_scale, ui.text_scale, settings.favorites, br.uri};
+    return (state){br.sort, br.desc, br.show_hidden, app.layout, ui.user_scale, ui.text_scale, settings.favorites, settings.servers, br.uri};
+}
+
+static int strs_differ(const fr_strs *a, const fr_strs *b)
+{
+    if (a->n != b->n) return 1;
+    for (int i = 0; i < a->n; i++)
+        if (strcmp(a->v[i], b->v[i])) return 1;
+    return 0;
 }
 
 static int differs(const state *a, const state *b)
 {
     if (!a->folder != !b->folder || (a->folder && strcmp(a->folder, b->folder))) return 1;
-    if (a->sort != b->sort || a->desc != b->desc || a->hidden != b->hidden || a->layout != b->layout ||
-        a->ui_scale != b->ui_scale || a->font_scale != b->font_scale || a->favorites.n != b->favorites.n)
-        return 1;
-    for (int i = 0; i < a->favorites.n; i++)
-        if (strcmp(a->favorites.v[i], b->favorites.v[i])) return 1;
-    return 0;
+    return a->sort != b->sort || a->desc != b->desc || a->hidden != b->hidden || a->layout != b->layout ||
+           a->ui_scale != b->ui_scale || a->font_scale != b->font_scale || strs_differ(&a->favorites, &b->favorites) ||
+           strs_differ(&a->servers, &b->servers);
 }
 
 static void snapshot(state *s)
 {
     fr_strs_free(&s->favorites);
+    fr_strs_free(&s->servers);
     free(s->folder);
     *s = live();
     s->favorites = fr_strs_copy(&settings.favorites);
+    s->servers = fr_strs_copy(&settings.servers);
     s->folder = s->folder ? fr_strdup(s->folder) : NULL;
 }
 
@@ -155,6 +162,14 @@ static void apply(const fr_toml *t)
     free(start_written);
     v = fr_toml_get(t, "", "start_folder", TOML_STRING);
     start_written = v ? fr_strdup(v->str) : NULL;
+    if ((v = fr_toml_get(t, "", "servers", TOML_STRINGS))) {
+        fr_strs_free(&settings.servers);
+        for (i = 0; i < v->strs.n; i++) {
+            char *uri = server_uri(v->strs.v[i]);
+            if (uri && server_index(uri) < 0) FR_PUSH(settings.servers, uri);
+            else free(uri);
+        }
+    }
     for (i = 0; i < THEME_ROLES; i++) {
         free(settings.theme[i]);
         v = fr_toml_get(t, "theme", theme_roles[i], TOML_STRING);
@@ -213,6 +228,9 @@ static char *settings_text(void)
     fr_toml_comment(&o, "Start in this folder every time instead (a path, \"~\" for home, or a URI), for example:");
     if (start_written) fr_toml_string(&o, "start_folder", start_written);
     else fr_toml_comment(&o, "start_folder = \"~/Downloads\"");
+    fr_toml_comment(&o, "Servers in the sidebar's Network section: smb://[user@]host/share, sftp://[user@]host[:port]/path.");
+    fr_toml_comment(&o, "Passwords are not kept here: the system's keystore has them when you ask ferret to remember one.");
+    fr_toml_strings(&o, "servers", &settings.servers);
     fr_toml_comment(&o, "");
     fr_toml_table(&o, "theme");
     fr_toml_comment(&o, "Colours as \"#rrggbb\", over the desktop's and the Nord defaults, for any of: accent,");
@@ -320,3 +338,22 @@ static void favorite_toggle_now(const char *uri, int n)
 }
 
 void favorite_toggle(const char *uri) { app_defer(favorite_toggle_now, uri, 0); }
+
+int server_index(const char *uri)
+{
+    for (int i = 0; i < settings.servers.n; i++)
+        if (!strcmp(settings.servers.v[i], uri)) return i;
+    return -1;
+}
+
+static void server_set_now(const char *uri, int on)
+{
+    int i = server_index(uri);
+    if (on && i < 0) FR_PUSH(settings.servers, fr_strdup(uri));
+    if (on || i < 0) return;
+    free(settings.servers.v[i]);
+    memmove(settings.servers.v + i, settings.servers.v + i + 1, sizeof *settings.servers.v * (size_t)(settings.servers.n - i - 1));
+    settings.servers.n--;
+}
+
+void server_set(const char *uri, int on) { app_defer(server_set_now, uri, on); }

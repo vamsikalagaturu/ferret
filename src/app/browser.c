@@ -1,5 +1,7 @@
 #include "app.h"
+#include "jobs/async.h"
 #include <dirent.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -83,7 +85,8 @@ static void push_placeholder(void)
     FR_PUSH(br.items, it);
 }
 
-static void load(const char *uri)
+/* the listing of uri (rc its result) as the items, keeping the selection when uri is the folder shown; takes es */
+static void apply(const char *uri, fr_entries *es, int rc)
 {
     fr_strs selected = {0};
     int naming = 0;
@@ -95,20 +98,19 @@ static void load(const char *uri)
     items_free();
     free(br.error);
     br.error = NULL;
-    fr_entries es = {0};
-    int rc = fr_vfs_list(uri, &es);
     if (rc) br.error = fr_strdup(fr_vfs_error(rc));
-    for (int i = 0; i < es.n; i++) {
-        fr_item it = {.e = es.v[i], .kind = kind_of(es.v[i].name, es.v[i].is_dir), .count = -1};
+    for (int i = 0; i < es->n; i++) {
+        fr_item it = {.e = es->v[i], .kind = kind_of(es->v[i].name, es->v[i].is_dir), .count = -1};
         if (same)
             for (int k = 0; k < selected.n; k++)
                 if (!strcmp(selected.v[k], it.e.name)) it.selected = 1, br.nselected++;
         FR_PUSH(br.items, it);
     }
-    free(es.v);
+    free(es->v);
+    *es = (fr_entries){0};
     fr_strs_free(&selected);
     if (same && naming) push_placeholder();
-    br.dir_mtime = dir_mtime(uri);
+    br.dir_mtime = fr_uri_local(uri) ? dir_mtime(uri) : 0;
     br.checked_at = ui.now;
     if (!same) {
         free(br.uri);
@@ -117,9 +119,48 @@ static void load(const char *uri)
     rebuild_now(NULL, 0);
 }
 
+static unsigned serial; /* of the last listing asked for: an older one's answer comes too late */
+
+static void listed(const char *uri, fr_entries *es, int rc, void *ctx)
+{
+    if ((unsigned)(uintptr_t)ctx != serial || !br.uri || strcmp(br.uri, uri)) return;
+    br.loading = 0;
+    if (rc) net_ask(uri, rc, browser_reload);
+    apply(uri, es, rc);
+    if (br.focus_name && br.cursor >= 0) view_reveal(br.cursor);
+    free(br.focus_name);
+    br.focus_name = NULL;
+}
+
+/* A folder on this device is listed at once; a remote one on a thread of its own (listed() takes the answer), the
+ * last items staying until then when it is the same folder again. */
+static void load(const char *uri)
+{
+    serial++;
+    br.loading = 0;
+    if (fr_uri_local(uri) || !fr_vfs_backend(uri)) {
+        fr_entries es = {0};
+        int rc = fr_vfs_list(uri, &es);
+        apply(uri, &es, rc);
+        return;
+    }
+    if (!br.uri || strcmp(br.uri, uri)) {
+        items_free();
+        free(br.error);
+        br.error = NULL;
+        free(br.uri);
+        br.uri = fr_strdup(uri);
+        rebuild_now(NULL, 0);
+    }
+    br.loading = 1;
+    net_prepare(uri);
+    fr_async_list(uri, listed, (void *)(uintptr_t)serial);
+}
+
 static void reload_now(const char *s, int n)
 {
     if (br.uri) load(br.uri);
+    if (br.loading) return;
     free(br.focus_name);
     br.focus_name = NULL;
 }
@@ -150,6 +191,10 @@ static void open_now(const char *uri, int push_history)
     br.nselected = 0;
     for (int i = 0; i < br.items.n; i++) br.items.v[i].selected = 0;
     load(uri);
+    if (br.loading) {
+        free(previous);
+        return;
+    }
     if (br.focus_name && br.cursor >= 0) {
         float rh = app_row_height();
         br.scroll.target = br.scroll.offset = br.cursor * rh - DP(120);
@@ -249,7 +294,8 @@ void browser_poll(void)
 {
     for (int i = 0; i < br.items.n; i++)
         if (br.items.v[i].placeholder) return;
-    if (!br.uri || ui.now - br.checked_at < 1.5) return;
+    /* a server is asked again on a refresh, and after the jobs that change it */
+    if (!br.uri || !fr_uri_local(br.uri) || ui.now - br.checked_at < 1.5) return;
     br.checked_at = ui.now;
     int64_t t = dir_mtime(br.uri);
     /* the folder went away (a disk ejected or unmounted, deleted elsewhere): home, quietly */

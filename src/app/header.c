@@ -1,4 +1,5 @@
 #include "app.h"
+#include <errno.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -6,36 +7,54 @@
 
 float header_height(void) { return fmaxf(DP(ui.touch ? 56 : 48), ui_line_height(15) + DP(26)); }
 
-static void draw_breadcrumb(Rectangle r)
+typedef struct {
+    char *label, *uri;
+    float width;
+} seg;
+typedef struct {
+    seg *v;
+    int n, cap;
+} segs_t;
+
+/* uri's segments onto segs; inside an archive, the outer file's path, then the archive as a folder */
+static void add_crumbs(const char *uri, segs_t *segs)
 {
-    if (!br.uri) return;
-    typedef struct {
-        char *label, *uri;
-        float width;
-    } seg;
-    struct {
-        seg *v;
-        int n, cap;
-    } segs = {0};
-    const char *rest = fr_uri_path(br.uri), *end_of_uri = br.uri + strlen(br.uri);
-    if (rest < br.uri || rest > end_of_uri) rest = end_of_uri;
-    /* a phone's /storage/emulated/0 means nothing to its user: there the path starts at the place it is in */
-    int p = ui.touch ? place_of(br.uri) : -1;
-    if (p >= 0) {
-        FR_PUSH(segs, ((seg){fr_strdup(app.places.v[p].label), fr_strdup(app.places.v[p].uri), 0}));
-        rest = br.uri + strlen(app.places.v[p].uri);
+    const char *rest = fr_uri_path(uri), *end_of_uri = uri + strlen(uri);
+    if (rest < uri || rest > end_of_uri) rest = end_of_uri;
+    char *outer = fr_archive_outer(uri);
+    if (outer) {
+        add_crumbs(outer, segs);
+        if (segs->n) {
+            free(segs->v[segs->n - 1].uri);
+            segs->v[segs->n - 1].uri = fr_archive_root(outer);
+        }
+        free(outer);
     } else {
-        char *root = fr_uri_local(br.uri) ? fr_strdup("/") : fr_strndup(br.uri, (size_t)(rest - br.uri));
-        FR_PUSH(segs, ((seg){root, fr_strndup(br.uri, (size_t)(rest - br.uri) + 1), 0}));
+        /* a phone's /storage/emulated/0 means nothing to its user: there the path starts at the place it is in */
+        int p = ui.touch ? place_of(uri) : -1;
+        if (p >= 0) {
+            FR_PUSH(*segs, ((seg){fr_strdup(app.places.v[p].label), fr_strdup(app.places.v[p].uri), 0}));
+            rest = uri + strlen(app.places.v[p].uri);
+        } else {
+            char *root = fr_uri_local(uri) ? fr_strdup("/") : fr_strndup(uri, (size_t)(rest - uri));
+            FR_PUSH(*segs, ((seg){root, fr_strndup(uri, (size_t)(rest - uri) + 1), 0}));
+        }
     }
     while (*rest) {
         while (*rest == '/') rest++;
         if (!*rest) break;
         const char *end = strchr(rest, '/');
         if (!end) end = rest + strlen(rest);
-        FR_PUSH(segs, ((seg){fr_strndup(rest, (size_t)(end - rest)), fr_strndup(br.uri, (size_t)(end - br.uri)), 0}));
+        FR_PUSH(*segs, ((seg){fr_strndup(rest, (size_t)(end - rest)), fr_strndup(uri, (size_t)(end - uri)), 0}));
         rest = end;
     }
+}
+
+static void draw_breadcrumb(Rectangle r)
+{
+    if (!br.uri) return;
+    segs_t segs = {0};
+    add_crumbs(br.uri, &segs);
     int n = segs.n;
     float sep = DP(20), total = 0;
     for (int i = 0; i < n; i++) {
@@ -154,6 +173,17 @@ static void complete(void)
 static void path_go(void)
 {
     char *target = NULL;
+    if (strstr(path_field.buf, "://") && strncmp(path_field.buf, "file://", 7)) {
+        /* asking a server whether it is a folder would hold up the window: open it, and the listing tells */
+        target = server_uri(path_field.buf);
+        if (!target) ui_toast("%s: %s", path_field.buf, fr_vfs_error(-EPROTONOSUPPORT));
+        else {
+            path_edit_stop();
+            browser_open(target, 1);
+            free(target);
+        }
+        return;
+    }
     if (strstr(path_field.buf, "://")) target = fr_strdup(path_field.buf);
     else {
         char *full = expand(path_field.buf);

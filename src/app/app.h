@@ -4,6 +4,7 @@
 #include "platform.h"
 #include "ui.h"
 #include "vfs/vfs.h"
+#include "vfs/vfs_archive.h"
 
 /* ---- file kinds (filetypes.c) ---- */
 typedef enum { KIND_FOLDER, KIND_IMAGE, KIND_VIDEO, KIND_AUDIO, KIND_ARCHIVE, KIND_DOCUMENT, KIND_SHEET, KIND_SLIDES, KIND_CODE, KIND_TEXT, KIND_OTHER } fr_kind;
@@ -45,6 +46,7 @@ typedef struct {
     int keyboard;       /* the cursor moved by key since the last click: show it */
     int nselected;
     char *error;        /* the listing failed */
+    int loading;        /* a listing off this machine is on its way (async.h); the items are the last ones until then */
     int64_t dir_mtime;
     double checked_at;
     char *focus_name;   /* the row the next browser_open() or browser_reload() lands on; it takes it */
@@ -126,6 +128,7 @@ int thumb_draw(const fr_item *it, Rectangle box);
 /* ---- settings.toml, favorites, theme overrides (settings.c) ---- */
 typedef struct {
     fr_strs favorites; /* URIs, in the order shown */
+    fr_strs servers;   /* the Network section's URIs (never with a password), in the order shown */
     char *theme[THEME_ROLES]; /* [theme] values as written, NULL for roles not set */
     char *last_folder, *start_folder; /* URIs, NULL when not set */
 } fr_settings;
@@ -139,6 +142,22 @@ void settings_poll(void); /* saves what changed (sort, layout, hidden, favorites
 char *settings_start_uri(void); /* start_folder, else last_folder, when it is a folder that is there; else NULL */
 int favorite_index(const char *uri); /* -1 when not a favorite */
 void favorite_toggle(const char *uri);
+int server_index(const char *uri); /* -1 when not in the Network section */
+void server_set(const char *uri, int on); /* adds it to the Network section, or takes it out */
+
+/* ---- network locations, for any scheme with a backend (connect.c) ---- */
+/* an address as typed made one to save and open: normalized, any password dropped; NULL when it is not one */
+char *server_uri(const char *typed);
+/* the Network section of the sidebar from y down: the saved servers and "Connect to server"; the y after it */
+float network_draw(Rectangle r, float y, float ih);
+void connect_start(void); /* the "Connect to server" dialog */
+/* window thread, before a remote location is used: what the keystore has for its server, into memory */
+void net_prepare(const char *uri);
+/* a remote call on uri failed with rc: asks for a sign-in or the server's trust when that is what it wants (1),
+ * then retry() runs once the user answered yes */
+int net_ask(const char *uri, int rc, void (*retry)(void));
+int connect_dialog_open(void);
+void connect_draw_dialogs(void);
 
 /* ---- keys (keys.c) ---- */
 typedef enum { MODE_NORMAL, MODE_VISUAL, MODE_INSERT } fr_mode;
@@ -160,6 +179,12 @@ typedef struct {
 extern fr_clip clip;
 
 void ops_open_item(fr_item *it);
+void ops_open_entry(const char *uri, const fr_entry *e); /* a folder or an archive is browsed, a file handed on */
+int ops_rename(const char *from, const char *to);       /* inside an archive as a job (0 once it is asked for) */
+int ops_archive_targets(void);  /* how many targets there are when all are archives to extract, else 0 */
+void ops_extract(int into_folder); /* the targets here, or each into a folder of its own named after it */
+char *ops_compress_name(void);  /* "<name>.zip" for the targets, NULL without any */
+void ops_compress(void);        /* the targets into a new zip here */
 void ops_copy(int cut);
 void ops_paste(void);
 void ops_clip_clear(void);
