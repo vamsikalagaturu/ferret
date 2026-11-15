@@ -40,7 +40,7 @@ function(fr_embed_assets gen)
 endfunction()
 
 # Storage, file operations and jobs: no window, so the tests and every platform share it.
-file(GLOB FR_CORE_SOURCES CONFIGURE_DEPENDS src/core/*.c src/vfs/*.c src/jobs/*.c src/thumbs/*.c)
+file(GLOB FR_CORE_SOURCES CONFIGURE_DEPENDS src/core/*.c src/vfs/*.c src/jobs/*.c src/thumbs/*.c src/disks/*.c)
 add_library(fercore STATIC ${FR_CORE_SOURCES})
 target_include_directories(fercore PUBLIC src)
 # stb_image, stb_image_write and qoi.h as raylib vendors them; that folder also has a dirent.h for Windows, so
@@ -74,7 +74,7 @@ target_compile_definitions(fercore PUBLIC FR_VERSION="${FR_VERSION_STRING}")
 
 if(FR_BUILD_PROGRAMS)
   enable_testing()
-  foreach(t util vfs jobs settings mode thumbs)
+  foreach(t util vfs jobs settings mode thumbs disks)
     add_executable(test_${t} tests/test_${t}.c)
     target_link_libraries(test_${t} PRIVATE fercore)
     target_compile_options(test_${t} PRIVATE ${FR_WARNINGS})
