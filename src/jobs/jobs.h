@@ -3,9 +3,10 @@
 /* Copy, move, delete and trash run one at a time on a worker thread. The window polls their state; a name that
  * is taken in the destination pauses the job until the window answers. */
 #include "core/util.h"
+#include "jobs/history.h"
 #include <stdint.h>
 
-typedef enum { JOB_COPY, JOB_MOVE, JOB_DELETE, JOB_TRASH, JOB_CHMOD } fr_job_kind;
+typedef enum { JOB_COPY, JOB_MOVE, JOB_DELETE, JOB_TRASH, JOB_CHMOD, JOB_STEPS } fr_job_kind;
 typedef enum { JOB_QUEUED, JOB_RUNNING, JOB_ASKING, JOB_DONE, JOB_CANCELLED } fr_job_state;
 typedef enum { CONFLICT_ASK, CONFLICT_SKIP, CONFLICT_REPLACE, CONFLICT_KEEP_BOTH } fr_conflict;
 
@@ -22,6 +23,7 @@ typedef struct {
     char error[256];            /* the first failure, "name: reason" */
     char conflict[256];         /* JOB_ASKING: the taken name */
     int conflict_dir;           /* ... a folder on both sides */
+    char what[64];              /* JOB_STEPS: its verb, "Renaming", "Undoing" */
 } fr_job_status;
 
 /* wake: called from the worker when something changed (the window sleeps between events) */
@@ -33,6 +35,12 @@ int fr_job_submit(fr_job_kind kind, const fr_strs *sources, const char *dest_dir
 /* JOB_CHMOD: the permission bits of sources and everything under them, as fr_mode_edit() makes them; symlinks
  * are left alone */
 int fr_job_submit_chmod(const fr_strs *sources, uint32_t set, uint32_t clear);
+/* JOB_STEPS: the steps in order, going on past one that fails; a rename never replaces, and one to another
+ * device copies and then deletes */
+int fr_job_submit_steps(const fr_steps *steps, const char *what);
+/* a finished job's record of what it did, as steps undo can turn around (copies, moves, trashing, permissions and
+ * steps; a permanent delete, a replaced file and a merged folder leave none); 0, or -1 while it runs */
+int fr_job_take_log(int id, fr_steps *out);
 /* the jobs not yet dismissed, oldest first; at most max */
 int fr_jobs_list(fr_job_status *out, int max);
 void fr_job_answer(int id, fr_conflict answer, int for_all);

@@ -4,6 +4,7 @@
 #ifndef __ANDROID__
 #define _GNU_SOURCE
 #include "core/util.h"
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -78,29 +79,32 @@ static char *escape_path(const char *p)
     return r;
 }
 
+/* the trash for path on device dev: the home trash on its device, else the one of path's mount, whose mount point
+ * *top gets (Info's Path= is relative to it); *top is NULL for the home trash */
+static char *trash_for(const char *path, dev_t dev, char **top)
+{
+    *top = NULL;
+    char *trash = home_trash();
+    struct stat ts;
+    if (trash && !fr_mkdirs(trash) && !stat(trash, &ts) && ts.st_dev == dev) return trash;
+    free(trash);
+    *top = mount_top(path, dev);
+    trash = top_trash(*top);
+    if (!trash) free(*top), *top = NULL;
+    return trash;
+}
+
 int fr_trash_path(const char *path)
 {
     struct stat st;
     if (lstat(path, &st)) return -errno;
-    char *trash = home_trash();
-    struct stat ts;
-    const char *rel = NULL;
-    char *top = NULL;
-    if (trash && !fr_mkdirs(trash) && !stat(trash, &ts) && ts.st_dev == st.st_dev) {
-        if (!strncmp(path, trash, strlen(trash)) && path[strlen(trash)] == '/') {
-            free(trash);
-            return -ENOTSUP;
-        }
-    } else {
+    char *top = NULL, *trash = trash_for(path, st.st_dev, &top);
+    if (!trash) return -ENOTSUP;
+    if (!top && !strncmp(path, trash, strlen(trash)) && path[strlen(trash)] == '/') {
         free(trash);
-        top = mount_top(path, st.st_dev);
-        trash = top_trash(top);
-        if (!trash) {
-            free(top);
-            return -ENOTSUP;
-        }
-        rel = path + strlen(top) + (strcmp(top, "/") ? 1 : 0);
+        return -ENOTSUP;
     }
+    const char *rel = top ? path + strlen(top) + (strcmp(top, "/") ? 1 : 0) : NULL;
     char *files = fr_format("%s/files", trash), *info = fr_format("%s/info", trash);
     int rc = fr_mkdirs(files);
     if (!rc) rc = fr_mkdirs(info);
@@ -148,6 +152,81 @@ int fr_trash_path(const char *path)
     free(info);
     free(trash);
     free(top);
+    return rc;
+}
+
+static int hex_digit(char c)
+{
+    return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+}
+
+/* the value of "key=" in an info file's text, %XX decoded, up to the end of its line; NULL when it has none */
+static char *info_value(const char *text, const char *key)
+{
+    size_t kl = strlen(key);
+    for (const char *line = text; line && *line; line = strchr(line, '\n') ? strchr(line, '\n') + 1 : NULL) {
+        if (strncmp(line, key, kl) || line[kl] != '=') continue;
+        const char *v = line + kl + 1, *end = strchr(v, '\n');
+        if (!end) end = v + strlen(v);
+        char *out = fr_realloc(NULL, (size_t)(end - v) + 1), *o = out;
+        for (const char *c = v; c < end; c++) {
+            int hi, lo;
+            if (*c == '%' && c + 2 < end && (hi = hex_digit(c[1])) >= 0 && (lo = hex_digit(c[2])) >= 0)
+                *o++ = (char)(hi << 4 | lo), c += 2;
+            else *o++ = *c;
+        }
+        *o = 0;
+        return out;
+    }
+    return NULL;
+}
+
+/* The newest entry of path's trash whose Path= is path goes back there, as a desktop's "Restore" does. */
+int fr_trash_restore(const char *path)
+{
+    struct stat st;
+    if (!lstat(path, &st)) return -EEXIST;
+    const char *slash = strrchr(path, '/');
+    if (!slash) return -EINVAL;
+    char *parent = slash == path ? fr_strdup("/") : fr_strndup(path, (size_t)(slash - path));
+    int rc = stat(parent, &st) ? -errno : 0;
+    free(parent);
+    if (rc) return rc;
+    char *top = NULL, *trash = trash_for(path, st.st_dev, &top);
+    if (!trash) return -ENOENT;
+    char *info = fr_format("%s/info", trash);
+    DIR *d = opendir(info);
+    char *best = NULL, *best_date = NULL;
+    struct dirent *de;
+    while (d && (de = readdir(d))) {
+        size_t n = strlen(de->d_name);
+        if (n <= 10 || strcmp(de->d_name + n - 10, ".trashinfo")) continue;
+        char *file = fr_format("%s/%s", info, de->d_name), text[8192];
+        int fd = open(file, O_RDONLY | O_CLOEXEC);
+        free(file);
+        if (fd < 0) continue;
+        ssize_t got = read(fd, text, sizeof text - 1);
+        close(fd);
+        if (got <= 0) continue;
+        text[got] = 0;
+        char *p = info_value(text, "Path"), *date = info_value(text, "DeletionDate");
+        char *full = !p ? NULL : *p == '/' ? fr_strdup(p) : top ? fr_format("%s%s%s", top, strcmp(top, "/") ? "/" : "", p) : NULL;
+        if (full && !strcmp(full, path) && (!best || strcmp(date ? date : "", best_date ? best_date : "") >= 0)) {
+            free(best), free(best_date);
+            best = fr_strndup(de->d_name, n - 10);
+            best_date = date, date = NULL;
+        }
+        free(p), free(date), free(full);
+    }
+    if (d) closedir(d);
+    rc = -ENOENT;
+    if (best) {
+        char *from = fr_format("%s/files/%s", trash, best), *info_path = fr_format("%s/%s.trashinfo", info, best);
+        rc = rename(from, path) ? -errno : 0;
+        if (!rc) unlink(info_path);
+        free(from), free(info_path);
+    }
+    free(best), free(best_date), free(info), free(trash), free(top);
     return rc;
 }
 #endif

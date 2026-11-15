@@ -92,6 +92,12 @@ int fr_vfs_trash(const char *uri)
     return b->trash ? b->trash(uri) : -ENOTSUP;
 }
 
+int fr_vfs_untrash(const char *uri)
+{
+    BACKEND_OR(uri, -EPROTONOSUPPORT);
+    return b->untrash ? b->untrash(uri) : -ENOTSUP;
+}
+
 int fr_vfs_can_trash(const char *uri)
 {
     const fr_backend *b = fr_vfs_backend(uri);

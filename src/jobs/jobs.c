@@ -15,6 +15,9 @@ typedef struct {
     fr_conflict answer;
     int answered;
     uint32_t mode_set, mode_clear;
+    fr_steps todo; /* JOB_STEPS */
+    /* the worker's alone until the job is done; then the window's, through fr_job_take_log */
+    fr_steps log;
 } job;
 
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
@@ -290,7 +293,10 @@ static void run_copy(job *j)
         if (!es[i].name) continue;
         int replace;
         char *dst = destination(j, j->sources.v[i], &es[i], &replace);
-        if (dst) copy_tree(j, j->sources.v[i], &es[i], dst, replace);
+        if (dst) {
+            copy_tree(j, j->sources.v[i], &es[i], dst, replace);
+            if (!replace && fr_vfs_exists(dst)) fr_steps_add(&j->log, STEP_COPIED, j->sources.v[i], dst);
+        }
         free(dst);
     }
     for (int i = 0; i < j->sources.n; i++) fr_entry_free(&es[i]);
@@ -332,6 +338,7 @@ static void run_move(job *j)
                     rc = copy_tree(j, src, &e, dst, replace);
                     if (!rc && (rc = remove_tree(j, src, 0))) fail(j, src, rc, NULL);
                 } else if (rc) fail(j, src, rc, NULL);
+                if (!rc && !merge) fr_steps_add(&j->log, STEP_RENAME, src, dst);
             }
             if (!rc) add_progress(j, 0, 1);
         }
@@ -368,7 +375,10 @@ static void run_trash(job *j)
         set_current(j, j->sources.v[i]);
         int rc = fr_vfs_trash(j->sources.v[i]);
         if (rc) fail(j, j->sources.v[i], rc, rc == -ENOTSUP ? "cannot be moved to the trash here" : NULL);
-        else add_progress(j, 0, 1);
+        else {
+            fr_steps_add(&j->log, STEP_TRASH, j->sources.v[i], NULL);
+            add_progress(j, 0, 1);
+        }
     }
 }
 
@@ -396,7 +406,10 @@ static void chmod_tree(job *j, const char *uri, const fr_entry *e, int top)
         fr_entries_free(&kids);
     }
     if ((rc = fr_vfs_set_mode(uri, mode))) fail(j, uri, rc, NULL);
-    else add_progress(j, 0, 1);
+    else {
+        if (mode != e->mode) fr_steps_add_chmod(&j->log, uri, e->mode, mode);
+        add_progress(j, 0, 1);
+    }
 }
 
 static void run_chmod(job *j)
@@ -417,6 +430,82 @@ static void run_chmod(job *j)
         if (es[i].name) chmod_tree(j, j->sources.v[i], &es[i], 1);
     for (int i = 0; i < j->sources.n; i++) fr_entry_free(&es[i]);
     free(es);
+}
+
+/* a rename, else a copy and a delete where the two are on different devices; reports its own failure */
+static int move_item(job *j, const char *from, const char *to)
+{
+    int rc = fr_vfs_rename(from, to);
+    if (rc == -EXDEV || rc == -ENOTSUP || rc == -EPROTONOSUPPORT) {
+        fr_entry e = {0};
+        if (fr_vfs_exists(to)) rc = -EEXIST;
+        else if (!(rc = fr_vfs_stat(from, &e))) {
+            uint64_t bytes = 0;
+            int files = 0;
+            scan(j, from, &e, &bytes, &files);
+            pthread_mutex_lock(&lock);
+            j->st.bytes_total += bytes;
+            pthread_mutex_unlock(&lock);
+            if ((rc = copy_tree(j, from, &e, to, 0))) return fr_entry_free(&e), rc;
+            rc = remove_tree(j, from, 0);
+        }
+        fr_entry_free(&e);
+    }
+    if (rc && rc != -ECANCELED) fail(j, from, rc, NULL);
+    return rc;
+}
+
+/* an empty file or folder */
+static int make_empty(const char *uri, int is_dir)
+{
+    if (is_dir) return fr_vfs_mkdir(uri);
+    int rc = 0;
+    fr_stream *s = fr_vfs_open_write(uri, 1, &rc);
+    return s ? s->close(s) : rc;
+}
+
+static int remove_empty(const char *uri)
+{
+    fr_entry e = {0};
+    int rc = fr_vfs_stat(uri, &e);
+    if (!rc && !e.is_dir && e.size) rc = -ENOTEMPTY;
+    fr_entry_free(&e);
+    return rc ? rc : fr_vfs_remove(uri);
+}
+
+static void run_steps(job *j)
+{
+    pthread_mutex_lock(&lock);
+    j->st.files_total = j->todo.n;
+    pthread_mutex_unlock(&lock);
+    for (int i = 0; i < j->todo.n && !cancelled(j); i++) {
+        const fr_step *s = &j->todo.v[i];
+        set_current(j, s->a);
+        fr_step_kind done = s->kind;
+        int rc = -ENOTSUP;
+        switch (s->kind) {
+        case STEP_RENAME:
+            if ((rc = move_item(j, s->a, s->b))) continue;
+            break;
+        case STEP_TRASH:
+            rc = fr_vfs_trash(s->a);
+            if (rc == -ENOTSUP && s->may_remove) rc = remove_empty(s->a), done = STEP_REMOVED;
+            break;
+        case STEP_UNTRASH: rc = fr_vfs_untrash(s->a); break;
+        case STEP_CREATED: rc = make_empty(s->a, s->is_dir); break;
+        case STEP_REMOVED: rc = remove_empty(s->a); break;
+        case STEP_CHMOD: rc = fr_vfs_set_mode(s->a, s->mode); break;
+        case STEP_COPIED: break;
+        }
+        if (rc) {
+            fail(j, s->a, rc, rc == -ENOTSUP && s->kind == STEP_TRASH ? "there is no trash here" : NULL);
+            continue;
+        }
+        fr_step d = *s;
+        d.kind = done, d.a = fr_strdup(s->a), d.b = s->b ? fr_strdup(s->b) : NULL;
+        FR_PUSH(j->log, d);
+        add_progress(j, 0, 1);
+    }
 }
 
 static void *work(void *arg)
@@ -441,6 +530,7 @@ static void *work(void *arg)
         case JOB_DELETE: run_delete(j); break;
         case JOB_TRASH: run_trash(j); break;
         case JOB_CHMOD: run_chmod(j); break;
+        case JOB_STEPS: run_steps(j); break;
         }
         pthread_mutex_lock(&lock);
         j->st.state = j->cancel ? JOB_CANCELLED : JOB_DONE;
@@ -464,6 +554,8 @@ static void job_free(job *j)
 {
     fr_strs_free(&j->sources);
     free(j->dest);
+    fr_steps_free(&j->todo);
+    fr_steps_free(&j->log);
     free(j);
 }
 
@@ -518,6 +610,32 @@ int fr_job_submit_chmod(const fr_strs *sources, uint32_t set, uint32_t clear)
     job *j = job_new(JOB_CHMOD, sources, NULL);
     j->mode_set = set & 07777, j->mode_clear = clear & 07777;
     return job_queue(j);
+}
+
+int fr_job_submit_steps(const fr_steps *steps, const char *what)
+{
+    fr_strs none = {0};
+    job *j = job_new(JOB_STEPS, &none, NULL);
+    j->todo = fr_steps_copy(steps);
+    j->st.items = steps->n;
+    snprintf(j->st.what, sizeof j->st.what, "%s", what);
+    return job_queue(j);
+}
+
+int fr_job_take_log(int id, fr_steps *out)
+{
+    pthread_mutex_lock(&lock);
+    job *j = NULL;
+    for (int i = 0; i < jobs.n && !j; i++)
+        if (jobs.v[i]->st.id == id) j = jobs.v[i];
+    int rc = -1;
+    if (j && (j->st.state == JOB_DONE || j->st.state == JOB_CANCELLED)) {
+        *out = j->log;
+        j->log = (fr_steps){0};
+        rc = 0;
+    }
+    pthread_mutex_unlock(&lock);
+    return rc;
 }
 
 int fr_jobs_list(fr_job_status *out, int max)
