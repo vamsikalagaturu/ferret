@@ -257,21 +257,31 @@ static void draw_row(int v, Rectangle row, Rectangle area)
     if (it->placeholder) size[0] = date[0] = 0;
     float tx = icon.x + icon_w + DP(compact ? 8 : 12), tw = row.x + row.width - pad - tx;
     Color name_c = marks_dimmed(it) ? theme.text_faint : it->e.hidden ? theme.text_dim : theme.text;
+    /* a search result is named by its path below the search's folder: the name in full, the folder after it */
+    const char *slash = br.results ? strrchr(it->e.name, '/') : NULL, *shown = slash ? slash + 1 : it->e.name;
+    char folder[512] = "";
+    if (slash) snprintf(folder, sizeof folder, "in %.*s", (int)(slash - it->e.name), it->e.name);
     int editing;
     if (compact) {
         cells c = cells_for(row);
         editing = keys_insert_field(v, (Rectangle){c.name - DP(12), row.y + DP(3), c.name_w + DP(12), row.height - DP(6)});
         float marks_w = editing ? 0 : marks_chips(it, (Rectangle){c.name, row.y, c.name_w, row.height}, c.name_w / 2);
-        if (!editing) ui_text_box(it->e.name, (Rectangle){c.name, row.y, c.name_w - marks_w, row.height}, 15, FONT_REGULAR, name_c, ALIGN_LEFT, 1);
+        float room = c.name_w - marks_w, nw = *folder ? fminf(ui_text_width(shown, 15, FONT_REGULAR) + DP(4), room) : room;
+        if (!editing) ui_text_box(shown, (Rectangle){c.name, row.y, nw, row.height}, 15, FONT_REGULAR, name_c, ALIGN_LEFT, 1);
+        if (!editing && *folder && room - nw > DP(40))
+            ui_text_box(folder, (Rectangle){c.name + nw + DP(8), row.y, room - nw - DP(8), row.height}, 13, FONT_REGULAR, theme.text_faint,
+                        ALIGN_LEFT, 1);
         ui_text_box(size, (Rectangle){c.size, row.y, c.size_w, row.height}, 14, FONT_REGULAR, theme.text_dim, ALIGN_RIGHT, 0);
         if (c.date_w) ui_text_box(date, (Rectangle){c.date, row.y, c.date_w, row.height}, 14, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 0);
         if (c.kind_w) ui_text_box(kind_label(it->kind), (Rectangle){c.kind, row.y, c.kind_w, row.height}, 14, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 0);
     } else {
         float line1 = row.y + DP(11), line2 = row.y + DP(35);
         editing = keys_insert_field(v, (Rectangle){tx - DP(12), line1 - DP(8), tw + DP(12), DP(36)});
-        if (!editing) ui_text_box(it->e.name, (Rectangle){tx, line1, tw, DP(20)}, 16, FONT_REGULAR, name_c, ALIGN_LEFT, 1);
+        if (!editing) ui_text_box(shown, (Rectangle){tx, line1, tw, DP(20)}, 16, FONT_REGULAR, name_c, ALIGN_LEFT, 1);
         float sw = ui_text_width(size, 13, FONT_REGULAR);
-        ui_text_box(date, (Rectangle){tx, line2, tw - sw - DP(12), DP(18)}, 13, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 0);
+        char sub[600];
+        snprintf(sub, sizeof sub, *folder ? "%s  \xc2\xb7  %s" : "%s", date, folder);
+        ui_text_box(sub, (Rectangle){tx, line2, tw - sw - DP(12), DP(18)}, 13, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 1);
         ui_text_box(size, (Rectangle){tx + tw - sw, line2, sw, DP(18)}, 13, FONT_REGULAR, theme.text_dim, ALIGN_RIGHT, 0);
     }
     ui_hline(tx, row.y + row.height - DP(1), row.x + row.width - tx, ui_alpha(theme.border, 0.6f));

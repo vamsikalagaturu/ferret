@@ -6,6 +6,12 @@
 #include <stdint.h>
 
 #define FR_SEARCH_MAX_FILE (50ull << 20) /* a content search skips bigger files */
+#define FR_SEARCH_SHOWN 300                /* an indexed name search returns its best this many (found counts all) */
+
+/* Collects every path below a local root on a thread of its own; name searches of that root (and hidden) then match
+ * in memory. A new call replaces the index; drop it before the window closes. */
+void fr_search_index(const char *root, int hidden);
+void fr_search_index_drop(void);
 
 typedef struct {
     int running;

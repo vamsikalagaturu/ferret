@@ -37,7 +37,20 @@ static void prompt(int content, int everywhere)
 }
 
 void search_prompt(int content) { prompt(content, 0); }
-void search_everywhere(void) { prompt(0, 1); }
+/* the names below home, collected in the background at start and again for each search session, which meanwhile
+ * searches the last ones collected */
+void search_index_refresh(void)
+{
+    char *root = plat_home_uri();
+    if (root) fr_search_index(root, br.show_hidden);
+    free(root);
+}
+
+void search_everywhere(void)
+{
+    if (!br.results) search_index_refresh();
+    prompt(0, 1);
+}
 
 static void prompt_stop(void)
 {
@@ -139,6 +152,7 @@ void search_reveal(void)
 void search_stop(void)
 {
     fr_search_stop();
+    fr_search_index_drop();
     fr_entries_free(&s.pending);
 }
 
@@ -191,6 +205,7 @@ int search_header(Rectangle r)
     else if (!live) snprintf(line, sizeof line, "%d found", n);
     else if (s.st.unreadable)
         snprintf(line, sizeof line, "%d found; %d %s could not be read", n, s.st.unreadable, s.st.unreadable == 1 ? "folder" : "folders");
+    else if (n > br.items.n) snprintf(line, sizeof line, "%d found in %lld files, the best %d shown", n, (long long)s.st.files, br.items.n);
     else snprintf(line, sizeof line, "%d found in %lld files", n, (long long)s.st.files);
     float w = right - x - DP(8), l1 = ui_line_height(15), l2 = ui_line_height(13), top = r.y + (r.height - l1 - l2) / 2;
     ui_text_box(title, (Rectangle){x, top, w, l1}, 15, FONT_SEMIBOLD, theme.text, ALIGN_LEFT, 0);

@@ -328,6 +328,7 @@ void ops_poll_jobs(void);
 
 /* ---- searching below the folder (search.c) ---- */
 void search_everywhere(void);     /* the field for a name anywhere below the home folder */
+void search_index_refresh(void);  /* collects the names below home again, in the background */
 void search_prompt(int content); /* a field in the header for a name (content 0) or the text inside files */
 int search_header(Rectangle r);  /* draws the field or the results' bar; 0 when neither shows */
 void search_poll(void);          /* between frames: the results found meanwhile into the list */
