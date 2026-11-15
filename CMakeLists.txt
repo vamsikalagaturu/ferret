@@ -42,8 +42,11 @@ endfunction()
 # Storage, file operations and jobs: no window, so the tests and every platform share it.
 file(GLOB FR_CORE_SOURCES CONFIGURE_DEPENDS src/core/*.c src/vfs/*.c src/jobs/*.c src/thumbs/*.c src/net/*.c src/disks/*.c)
 list(FILTER FR_CORE_SOURCES EXCLUDE REGEX "/vfs_mtp\\.c$")
-add_library(fercore STATIC ${FR_CORE_SOURCES})
+add_library(fercore STATIC ${FR_CORE_SOURCES} thirdparty/fzf/fzf.c)
 target_include_directories(fercore PUBLIC src)
+# telescope-fzf-native's fzf.c, fzf's matcher in C (src/core/match.c); upstream code, its warnings not ours
+set_source_files_properties(thirdparty/fzf/fzf.c PROPERTIES COMPILE_OPTIONS -w)
+set_source_files_properties(src/core/match.c PROPERTIES INCLUDE_DIRECTORIES ${FR_REPO}/thirdparty/fzf)
 # stb_image, stb_image_write and qoi.h as raylib vendors them; that folder also has a dirent.h for Windows, so
 # only this file sees it
 set_source_files_properties(src/thumbs/thumbs.c PROPERTIES INCLUDE_DIRECTORIES ${FR_REPO}/thirdparty/raylib/src/external)

@@ -17,6 +17,13 @@ NANOSVG_H_SHA256=e34fd5d084be106cea972d19ce5d27fd96d17ba89f8d06bdceee058420c8b2b
 NANOSVGRAST_H_SHA256=79a9c5f4db19debf9f3a648a1589e96d92854f245a5cb4f3d823f263785234d8
 NANOSVG_LICENSE_SHA256=e82bc3dd03400aecabe12201219ba14750dbc4b36faab58663a7a6068548d372
 
+# fuzzy name matching (src/core/match.c): fzf's algorithm in C from telescope-fzf-native (MIT); no releases upstream
+FZF_COMMIT=b25b749b9db64d375d782094e2b9dce53ad53a40
+FZF_URL=https://raw.githubusercontent.com/nvim-telescope/telescope-fzf-native.nvim/$FZF_COMMIT
+FZF_C_SHA256=92dfce0d6eb3b129ef6b44ce55514b875b7763cf912f2d0047c01c489875f1e0
+FZF_H_SHA256=731a62650d0cda99c34065f18b72d123b4142c26255e0de6c0346103d2d7e815
+FZF_LICENSE_SHA256=8054bc61f71c9a4f6d6b193ed7b4479f0b7818b7455351d61c2418587d02f50e
+
 # Network storage, linked statically: SMB (libsmb2, LGPL-2.1: ferret's own sources are open, as the licence asks of
 # a static link) and SFTP (libssh2, BSD-3-Clause) over OpenSSL's libcrypto
 LIBSMB2_VERSION=6.3
@@ -149,6 +156,10 @@ fetch_sources() {
     fetch "$NANOSVG_URL/src/nanosvg.h" "$1/thirdparty/nanosvg/nanosvg.h" "$NANOSVG_H_SHA256"
     fetch "$NANOSVG_URL/src/nanosvgrast.h" "$1/thirdparty/nanosvg/nanosvgrast.h" "$NANOSVGRAST_H_SHA256"
     fetch "$NANOSVG_URL/LICENSE.txt" "$1/thirdparty/nanosvg/LICENSE.txt" "$NANOSVG_LICENSE_SHA256"
+    mkdir -p "$1/thirdparty/fzf"
+    fetch "$FZF_URL/src/fzf.c" "$1/thirdparty/fzf/fzf.c" "$FZF_C_SHA256"
+    fetch "$FZF_URL/src/fzf.h" "$1/thirdparty/fzf/fzf.h" "$FZF_H_SHA256"
+    fetch "$FZF_URL/LICENSE" "$1/thirdparty/fzf/LICENSE" "$FZF_LICENSE_SHA256"
 }
 
 # $2 (URL, SHA-256 $3) unpacked once into thirdparty/$4 ($1 = repo root)

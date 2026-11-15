@@ -1,5 +1,6 @@
 #include "match.h"
 #include "util.h"
+#include "fzf.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,33 +35,27 @@ int fr_glob_match(const char *p, const char *s)
     return !*p;
 }
 
-static int word_start(const char *name, int i)
-{
-    if (!i) return 1;
-    char p = name[i - 1], c = name[i];
-    return strchr(" _-./()[]", p) || (p >= 'a' && p <= 'z' && c >= 'A' && c <= 'Z') || ((p < '0' || p > '9') && c >= '0' && c <= '9');
-}
+/* fzf's matcher keeps a parsed pattern and a scratch slab; each thread (the search's, the window's sorting results)
+ * keeps its own for the last term, since parsing per name would cost more than matching. The last ones of a thread
+ * that ends are not freed: a few hundred bytes. */
+static _Thread_local struct {
+    char *term;
+    fzf_pattern_t *pattern;
+    fzf_slab_t *slab;
+} fz;
 
-/* The term's characters in order, others between allowed; ASCII case ignored. Greedy from the left, which can miss a
- * better placement further on but never a match. Matches at word starts and runs of adjacent characters score most,
- * gaps cost a little, a whole-substring match gets a bonus; -1 when the name does not hold the term. */
 int fr_fuzzy_score(const char *term, const char *name)
 {
     if (!*term) return 0;
-    int score = 0, run = 0, last = -1, ti = 0;
-    for (int i = 0; name[i] && term[ti]; i++) {
-        if (lower((unsigned char)name[i]) != lower((unsigned char)term[ti])) continue;
-        int bonus = 1;
-        if (word_start(name, i)) bonus += 8;
-        if (last == i - 1) run++, bonus += 4 * run;
-        else run = 0;
-        if (last >= 0) score -= i - last - 1 > 6 ? 6 : i - last - 1;
-        score += bonus;
-        last = i, ti++;
+    if (!fz.term || strcmp(fz.term, term)) {
+        if (fz.pattern) fzf_free_pattern(fz.pattern);
+        free(fz.term);
+        fz.term = fr_strdup(term);
+        fz.pattern = fzf_parse_pattern(CaseIgnore, false, fz.term, true);
+        if (!fz.slab) fz.slab = fzf_make_default_slab();
     }
-    if (term[ti]) return -1;
-    if (fr_contains_nocase(name, term)) score += 20;
-    return score < 0 ? 0 : score;
+    int32_t score = fzf_get_score(name, fz.pattern, fz.slab);
+    return score > 0 ? score : -1;
 }
 
 int fr_name_matches(const char *term, const char *name)
