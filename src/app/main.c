@@ -107,6 +107,49 @@ static void rename_items(void)
 
 static int link_here(void) { return !ui.touch && links_ready() && br.uri && fr_uri_local(br.uri) && !br.results; }
 
+/* sort, layout and type filter: in the overflow menu on the desktop, in the "View and settings" sheet on phones */
+static void view_items(void)
+{
+    if (ui_menu_heading("Sort by", br.desc ? "arrow-down" : "arrow-up", br.desc ? "Descending" : "Ascending"))
+        br.desc = !br.desc, browser_rebuild_view();
+    static const char *const sorts[] = {"Name", "Size", "Date", "Kind", "Type"};
+    static const char *const sort_icons[] = {"arrow-down-a-z", "ruler", "calendar", "shapes", "file-type"};
+    int s = ui_menu_segments(sorts, sort_icons, 5, (int)br.sort);
+    if (s >= 0) br.sort = (fr_sort)s, browser_rebuild_view();
+    ui_menu_heading("Layout", NULL, NULL);
+    /* phones have no room for columns */
+    static const char *const layouts[] = {"Details", "Columns", "Grid"}, *const touch_layouts[] = {"Details", "Grid"};
+    static const char *const layout_icons[] = {"list", "columns-3", "layout-grid"}, *const touch_icons[] = {"list", "layout-grid"};
+    if (ui.touch) {
+        int l = ui_menu_segments(touch_layouts, touch_icons, 2, br.layout == LAYOUT_GRID ? 1 : 0);
+        if (l >= 0) view_set_layout(l ? LAYOUT_GRID : LAYOUT_DETAILS);
+    } else {
+        int l = ui_menu_segments(layouts, layout_icons, 3, (int)br.layout);
+        if (l >= 0) view_set_layout((fr_layout)l);
+    }
+    if (ui_menu_heading("Show only", br.kinds ? "x" : NULL, br.kinds ? "All" : NULL)) kinds_set(KF_ALL);
+    static const char *const kinds[] = {"Images", "Video", "Audio", "Docs", "Archives", "Code"};
+    static const char *const kind_icons[] = {"image", "video", "music", "file-text", "file-archive", "file-code"};
+    int k = ui_menu_segments(kinds, kind_icons, 6, (int)br.kinds - 1);
+    if (k >= 0) kinds_set((fr_kind_filter)(k + 1));
+    ui_menu_separator();
+}
+
+static void size_theme_items(void)
+{
+    char pct[16];
+    snprintf(pct, sizeof pct, "%d%%", (int)lroundf(ui.user_scale * 100));
+    int d = ui_menu_stepper("Interface", "zoom-in", pct);
+    if (d) app_zoom(d == 2 ? 0 : d);
+    snprintf(pct, sizeof pct, "%d%%", (int)lroundf(ui.text_scale * 100));
+    d = ui_menu_stepper("Text", "a-large-small", pct);
+    if (d) app_text_zoom(d == 2 ? 0 : d);
+    ui_menu_heading("Theme", NULL, NULL);
+    static const char *const schemes[] = {"Dark", "Light", "System"}, *const scheme_icons[] = {"moon", "sun", "monitor"};
+    int sc = ui_menu_segments(schemes, scheme_icons, 3, settings.scheme);
+    if (sc >= 0) scheme_set(sc);
+}
+
 static void draw_menus(void)
 {
     if (ui_menu_begin(app.menu_more)) {
@@ -133,33 +176,11 @@ static void draw_menus(void)
             }
         }
         ui_menu_separator();
-        if (ui_menu_heading("Sort by", br.desc ? "arrow-down" : "arrow-up", br.desc ? "Descending" : "Ascending"))
-            br.desc = !br.desc, browser_rebuild_view();
-        static const char *const sorts[] = {"Name", "Size", "Date", "Kind", "Type"};
-        static const char *const sort_icons[] = {"arrow-down-a-z", "ruler", "calendar", "shapes", "file-type"};
-        int s = ui_menu_segments(sorts, sort_icons, 5, (int)br.sort);
-        if (s >= 0) br.sort = (fr_sort)s, browser_rebuild_view();
-        ui_menu_heading("Layout", NULL, NULL);
-        /* phones have no room for columns */
-        static const char *const layouts[] = {"Details", "Columns", "Grid"}, *const touch_layouts[] = {"Details", "Grid"};
-        static const char *const layout_icons[] = {"list", "columns-3", "layout-grid"}, *const touch_icons[] = {"list", "layout-grid"};
-        if (ui.touch) {
-            int l = ui_menu_segments(touch_layouts, touch_icons, 2, br.layout == LAYOUT_GRID ? 1 : 0);
-            if (l >= 0) view_set_layout(l ? LAYOUT_GRID : LAYOUT_DETAILS);
-        } else {
-            int l = ui_menu_segments(layouts, layout_icons, 3, (int)br.layout);
-            if (l >= 0) view_set_layout((fr_layout)l);
-        }
-        if (ui_menu_heading("Show only", br.kinds ? "x" : NULL, br.kinds ? "All" : NULL)) kinds_set(KF_ALL);
-        static const char *const kinds[] = {"Images", "Video", "Audio", "Docs", "Archives", "Code"};
-        static const char *const kind_icons[] = {"image", "video", "music", "file-text", "file-archive", "file-code"};
-        int k = ui_menu_segments(kinds, kind_icons, 6, (int)br.kinds - 1);
-        if (k >= 0) kinds_set((fr_kind_filter)(k + 1));
-        ui_menu_separator();
+        if (!ui.touch) view_items();
         tabs_menu_items();
         compare_menu_items();
         ui_menu_separator();
-        if (ui_menu_item("Show hidden", "eye", br.show_hidden)) br.show_hidden = !br.show_hidden, browser_rebuild_view();
+        if (!ui.touch && ui_menu_item("Show hidden", "eye", br.show_hidden)) br.show_hidden = !br.show_hidden, browser_rebuild_view();
         if (!ui.touch && ui_menu_item("Show git status", "list-checks", settings.git_status)) settings.git_status = !settings.git_status;
         if (link_here() && ui_menu_item("Paste as link", "link", -1)) links_paste(-1);
         if (ui_menu_item("Search names below", "search", -1)) search_prompt(0);
@@ -173,18 +194,9 @@ static void draw_menus(void)
         if (undo_can(0) && ui_menu_item("Undo", "undo-2", -1)) undo_run(0);
         if (undo_can(1) && ui_menu_item("Redo", "redo-2", -1)) undo_run(1);
         ui_menu_separator();
-        char pct[16];
-        snprintf(pct, sizeof pct, "%d%%", (int)lroundf(ui.user_scale * 100));
-        int d = ui_menu_stepper("Interface", "zoom-in", pct);
-        if (d) app_zoom(d == 2 ? 0 : d);
-        snprintf(pct, sizeof pct, "%d%%", (int)lroundf(ui.text_scale * 100));
-        d = ui_menu_stepper("Text", "a-large-small", pct);
-        if (d) app_text_zoom(d == 2 ? 0 : d);
-        ui_menu_heading("Theme", NULL, NULL);
-        static const char *const schemes[] = {"Dark", "Light", "System"}, *const scheme_icons[] = {"moon", "sun", "monitor"};
-        int sc = ui_menu_segments(schemes, scheme_icons, 3, settings.scheme);
-        if (sc >= 0) scheme_set(sc);
+        int open_view = ui.touch && ui_menu_item("View and settings...", "eye", -1);
         if (!ui.touch) {
+            size_theme_items();
             ui_menu_heading("Tabs", NULL, NULL);
             static const char *const places[] = {"Top", "Bottom", "Left", "Right"},
                                      *const place_icons[] = {"arrow-up", "arrow-down", "arrow-left", "arrow-right"};
@@ -196,6 +208,15 @@ static void draw_menus(void)
             ops_terminal_here();
         ui_menu_separator();
         if (ui_menu_item("Refresh", "refresh-cw", -1)) browser_reload();
+        ui_menu_end();
+        /* after the end: opened inside, the sheet would be drawn with this menu's rows for a frame */
+        if (open_view) ui_menu_open(app.menu_view, (Rectangle){ui.safe.x + ui.safe.width - DP(8), ui.safe.y + DP(8), 0, 0});
+    }
+    if (ui_menu_begin(app.menu_view)) {
+        view_items();
+        if (ui_menu_item("Show hidden", "eye", br.show_hidden)) br.show_hidden = !br.show_hidden, browser_rebuild_view();
+        ui_menu_separator();
+        size_theme_items();
         ui_menu_end();
     }
     place_menu_draw();
@@ -570,7 +591,7 @@ int fr_app_main(int argc, char **argv)
     static const fr_secret_store keystore = {plat_secret_load, plat_secret_save, plat_secret_forget};
     if (plat_secret_available()) fr_creds_set_store(&keystore);
     thumbs_start();
-    app.menu_more = ui_id("menu-more", 0), app.menu_row = ui_id("menu-row", 0), app.menu_bg = ui_id("menu-bg", 0);
+    app.menu_more = ui_id("menu-more", 0), app.menu_row = ui_id("menu-row", 0), app.menu_bg = ui_id("menu-bg", 0), app.menu_view = ui_id("menu-view", 0);
     app.menu_selection = ui_id("menu-selection", 0);
     char *start = NULL;
     if (argc > 1) {

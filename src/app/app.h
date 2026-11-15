@@ -123,7 +123,7 @@ typedef struct {
     fr_disks disks;
     unsigned disks_serial;
     Rectangle pane_rect[2]; /* where the current tab's panes were drawn, by side (only [0] when not split) */
-    unsigned menu_more, menu_row, menu_bg, menu_selection;
+    unsigned menu_more, menu_row, menu_bg, menu_selection, menu_view;
     int help_open; /* the keyboard shortcuts sheet */
     double path_flash_at; /* the folder's path was copied then: the breadcrumb flashes */
 } fr_app;
