@@ -89,6 +89,9 @@ void browser_set_selected(int item, int on);
 fr_strs browser_selected_uris(void);
 fr_strs browser_target_uris(void); /* the selection if the focused row is in it, else the focused row */
 fr_item *browser_item(int view_index);
+fr_item *browser_item_of(const char *uri); /* the row of uri, NULL when the folder shown has none */
+/* between frames: the row of from (NULL: the new row being named) shows to's name until the next listing does */
+void browser_name_row(const char *from, const char *to, int is_dir);
 void browser_count_some(int first, int last); /* folder item counts for the rows shown */
 void browser_add_placeholder(void);           /* an empty row at the top, under the cursor */
 void browser_drop_placeholder(void);
@@ -239,9 +242,29 @@ typedef struct {
 } fr_clip;
 extern fr_clip clip;
 
+/* ---- renaming and making files off this device, on a thread of their own (remote.c) ---- */
+/* a call on uri may wait on a server or a device: not on this device, and not inside an archive (a job does those) */
+int remote_slow(const char *uri);
+/* After the call, between frames: the undo record, the pane that asked (br then) reloaded on the new name, or the
+ * error toasted; then done. A sign-in or trust question goes through net_ask, and once answered the call runs
+ * again, and done with it. */
+typedef void (*remote_done)(int rc, unsigned ctx);
+void remote_rename(const char *from, const char *to, remote_done done, unsigned ctx);
+void remote_create(const char *uri, int folder, remote_done done, unsigned ctx);
+/* fr_uri_free_name() on a thread: named(uri, ctx) between frames */
+void remote_free_name(const char *dir, const char *name, int is_dir, void (*named)(const char *uri, unsigned ctx), unsigned ctx);
+
+/* ---- files not on this device opened through a local copy (fetch.c) ---- */
+void fetch_start(void); /* clears the copies older than a day, on a thread */
+/* the files among uris that are not on this device copied by jobs, then all opened in their default apps, or with
+ * Open with (with) */
+void fetch_open(const fr_strs *uris, int with);
+int fetch_job_done(const fr_job_status *st); /* a finished job: 1 when it was a fetch's, and taken care of */
+
 void ops_open_item(fr_item *it);
 void ops_open_entry(const char *uri, const fr_entry *e); /* a folder or an archive is browsed, a file handed on */
-int ops_rename(const char *from, const char *to);       /* inside an archive as a job (0 once it is asked for) */
+/* inside an archive as a job (0 once it is asked for); off this device (remote_slow) 1, and done(rc, ctx) later */
+int ops_rename(const char *from, const char *to, remote_done done, unsigned ctx);
 int ops_archive_targets(void);  /* how many targets there are when all are archives to extract, else 0 */
 void ops_extract(int into_folder); /* the targets here, or each into a folder of its own named after it */
 char *ops_compress_name(void);  /* "<name>.zip" for the targets, NULL without any */
@@ -255,7 +278,8 @@ void ops_delete(int permanently);
 void ops_rename_start(void);
 void ops_new_folder_start(void);
 void ops_new_start(void); /* a file, or a folder when the name ends in "/" */
-int ops_create(const char *typed); /* makes it in the current folder; 0, or an error already shown */
+/* makes it in the current folder; 0, an error already shown, or 1 off this device (done(rc, ctx) later) */
+int ops_create(const char *typed, remote_done done, unsigned ctx);
 void ops_properties(void);
 void ops_share(void); /* the targets to the system's share sheet (Android) */
 void ops_draw_dialogs(void);
@@ -298,6 +322,8 @@ void props_close(void);
 
 /* ---- open with (openwith.c), one of ops.c's dialogs ---- */
 int openwith_open(void); /* the targets' apps; 0 when no dialog is needed (handed to the system, or said why) */
+int openwith_open_paths(fr_strs *paths); /* the same for files on this device (taken) */
+void ops_open_with_paths(fr_strs *paths); /* openwith_open_paths as ops.c's dialog, unless another one is open */
 int openwith_draw(void); /* 0 once it closed itself */
 void openwith_close(void);
 void ops_open_with(void);

@@ -15,6 +15,8 @@ static char *dlg_uri;          /* rename: the item */
 static fr_strs dlg_uris;       /* delete: the items */
 static int dlg_permanent;
 static char dlg_message[1024], dlg_title[128];
+static int dlg_pending;     /* rename, new: the call runs off this device (remote.c) */
+static unsigned dlg_serial; /* the dialog an answer from there is for */
 
 static int job_asking(void)
 {
@@ -33,6 +35,8 @@ static void dlg_close(void)
     if (dlg == DLG_BULK) bulk_rename_close();
     if (dlg == DLG_OPEN_WITH) openwith_close();
     dlg = DLG_NONE;
+    dlg_pending = 0;
+    dlg_serial++;
     free(dlg_uri);
     dlg_uri = NULL;
     fr_strs_free(&dlg_uris);
@@ -46,6 +50,9 @@ void ops_open_entry(const char *uri, const fr_entry *e)
         char *root = fr_archive_root(uri);
         browser_open(root, 1);
         free(root);
+    } else if (!fr_uri_local(uri) && fr_vfs_backend(uri)) {
+        fr_strs one = {(char *[]){(char *)uri}, 1, 1};
+        fetch_open(&one, 0);
     } else {
         const char *path = fr_uri_local(uri);
         if (!path || plat_open(path)) ui_toast("No app can open %s", e->name);
@@ -62,8 +69,12 @@ void ops_open_item(fr_item *it)
 /* archives are rewritten whole for a change inside, so it runs as a job */
 static int in_archive(const char *uri) { return fr_archive_is_uri(uri); }
 
-int ops_rename(const char *from, const char *to)
+int ops_rename(const char *from, const char *to, remote_done done, unsigned ctx)
 {
+    if (remote_slow(from)) {
+        remote_rename(from, to, done, ctx);
+        return 1;
+    }
     if (!in_archive(from)) {
         int rc = fr_vfs_rename(from, to);
         if (!rc) undo_record_rename(from, to);
@@ -224,6 +235,12 @@ void ops_open_with(void)
     if (dlg == DLG_NONE && openwith_open()) dlg = DLG_OPEN_WITH;
 }
 
+void ops_open_with_paths(fr_strs *paths)
+{
+    if (dlg == DLG_NONE && openwith_open_paths(paths)) dlg = DLG_OPEN_WITH;
+    fr_strs_free(paths);
+}
+
 void ops_terminal_here(void)
 {
     const char *dir = br.uri ? fr_uri_local(br.uri) : NULL;
@@ -238,9 +255,8 @@ void ops_rename_start(void)
         fr_strs_free(&uris);
         return;
     }
-    fr_entry e = {0};
-    int is_dir = !fr_vfs_stat(uris.v[0], &e) && e.is_dir;
-    fr_entry_free(&e);
+    fr_item *it = browser_item_of(uris.v[0]);
+    int is_dir = it && it->e.is_dir;
     char *name = fr_uri_name(uris.v[0]);
     text_set(&field, name);
     text_select(&field, 0, (int)fr_stem_len(name, is_dir));
@@ -251,10 +267,27 @@ void ops_rename_start(void)
     dlg = DLG_RENAME;
 }
 
+/* the name the dialog offers, unless it was changed meanwhile */
+static void free_name_found(const char *uri, unsigned ctx)
+{
+    if (ctx != dlg_serial || dlg != DLG_NEW_FOLDER || dlg_pending || strcmp(field.buf, "New folder/")) return;
+    char *name = fr_uri_name(uri), *shown = fr_format("%s/", name);
+    text_set(&field, shown);
+    text_select(&field, 0, field.len - 1);
+    free(name), free(shown);
+}
+
 void ops_new_folder_start(void)
 {
     if (!ui.touch) {
         keys_new_start("New folder/");
+        return;
+    }
+    if (remote_slow(br.uri)) {
+        text_set(&field, "New folder/");
+        text_select(&field, 0, field.len - 1);
+        dlg = DLG_NEW_FOLDER;
+        remote_free_name(br.uri, "New folder", 1, free_name_found, dlg_serial);
         return;
     }
     char *uri = fr_uri_free_name(br.uri, "New folder", 1), *name = fr_uri_name(uri), *shown = fr_format("%s/", name);
@@ -307,8 +340,17 @@ void ops_properties(void)
     dlg = DLG_PROPERTIES;
 }
 
+/* an answer from off this device for the rename or new dialog: it closes once that worked */
+static void dlg_done(int rc, unsigned ctx)
+{
+    if (ctx != dlg_serial || !dlg_pending) return;
+    dlg_pending = 0;
+    if (!rc) dlg_close();
+}
+
 static void rename_commit(void)
 {
+    if (dlg_pending) return;
     char *old = fr_uri_name(dlg_uri);
     if (!strcmp(old, field.buf)) {
         free(old);
@@ -321,8 +363,9 @@ static void rename_commit(void)
         return;
     }
     char *parent = fr_uri_parent(dlg_uri), *to = fr_uri_join(parent, field.buf);
-    int rc = ops_rename(dlg_uri, to);
-    if (rc == -EEXIST) ui_toast("\"%s\" already exists here", field.buf);
+    int rc = ops_rename(dlg_uri, to, dlg_done, dlg_serial);
+    if (rc == 1) dlg_pending = 1;
+    else if (rc == -EEXIST) ui_toast("\"%s\" already exists here", field.buf);
     else if (rc) ui_toast("Could not rename: %s", fr_vfs_error(rc));
     else {
         free(br.focus_name);
@@ -334,14 +377,19 @@ static void rename_commit(void)
 }
 
 /* a name ending in "/" makes a folder, any other an empty file */
-int ops_create(const char *typed)
+int ops_create(const char *typed, remote_done done, unsigned ctx)
 {
     size_t n = strlen(typed);
     int folder = n && typed[n - 1] == '/';
     char *name = fr_strndup(typed, folder ? n - 1 : n);
     int rc = -EINVAL;
     if (!fr_name_valid(name)) ui_toast("A name cannot be empty, \".\", \"..\" or contain \"/\" (except one at the end, for a folder)");
-    else {
+    else if (remote_slow(br.uri)) {
+        char *uri = fr_uri_join(br.uri, name);
+        remote_create(uri, folder, done, ctx);
+        free(uri);
+        rc = 1;
+    } else {
         char *uri = fr_uri_join(br.uri, name);
         rc = 0;
         if (in_archive(uri)) {
@@ -369,7 +417,10 @@ int ops_create(const char *typed)
 
 static void new_folder_commit(void)
 {
-    if (!ops_create(field.buf)) dlg_close();
+    if (dlg_pending) return;
+    int rc = ops_create(field.buf, dlg_done, dlg_serial);
+    if (rc == 1) dlg_pending = 1;
+    else if (!rc) dlg_close();
 }
 
 /* ---- jobs ---- */
@@ -383,9 +434,14 @@ void ops_poll_jobs(void)
     if (f == seen_finished) return;
     seen_finished = f;
     fr_job_status st[16];
-    int n = fr_jobs_list(st, 16);
+    int n = fr_jobs_list(st, 16), changed = 0;
     for (int i = 0; i < n; i++) {
         if (st[i].state != JOB_DONE && st[i].state != JOB_CANCELLED) continue;
+        if (fetch_job_done(&st[i])) {
+            fr_job_dismiss(st[i].id);
+            continue;
+        }
+        changed = 1;
         static const char *done[] = {"Copied", "Moved", "Deleted", "Moved to the trash", "Changed the permissions of",
                                      "Extracted", "Compressed", "Renamed", "Made", "Did"};
         if (undo_job_done(&st[i])) {
@@ -403,7 +459,7 @@ void ops_poll_jobs(void)
         fr_job_dismiss(st[i].id);
     }
     /* after the renames were recorded, which search results follow */
-    browser_reload_shown();
+    if (changed) browser_reload_shown();
 }
 
 float ops_draw_jobs(Rectangle area)
@@ -440,7 +496,8 @@ float ops_draw_jobs(Rectangle area)
                                   "Extracting", "Compressing", "Renaming", "Making"};
     char line[640];
     const char *what = j->items == 1 && j->current[0] ? j->current : NULL;
-    if (j->kind == JOB_RENAME || j->kind == JOB_CREATE) snprintf(line, sizeof line, "%s %s", verbs[j->kind], j->dest_name);
+    if (j->kind == JOB_FETCH) snprintf(line, sizeof line, "Opening %s", j->dest_name);
+    else if (j->kind == JOB_RENAME || j->kind == JOB_CREATE) snprintf(line, sizeof line, "%s %s", verbs[j->kind], j->dest_name);
     else if (j->kind <= JOB_MOVE || j->kind == JOB_EXTRACT || j->kind == JOB_COMPRESS) {
         if (what) snprintf(line, sizeof line, "%s %s to %s", verbs[j->kind], what, j->dest_name);
         else snprintf(line, sizeof line, "%s %d items to %s", verbs[j->kind], j->items, j->dest_name);
@@ -475,14 +532,15 @@ void ops_draw_dialogs(void)
     int b;
     switch (dlg) {
     case DLG_RENAME: {
-        fr_dialog d = {.title = "Rename", .field = &field, .buttons = {"Cancel", "Rename"}, .nbuttons = 2, .cancel = 0};
+        fr_dialog d = {.title = "Rename", .message = dlg_pending ? "Renaming..." : NULL, .field = &field,
+                       .buttons = {"Cancel", "Rename"}, .nbuttons = 2, .cancel = 0};
         b = ui_dialog(&d);
         if (b == 1) rename_commit();
         else if (b == 0) dlg_close();
         break;
     }
     case DLG_NEW_FOLDER: {
-        fr_dialog d = {.title = "New file or folder", .message = "End the name with / to make a folder.", .field = &field,
+        fr_dialog d = {.title = "New file or folder", .message = dlg_pending ? "Making it..." : "End the name with / to make a folder.", .field = &field,
                        .buttons = {"Cancel", "Make"}, .nbuttons = 2, .cancel = 0};
         b = ui_dialog(&d);
         if (b == 1) new_folder_commit();

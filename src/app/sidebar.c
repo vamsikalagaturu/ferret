@@ -168,10 +168,19 @@ static float disks_draw(Rectangle r, float y, float ih, int current)
     return y;
 }
 
+/* the places scroll when they do not fit (a phone held sideways, many favorites or disks); the desktop's mode line
+ * and shortcuts row stay pinned under them */
 void places_draw(Rectangle r)
 {
+    static fr_scroll scroll;
+    static float content_h;
     ui_rect(r, theme.surface);
-    float y = r.y + DP(12), ih = ui.touch ? fmaxf(DP(52), ui_line_height(15) + DP(20)) : app_row_height();
+    float ih = ui.touch ? fmaxf(DP(52), ui_line_height(15) + DP(20)) : app_row_height(), status_h = DP(36);
+    float foot = ui.touch ? 0 : ih + DP(8) + DP(8) + status_h + DP(4);
+    Rectangle view = {r.x, r.y, r.width, r.height - foot};
+    ui_scroll(ui_id("places-scroll", 0), &scroll, view, content_h);
+    ui_clip_begin(view);
+    float y = r.y + DP(12) - scroll.offset;
     ui_text_box("ferret", (Rectangle){r.x + DP(20), y, r.width - DP(40), DP(28)}, 20, FONT_SEMIBOLD, theme.accent, ALIGN_LEFT, 0);
     ui_text_box(FR_VERSION, (Rectangle){r.x + DP(20), y + DP(28), r.width - DP(40), DP(16)}, 12, FONT_REGULAR, theme.text_faint, ALIGN_LEFT, 1);
     y += DP(56);
@@ -235,10 +244,15 @@ void places_draw(Rectangle r)
     }
     y = disks_draw(r, y, ih, disk_current);
     y = network_draw(r, y, ih);
+    ui_clip_end();
+    float content = y + scroll.offset - r.y + DP(8);
+    if (fabsf(content - content_h) > 0.5f) content_h = content, ui.dirty = 1;
     if (ui.touch) return;
-    float status_h = DP(36);
-    Rectangle help = {r.x + DP(8), fmaxf(y + DP(12) + status_h, r.y + r.height - ih - DP(8)), r.width - DP(16), ih};
+    Rectangle help = {r.x + DP(8), r.y + r.height - ih - DP(8), r.width - DP(16), ih};
     Rectangle status = {r.x + DP(16), help.y - DP(8) - status_h, r.width - DP(32), status_h};
+    /* rows scrolled under the pinned part take no clicks */
+    ui_clickable(ui_id("places-foot", 0), (Rectangle){r.x, view.y + view.height, r.width, foot}, NULL);
+    ui_rect((Rectangle){r.x, view.y + view.height, r.width, foot}, theme.surface);
     ui_hline(r.x + DP(16), status.y - DP(4), r.width - DP(32), theme.border);
     static const char *const modes[] = {"NORMAL", "VISUAL", "INSERT"};
     int mode = keys_mode();

@@ -175,7 +175,7 @@ static void draw_menus(void)
     if (ui_menu_begin(app.menu_row)) {
         fr_item *it = browser_item(br.cursor);
         if (br.nselected == 1 && it && ui_menu_item("Open", "external-link", -1)) ops_open_item(it);
-        if (it && !it->e.is_dir && br.uri && fr_uri_local(br.uri) && ui_menu_item("Open with...", "app-window", -1)) ops_open_with();
+        if (it && !it->e.is_dir && br.uri && ui_menu_item("Open with...", "app-window", -1)) ops_open_with();
         if (ui_menu_item("Copy", "copy", -1)) ops_copy(0);
         if (ui_menu_item("Cut", "scissors", -1)) ops_copy(1);
         if (app_split() && ui_menu_item("Copy to the other pane", "copy", -1)) ops_to_other_pane(0);
@@ -220,7 +220,7 @@ static void draw_menus(void)
         if (br.nselected == 1 && ui_menu_item("Rename", "pencil", -1)) ops_rename_start();
         rename_items();
         if (br.results && br.nselected == 1 && ui_menu_item("Show in folder", "folder-open", -1)) search_reveal();
-        if (br.nselected == 1 && br.uri && fr_uri_local(br.uri) && ui_menu_item("Open with...", "app-window", -1)) ops_open_with();
+        if (br.nselected == 1 && br.uri && ui_menu_item("Open with...", "app-window", -1)) ops_open_with();
         archive_items();
         if (ui_menu_item("Properties", "info", -1)) ops_properties();
         if (br.uri && fr_vfs_can_trash(br.uri) && ui_menu_item("Delete permanently", "trash-2", -1)) ops_delete(1);
@@ -463,6 +463,7 @@ int fr_app_main(int argc, char **argv)
     if (!replay) ui_input_init();
     fr_jobs_start(plat_wake);
     fr_async_start(plat_wake);
+    fetch_start();
     static const fr_secret_store keystore = {plat_secret_load, plat_secret_save, plat_secret_forget};
     if (plat_secret_available()) fr_creds_set_store(&keystore);
     thumbs_start();

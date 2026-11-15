@@ -455,6 +455,25 @@ static void drop_placeholder_now(const char *s, int n)
 
 void browser_drop_placeholder(void) { app_defer(drop_placeholder_now, NULL, 0); }
 
+void browser_name_row(const char *from, const char *to, int is_dir)
+{
+    char *parent = fr_uri_parent(to), *name = fr_uri_name(to);
+    for (int i = 0; parent && br.uri && !strcmp(parent, br.uri) && i < br.items.n; i++) {
+        fr_item *it = &br.items.v[i];
+        char *uri = from ? fr_uri_join(br.uri, it->e.name) : NULL;
+        int match = from ? !strcmp(uri, from) : it->placeholder;
+        free(uri);
+        if (!match) continue;
+        free(it->e.name);
+        it->e.name = fr_strdup(name);
+        if (!from) it->placeholder = 0, it->e.is_dir = is_dir;
+        it->kind = kind_of(name, it->e.is_dir);
+        rebuild_now(NULL, 0);
+        break;
+    }
+    free(parent), free(name);
+}
+
 void browser_reload_shown(void)
 {
     fr_browser *other = tabs_other(&tabs), *was = br_cur;
@@ -502,6 +521,17 @@ void browser_poll(void)
 fr_item *browser_item(int view_index)
 {
     return view_index >= 0 && view_index < br.view.n ? &br.items.v[br.view.v[view_index]] : NULL;
+}
+
+fr_item *browser_item_of(const char *uri)
+{
+    for (int i = 0; br.uri && i < br.items.n; i++) {
+        char *u = fr_uri_join(br.uri, br.items.v[i].e.name);
+        int same = !strcmp(u, uri);
+        free(u);
+        if (same) return &br.items.v[i];
+    }
+    return NULL;
 }
 
 void browser_set_selected(int item, int on)

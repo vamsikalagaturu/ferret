@@ -15,6 +15,8 @@ static struct {
     int result; /* what the field returned since then */
     int creating; /* naming a new file or folder in the placeholder row; else renaming uri */
     unsigned browser; /* the pane it is in */
+    int pending;      /* the name went off this device (remote.c): shown, not editable, until the answer */
+    unsigned serial;  /* of this naming, which that answer must match */
     char *uri;
     fr_text text;
 } insert;
@@ -94,7 +96,8 @@ static void insert_start(int how)
     free(insert.uri);
     insert.uri = fr_uri_join(br.uri, it->e.name);
     insert.on = insert.seen = 1;
-    insert.creating = 0;
+    insert.creating = insert.pending = 0;
+    insert.serial++;
     insert.browser = br.id;
     ui.focus = insert_id();
     view_reveal(br.cursor);
@@ -113,6 +116,8 @@ void keys_new_start(const char *typed)
     free(insert.uri);
     insert.uri = NULL;
     insert.on = insert.seen = insert.creating = 1;
+    insert.pending = 0;
+    insert.serial++;
     insert.browser = br.id;
     ui.focus = insert_id();
     view_reveal(br.cursor);
@@ -130,17 +135,28 @@ static void insert_stop(void)
         br_cur = was;
         ui.id_salt = salt;
     }
-    insert.creating = 0;
+    insert.creating = insert.pending = 0;
     free(insert.uri);
     insert.uri = NULL;
     if (ui.focus == insert_id()) ui.focus = 0;
     ui.dirty = 1;
 }
 
+/* the answer for a name sent off this device: done, or editable again after the error toasted */
+static void insert_done(int rc, unsigned serial)
+{
+    if (!insert.on || !insert.pending || serial != insert.serial) return;
+    insert.pending = 0;
+    if (!rc) insert.creating = 0, insert_stop();
+    ui.dirty = 1;
+}
+
 static void insert_commit(void)
 {
     if (insert.creating) {
-        if (!ops_create(insert.text.buf)) insert.creating = 0, insert_stop();
+        int rc = ops_create(insert.text.buf, insert_done, insert.serial);
+        if (rc == 1) insert.pending = 1;
+        else if (!rc) insert.creating = 0, insert_stop();
         return;
     }
     char *old = fr_uri_name(insert.uri);
@@ -155,9 +171,10 @@ static void insert_commit(void)
         return;
     }
     char *parent = fr_uri_parent(insert.uri), *to = fr_uri_join(parent, insert.text.buf);
-    int rc = ops_rename(insert.uri, to);
+    int rc = ops_rename(insert.uri, to, insert_done, insert.serial);
     free(parent), free(to);
-    if (rc == -EEXIST) ui_toast("\"%s\" already exists here", insert.text.buf);
+    if (rc == 1) insert.pending = 1;
+    else if (rc == -EEXIST) ui_toast("\"%s\" already exists here", insert.text.buf);
     else if (rc) ui_toast("Could not rename: %s", fr_vfs_error(rc));
     else {
         free(br.focus_name);
@@ -183,6 +200,17 @@ int keys_insert_field(int v, Rectangle r)
         if (!same) return 0;
     }
     insert.seen = 1;
+    if (insert.pending) {
+        float pad = DP(12), ic = DP(24);
+        Rectangle spin = {r.x + r.width - pad - ic, r.y, ic, r.height};
+        char shown[sizeof insert.text.buf + 4];
+        snprintf(shown, sizeof shown, "%s...", insert.text.buf);
+        ui_round(r, 8, theme.surface);
+        ui_round_line(r, 8, theme.border);
+        ui_text_box(shown, (Rectangle){r.x + pad, r.y, spin.x - r.x - pad - DP(4), r.height}, 15, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 0);
+        ui_icon("loader-circle", spin, 16, theme.text_dim);
+        return 1;
+    }
     insert.result |= ui_text_field(insert_id(), &insert.text, r, NULL);
     return 1;
 }
@@ -201,7 +229,7 @@ static void insert_poll(void)
 {
     int rc = insert.result, seen = insert.seen;
     insert.result = insert.seen = 0;
-    if (!insert.on) return;
+    if (!insert.on || insert.pending) return;
     if (rc & TEXT_CANCEL || !seen || ui.focus != insert_id()) insert_stop();
     else if (rc & TEXT_SUBMIT) insert_commit();
 }

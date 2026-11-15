@@ -48,21 +48,53 @@ void openwith_close(void)
     ui.dirty = 1;
 }
 
+static int show(void);
+
+/* files elsewhere are copied here first (fetch.c), which opens the dialog once they are */
 int openwith_open(void)
 {
     openwith_close();
-    fr_strs uris = browser_target_uris();
+    fr_strs uris = browser_target_uris(), files = {0};
+    int elsewhere = 0;
     for (int i = 0; i < uris.n; i++) {
         const char *p = fr_uri_local(uris.v[i]);
         fr_entry e = {0};
-        if (p && !fr_vfs_stat(uris.v[i], &e) && !e.is_dir) FR_PUSH(W.paths, fr_strdup(p));
+        if (p && !fr_vfs_stat(uris.v[i], &e) && !e.is_dir) FR_PUSH(files, fr_strdup(uris.v[i]));
+        else if (!p && fr_vfs_backend(uris.v[i])) {
+            fr_item *it = browser_item_of(uris.v[i]);
+            if (!it || !it->e.is_dir) {
+                FR_PUSH(files, fr_strdup(uris.v[i]));
+                elsewhere = 1;
+            }
+        }
         fr_entry_free(&e);
     }
     fr_strs_free(&uris);
-    if (!W.paths.n) {
-        ui_toast("Open with takes files on this device");
+    if (!files.n) {
+        fr_strs_free(&files);
+        ui_toast("Open with takes files, not folders");
         return 0;
     }
+    if (elsewhere) {
+        fetch_open(&files, 1);
+        fr_strs_free(&files);
+        return 0;
+    }
+    for (int i = 0; i < files.n; i++) FR_PUSH(W.paths, fr_strdup(fr_uri_local(files.v[i])));
+    fr_strs_free(&files);
+    return show();
+}
+
+int openwith_open_paths(fr_strs *paths)
+{
+    openwith_close();
+    W.paths = *paths;
+    *paths = (fr_strs){0};
+    return W.paths.n ? show() : 0;
+}
+
+static int show(void)
+{
     const char *slash = strrchr(W.paths.v[0], '/'), *name = slash ? slash + 1 : W.paths.v[0];
     W.mime = type_of(W.paths.v[0], name);
     if (plat_apps_for(W.mime, &W.apps) < 0) {
