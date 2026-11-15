@@ -135,6 +135,7 @@ static void setup_environment(void)
     setenv("XDG_CONFIG_HOME", config, 1);
     setenv("XDG_DATA_HOME", data, 1);
     setenv("XDG_RUNTIME_DIR", run, 1);
+    setenv("XDG_CACHE_HOME", cache, 1);
     setenv("TMPDIR", cache, 1);
     if (chdir(files)) LOG("chdir %s failed", files);
     free(config), free(data), free(run), free(cache);

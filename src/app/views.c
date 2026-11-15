@@ -207,8 +207,10 @@ static void draw_row(int v, Rectangle row, Rectangle area)
     float pad = DP(ui.touch ? 16 : 12), icon_w = DP(compact ? 32 : 40);
     Rectangle icon = {row.x + pad, row.y, icon_w, row.height};
     Color kc = kind_color(it->kind);
+    float side = fminf(icon_w, row.height - DP(8));
+    Rectangle square = {icon.x + (icon_w - side) / 2, row.y + (row.height - side) / 2, side, side};
     if (it->selected && ui.touch) ui_icon("square-check", icon, 24, theme.accent);
-    else ui_icon(kind_icon(it->kind), icon, compact ? 20 : 24, kc);
+    else if (thumb_draw(it, square) <= 0) ui_icon(kind_icon(it->kind), icon, compact ? 20 : 24, kc);
     if (it->e.is_link) ui_icon("link", (Rectangle){icon.x + icon_w - DP(14), row.y + row.height / 2, DP(12), DP(12)}, 10, theme.text_faint);
 
     char size[32] = "", date[32];

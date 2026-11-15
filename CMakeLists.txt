@@ -40,12 +40,15 @@ function(fr_embed_assets gen)
 endfunction()
 
 # Storage, file operations and jobs: no window, so the tests and every platform share it.
-file(GLOB FR_CORE_SOURCES CONFIGURE_DEPENDS src/core/*.c src/vfs/*.c src/jobs/*.c)
+file(GLOB FR_CORE_SOURCES CONFIGURE_DEPENDS src/core/*.c src/vfs/*.c src/jobs/*.c src/thumbs/*.c)
 add_library(fercore STATIC ${FR_CORE_SOURCES})
 target_include_directories(fercore PUBLIC src)
+# stb_image, stb_image_write and qoi.h as raylib vendors them; that folder also has a dirent.h for Windows, so
+# only this file sees it
+set_source_files_properties(src/thumbs/thumbs.c PROPERTIES INCLUDE_DIRECTORIES ${FR_REPO}/thirdparty/raylib/src/external)
 target_compile_options(fercore PRIVATE ${FR_WARNINGS})
 find_package(Threads REQUIRED)
-target_link_libraries(fercore PUBLIC Threads::Threads)
+target_link_libraries(fercore PUBLIC Threads::Threads m)
 
 # A release (FR_RELEASE=1 in the environment) is the plain version; any other build is a development one, as semver
 # pre-release + build metadata: 0.1.0-dev+1b42e42, .dirty with uncommitted changes. Fixed when configured.
@@ -71,7 +74,7 @@ target_compile_definitions(fercore PUBLIC FR_VERSION="${FR_VERSION_STRING}")
 
 if(FR_BUILD_PROGRAMS)
   enable_testing()
-  foreach(t util vfs jobs settings mode)
+  foreach(t util vfs jobs settings mode thumbs)
     add_executable(test_${t} tests/test_${t}.c)
     target_link_libraries(test_${t} PRIVATE fercore)
     target_compile_options(test_${t} PRIVATE ${FR_WARNINGS})

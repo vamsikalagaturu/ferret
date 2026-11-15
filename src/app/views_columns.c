@@ -107,8 +107,16 @@ static void draw_info_line(const char *label, const char *value, Rectangle r)
 static void draw_file_info(Rectangle r, const fr_item *it)
 {
     float pad = DP(20), w = r.width - 2 * pad, x = r.x + pad, y = r.y + DP(32), lh = ui_line_height(15);
-    ui_icon(kind_icon(it->kind), (Rectangle){r.x, y, r.width, DP(64)}, 48, kind_color(it->kind));
-    y += DP(76);
+    /* the image's box stays while its thumbnail is on the way, so the text below does not jump */
+    Rectangle image = {x, y, w, fminf(w, r.height * 0.45f)};
+    int shown = thumb_draw(it, image);
+    if (shown < 0) {
+        ui_icon(kind_icon(it->kind), (Rectangle){r.x, y, r.width, DP(64)}, 48, kind_color(it->kind));
+        y += DP(76);
+    } else {
+        if (!shown) ui_icon(kind_icon(it->kind), image, 48, kind_color(it->kind));
+        y += image.height + DP(12);
+    }
     view_draw_name(it->e.name, (Rectangle){x, y, w, 2 * lh}, 15, theme.text);
     y += 2 * lh + DP(16);
     ui_hline(x, y, w, theme.border);
