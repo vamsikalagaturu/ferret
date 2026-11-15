@@ -25,8 +25,8 @@ int place_of(const char *uri)
     return best;
 }
 
-static const char *const disk_verbs[] = {"", "mount", "unmount", "eject"};
-static const char *const disk_busy[] = {"", "mounting...", "unmounting...", "ejecting..."};
+static const char *const disk_verbs[] = {"", "mount", "unmount", "eject", "mount", "unmount", "power off"};
+static const char *const disk_busy[] = {"", "mounting...", "unmounting...", "ejecting...", "mounting...", "unmounting...", "powering off..."};
 
 static void open_path(const char *path)
 {
@@ -62,8 +62,12 @@ void disks_poll(void)
     }
     fr_disk_done d;
     while (plat_disk_done(&d)) {
+        if (dview_disk_done(&d)) {
+            fr_disk_done_free(&d);
+            continue;
+        }
         if (d.error) ui_toast("Could not %s %s: %s", disk_verbs[d.op], d.label, d.error);
-        else if (d.op == DISK_MOUNT && d.path) open_path(d.path);
+        else if (d.op == DISK_MOUNT && d.path && !dview_is_open()) open_path(d.path);
         else if (br.uri) {
             int inside = 0;
             for (int i = 0; i < d.unmounted.n && !inside; i++) {
@@ -95,13 +99,35 @@ static int disk_of(const char *uri)
     return best >= 0 ? best : device_of(&app.disks, uri);
 }
 
+/* the disks view's row: "Manage disks" heading the disks, "Storage" after the places where there is no disk manager */
+static float manage_row(Rectangle r, float y, float ih)
+{
+    Rectangle row = {r.x + DP(8), y, r.width - DP(16), ih};
+    int state, on = dview_is_open();
+    if (ui_clickable(ui_id("manage-disks", 0), row, &state)) {
+        if (on) dview_close();
+        else dview_open();
+    }
+    if (on) ui_round(row, 8, theme.selection);
+    else if (state) ui_round(row, 8, state == 2 ? theme.pressed : theme.hover);
+    const char *label = plat_dm_supported() ? "Manage disks" : "Storage";
+    ui_icon("hard-drive",(Rectangle){row.x + DP(8), y, DP(32), ih}, 20, on ? theme.accent : theme.text_dim);
+    ui_text_box(label, (Rectangle){row.x + DP(52), y, row.width - DP(60), ih}, 15, on ? FONT_SEMIBOLD : FONT_REGULAR, on ? theme.text : theme.text_dim,
+                ALIGN_LEFT, 0);
+    return y + ih;
+}
+
 static float disks_draw(Rectangle r, float y, float ih, int current)
 {
-    if (!app.disks.n) return y;
+    if (!plat_dm_supported()) {
+        ui_hline(r.x + DP(16), y + DP(6), r.width - DP(32), theme.border);
+        return manage_row(r, y + DP(12), ih);
+    }
     ui_hline(r.x + DP(16), y + DP(6), r.width - DP(32), theme.border);
     y += DP(12);
     ui_text_box("Disks", (Rectangle){r.x + DP(20), y, r.width - DP(40), DP(24)}, 13, FONT_SEMIBOLD, theme.text_dim, ALIGN_LEFT, 0);
     y += DP(24);
+    y = manage_row(r, y, ih);
     for (int i = 0; i < app.disks.n; i++) {
         const fr_disk *d = &app.disks.v[i];
         int mounted = d->mounts.n > 0, sel = i == current, eject = mounted && !d->busy;
@@ -111,6 +137,7 @@ static float disks_draw(Rectangle r, float y, float ih, int current)
         Rectangle hit = eject ? (Rectangle){row.x, y, btn.x - row.x, ih} : row;
         int state;
         if (ui_clickable(ui_id("disk", i), hit, &state) && !d->busy) {
+            dview_close();
             if (d->uri) {
                 browser_open(d->uri, 1);
                 app.drawer_open = 0;
@@ -148,7 +175,7 @@ void places_draw(Rectangle r)
     ui_text_box("ferret", (Rectangle){r.x + DP(20), y, r.width - DP(40), DP(28)}, 20, FONT_SEMIBOLD, theme.accent, ALIGN_LEFT, 0);
     ui_text_box(FR_VERSION, (Rectangle){r.x + DP(20), y + DP(28), r.width - DP(40), DP(16)}, 12, FONT_REGULAR, theme.text_faint, ALIGN_LEFT, 1);
     y += DP(56);
-    int fav_current = br.uri ? favorite_index(br.uri) : -1;
+    int fav_current = br.uri && !dview_is_open() ? favorite_index(br.uri) : -1;
     if (settings.favorites.n) {
         ui_text_box("Favorites", (Rectangle){r.x + DP(20), y, r.width - DP(40), DP(24)}, 13, FONT_SEMIBOLD, theme.text_dim, ALIGN_LEFT, 0);
         y += DP(24);
@@ -167,6 +194,7 @@ void places_draw(Rectangle r)
             break;
         }
         if (ui_clickable(ui_id("favorite", i), row, &state)) {
+            dview_close();
             browser_open(uri, 1);
             app.drawer_open = 0;
         }
@@ -183,8 +211,8 @@ void places_draw(Rectangle r)
         y += DP(12);
     }
     fr_places *p = &app.places;
-    int disk_current = br.uri && fav_current < 0 ? disk_of(br.uri) : -1;
-    int current = br.uri && fav_current < 0 && disk_current < 0 ? place_of(br.uri) : -1;
+    int disk_current = br.uri && !dview_is_open() && fav_current < 0 ? disk_of(br.uri) : -1;
+    int current = br.uri && !dview_is_open() && fav_current < 0 && disk_current < 0 ? place_of(br.uri) : -1;
     for (int i = 0; i < p->n; i++) {
         if (i && p->v[i].removable && !p->v[i - 1].removable) {
             ui_hline(r.x + DP(16), y + DP(6), r.width - DP(32), theme.border);
@@ -193,6 +221,7 @@ void places_draw(Rectangle r)
         Rectangle row = {r.x + DP(8), y, r.width - DP(16), ih};
         int state;
         if (ui_clickable(ui_id("place", i), row, &state)) {
+            dview_close();
             browser_open(p->v[i].uri, 1);
             app.drawer_open = 0;
         }

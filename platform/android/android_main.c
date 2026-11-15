@@ -575,6 +575,18 @@ void plat_disks(fr_disks *out) {}
 void plat_disk_request(int op, const char *id) {}
 int plat_disk_done(fr_disk_done *out) { return 0; }
 
+int plat_dm_supported(void) { return 0; }
+unsigned plat_dm_serial(void) { return 0; }
+int plat_dm_tree(dk_tree *out) { return -1; }
+void plat_dm_apply(dk_steps *steps) { dk_steps_free(steps); }
+void plat_dm_status(fr_dm_run *out) { *out = (fr_dm_run){.progress = -1}; }
+
+char *plat_volume_path(const char *uri)
+{
+    const char *p = fr_uri_local(uri);
+    return p ? fr_strdup(p) : saf_local_path(uri);
+}
+
 /* ---- entry ---- */
 
 int main(int argc, char **argv)

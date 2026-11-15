@@ -10,4 +10,5 @@ int android_main_thread(void); /* the android_main thread, the one that draws */
 
 /* saf.c */
 void saf_places(fr_places *out); /* the removable volumes (SD cards, USB drives) */
+char *saf_local_path(const char *uri); /* the /storage path of a saf:// location when it is readable there, else NULL */
 #endif

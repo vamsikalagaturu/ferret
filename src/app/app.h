@@ -103,6 +103,18 @@ int place_of(const char *uri); /* the place holding uri, -1 none */
 void places_draw(Rectangle r);
 void disks_poll(void); /* takes the disks' list and finished requests */
 
+/* ---- the disks view (disks_view.c, disks_usage.c): the disk manager on the desktop, a storage overview where the
+ * platform has none (Android); both look inside volumes ---- */
+int dview_is_open(void);
+void dview_open(void);
+void dview_close(void);
+void dview_draw(Rectangle r); /* in place of the header and the files */
+void dview_keys(void);        /* keys_handle's, while it is open */
+void dview_poll(void);        /* between frames: the disks, the queue's run, the scan */
+int dview_modal(void);        /* a dialog of its own is open */
+int dview_disk_done(const fr_disk_done *d); /* 1 when the finished request was the view's own */
+void dview_shutdown(void);    /* before the window closes: stops the scan, gives back its read-only mount */
+
 /* ---- the header (header.c) ---- */
 float header_height(void);
 void header_draw(Rectangle r);

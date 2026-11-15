@@ -234,8 +234,23 @@ static const char *const shortcuts[][2] = {
     {"g1 .. g9", "open favorite 1 to 9"},  {"gh, g~", "home"},
     {"Ctrl+= / Ctrl+- / Ctrl+0", "bigger / smaller / default interface"},
     {"Ctrl+Alt+= / - / 0", "bigger / smaller / default text"},
-    {"F5, Ctrl+R", "refresh"},             {"?", "this list"},
-    {"q, Ctrl+Q", "quit"},
+    {"F5, Ctrl+R", "refresh"},             {"gd", "disks (the disk manager)"},
+    {"?", "this list"},                    {"q, Ctrl+Q", "quit"},
+    {NULL, "Disks"},
+    {"h / l, arrows", "previous / next partition"}, {"j / k, arrows", "next / previous disk"},
+    {"0 / $", "first / last partition"},   {"gg / G", "first / last disk"},
+    {"Enter, Space", "actions menu"},      {"o", "look inside: what uses the space"},
+    {"m", "mount / unmount"},              {"r / f / t", "resize / format / set label"},
+    {"n", "new partition in free space"},  {"dd", "delete partition"},
+    {"w / E / P", "write a bootable image / eject / power off (USB)"},
+    {"u", "undo the last queued change"},  {"a", "apply the queue (asks first)"},
+    {"Tab / Shift+Tab", "in a form: next / previous filesystem"},
+    {"drag right edge", "resize"},         {"drag free space", "new partition"},
+    {"q, Esc", "back to the files"},
+    {NULL, "Look inside"},
+    {"j / k, gg / G", "move, top / bottom"}, {"Ctrl+d / Ctrl+u", "half a page down / up"},
+    {"l, Enter / h, Backspace", "open folder / parent folder"}, {"r", "count again"},
+    {"q, Esc", "back to the disks"},
 };
 
 static void draw_help(void)
@@ -256,7 +271,11 @@ static void draw_help(void)
     ui_clip_begin(body);
     for (int i = 0; i < n; i++) {
         float y = body.y + i * lh - scroll.offset;
-        ui_text_box(shortcuts[i][0], (Rectangle){body.x, y, kw - DP(12), lh}, 14, FONT_SEMIBOLD, theme.accent, ALIGN_LEFT, 0);
+        if (!shortcuts[i][0]) {
+            ui_text_box(shortcuts[i][1], (Rectangle){body.x, y + DP(4), body.width, lh}, 13, FONT_SEMIBOLD, theme.text_dim, ALIGN_LEFT, 0);
+            continue;
+        }
+        ui_text_box(shortcuts[i][0],(Rectangle){body.x, y, kw - DP(12), lh}, 14, FONT_SEMIBOLD, theme.accent, ALIGN_LEFT, 0);
         ui_text_box(shortcuts[i][1], (Rectangle){body.x + kw, y, body.width - kw, lh}, 14, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 0);
     }
     ui_clip_end();
@@ -308,7 +327,7 @@ static int frame(void)
         ui_redraw_in(0.5);
         return 0;
     }
-    int modal = ops_dialog_open() || ui_menu_is_open() || app.help_open;
+    int modal = ops_dialog_open() || ui_menu_is_open() || app.help_open || dview_modal();
     Rectangle s = ui.safe;
     if (app_wide()) {
         float sw = DP(240);
@@ -318,17 +337,24 @@ static int frame(void)
     }
     float hh = header_height();
     Rectangle list = {s.x, s.y + hh, s.width, s.height - hh};
-    list.height -= ops_draw_jobs(list);
-    list.height -= draw_paste_bar(list);
-    view_draw(list);
-    const char *chord = keys_pending();
-    if (*chord) {
-        float cw = ui_text_width(chord, 13, FONT_REGULAR) + DP(20), ch = DP(24);
-        Rectangle chip = {list.x + list.width - cw - DP(16), list.y + list.height - ch - DP(12), cw, ch};
-        ui_round(chip, 12, theme.surface_hi);
-        ui_text_box(chord, chip, 13, FONT_REGULAR, theme.text_dim, ALIGN_CENTER, 0);
+    if (dview_is_open()) {
+        Rectangle area = s;
+        area.height -= ops_draw_jobs(area);
+        dview_draw(area);
+        list = area;
+    } else {
+        list.height -= ops_draw_jobs(list);
+        list.height -= draw_paste_bar(list);
+        view_draw(list);
+        const char *chord = keys_pending();
+        if (*chord) {
+            float cw = ui_text_width(chord, 13, FONT_REGULAR) + DP(20), ch = DP(24);
+            Rectangle chip = {list.x + list.width - cw - DP(16), list.y + list.height - ch - DP(12), cw, ch};
+            ui_round(chip, 12, theme.surface_hi);
+            ui_text_box(chord, chip, 13, FONT_REGULAR, theme.text_dim, ALIGN_CENTER, 0);
+        }
+        header_draw((Rectangle){s.x, s.y, s.width, hh});
     }
-    header_draw((Rectangle){s.x, s.y, s.width, hh});
     /* the drawer slides: 180 ms, eased out opening and in closing */
     static float slide;
     float target = !app_wide() && app.drawer_open ? 1.0f : 0.0f;
@@ -366,6 +392,7 @@ static void between_frames(int keys)
     if (app_wide() || app.drawer_open) places_refresh(0);
     ops_poll_jobs();
     disks_poll();
+    dview_poll();
     browser_poll();
     settings_poll();
 }
@@ -421,6 +448,7 @@ int fr_app_main(int argc, char **argv)
             plat_wait(wait);
         }
     }
+    dview_shutdown();
     fr_jobs_stop();
     thumbs_stop();
     plat_close_window();

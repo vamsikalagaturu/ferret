@@ -60,6 +60,14 @@ static char *mirror(const char *tree, const char *path)
     return r;
 }
 
+char *saf_local_path(const char *uri)
+{
+    if (strncmp(uri, "saf://", 6)) return NULL;
+    char *tree = tree_of(uri), *m = mirror(tree, fr_uri_path(uri));
+    free(tree);
+    return m;
+}
+
 static char *mirror_uri(const char *uri)
 {
     char *tree = tree_of(uri), *m = mirror(tree, fr_uri_path(uri)), *r = m ? fr_uri_from_path(m) : NULL;

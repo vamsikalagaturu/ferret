@@ -62,8 +62,10 @@ typedef struct {
 } dk_tree;
 
 void dk_obj_free(dk_obj *o);
+dk_obj dk_obj_copy(const dk_obj *o);
 void dk_objs_free(dk_objs *o);
 void dk_tree_free(dk_tree *t);
+dk_tree dk_tree_copy(const dk_tree *t);
 const dk_obj *dk_find(const dk_objs *o, const char *path);
 /* the drive a block sits on, through an unlocked volume's encrypted backing; NULL none */
 const dk_obj *dk_drive_of(const dk_objs *o, const dk_obj *b);

@@ -97,6 +97,25 @@ void dk_obj_free(dk_obj *o)
     *o = (dk_obj){0};
 }
 
+dk_obj dk_obj_copy(const dk_obj *o)
+{
+    dk_obj c = *o;
+    char **strs[] = {&c.path, &c.vendor, &c.model, &c.serial, &c.sort_key, &c.bus, &c.device, &c.drive_path, &c.backing,
+                     &c.id_type, &c.id_label, &c.id_uuid, &c.id_usage, &c.table_path, &c.part_type, &c.part_uuid,
+                     &c.part_name, &c.table_type, &c.cleartext, &c.job_operation};
+    for (size_t i = 0; i < sizeof strs / sizeof *strs; i++) *strs[i] = dup_or_null(*strs[i]);
+    c.mounts = fr_strs_copy(&o->mounts);
+    return c;
+}
+
+dk_tree dk_tree_copy(const dk_tree *t)
+{
+    dk_tree c = {.formats = fr_strs_copy(&t->formats), .version = dup_or_null(t->version)};
+    for (int i = 0; i < t->objs.n; i++) FR_PUSH(c.objs, dk_obj_copy(&t->objs.v[i]));
+    for (int i = 0; i < t->resize.n; i++) FR_PUSH(c.resize, ((dk_resize_mode){fr_strdup(t->resize.v[i].fs), t->resize.v[i].modes}));
+    return c;
+}
+
 void dk_objs_free(dk_objs *o)
 {
     for (int i = 0; i < o->n; i++) dk_obj_free(&o->v[i]);

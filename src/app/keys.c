@@ -338,6 +338,7 @@ static void command(int c)
     case K(0, 'q'): app.quit = 1; break;
     case K('g', 'h'):
     case K('g', '~'): go_home(); break;
+    case K('g', 'd'): dview_open(); break;
     case K(0, 'm'):
         if (br.uri) favorite_toggle(br.uri);
         break;
@@ -356,8 +357,28 @@ static void command(int c)
     }
 }
 
+/* what works over every view: quitting, the interface and text sizes */
+static void window_keys(void)
+{
+    if (ui_key(KEY_Q, MOD_CTRL)) app.quit = 1;
+    if (ui_key(KEY_EQUAL, MOD_CTRL) || ui_key(KEY_EQUAL, MOD_CTRL | MOD_SHIFT) || ui_key(KEY_KP_ADD, MOD_CTRL)) app_zoom(1);
+    if (ui_key(KEY_MINUS, MOD_CTRL) || ui_key(KEY_KP_SUBTRACT, MOD_CTRL)) app_zoom(-1);
+    if (ui_key(KEY_ZERO, MOD_CTRL) || ui_key(KEY_KP_0, MOD_CTRL)) app_zoom(0);
+    int ca = MOD_CTRL | MOD_ALT;
+    if (ui_key(KEY_EQUAL, ca) || ui_key(KEY_EQUAL, ca | MOD_SHIFT) || ui_key(KEY_KP_ADD, ca)) app_text_zoom(1);
+    if (ui_key(KEY_MINUS, ca) || ui_key(KEY_KP_SUBTRACT, ca)) app_text_zoom(-1);
+    if (ui_key(KEY_ZERO, ca) || ui_key(KEY_KP_0, ca)) app_text_zoom(0);
+}
+
 void keys_handle(void)
 {
+    if (dview_is_open()) {
+        if (pending[0]) set_pending(0);
+        window_keys();
+        dview_keys();
+        ui.nchars = 0;
+        return;
+    }
     insert_poll();
     if (visual && !br.nselected) visual = 0;
     if (ui_key(KEY_BACK, 0)) step_back(1);
@@ -406,18 +427,11 @@ void keys_handle(void)
     if (ui_key(KEY_F5, 0) || ui_key(KEY_R, MOD_CTRL)) browser_reload();
     if (ui_key(KEY_F, MOD_CTRL)) filter_start(0);
     if (ui_key(KEY_ENTER, MOD_ALT)) ops_properties();
-    if (ui_key(KEY_Q, MOD_CTRL)) app.quit = 1;
     if (ui_key(KEY_ONE, MOD_CTRL)) view_set_layout(LAYOUT_DETAILS);
     if (ui_key(KEY_TWO, MOD_CTRL)) view_set_layout(LAYOUT_COLUMNS);
     if (ui_key(KEY_THREE, MOD_CTRL)) view_set_layout(LAYOUT_GRID);
     if (ui_key(KEY_L, MOD_CTRL)) path_edit_start();
-    if (ui_key(KEY_EQUAL, MOD_CTRL) || ui_key(KEY_EQUAL, MOD_CTRL | MOD_SHIFT) || ui_key(KEY_KP_ADD, MOD_CTRL)) app_zoom(1);
-    if (ui_key(KEY_MINUS, MOD_CTRL) || ui_key(KEY_KP_SUBTRACT, MOD_CTRL)) app_zoom(-1);
-    if (ui_key(KEY_ZERO, MOD_CTRL) || ui_key(KEY_KP_0, MOD_CTRL)) app_zoom(0);
-    int ca = MOD_CTRL | MOD_ALT;
-    if (ui_key(KEY_EQUAL, ca) || ui_key(KEY_EQUAL, ca | MOD_SHIFT) || ui_key(KEY_KP_ADD, ca)) app_text_zoom(1);
-    if (ui_key(KEY_MINUS, ca) || ui_key(KEY_KP_SUBTRACT, ca)) app_text_zoom(-1);
-    if (ui_key(KEY_ZERO, ca) || ui_key(KEY_KP_0, ca)) app_text_zoom(0);
-    for (int i = 0; i < ui.nchars && !ui.focus && !ops_dialog_open() && !app.quit; i++) command(ui.chars[i]);
+    window_keys();
+    for (int i = 0; i < ui.nchars && !ui.focus && !ops_dialog_open() && !app.quit && !dview_is_open(); i++) command(ui.chars[i]);
     ui.nchars = 0;
 }

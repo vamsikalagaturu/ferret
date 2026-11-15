@@ -3,6 +3,7 @@
 /* What differs between the desktop (platform/linux/platform_linux.c) and Android (platform/android/android_main.c).
  * Everything runs on the window's thread except plat_wake(). */
 #include "core/util.h"
+#include "disks/plan.h"
 #include "raylib.h"
 
 int fr_app_main(int argc, char **argv); /* src/app/main.c */
@@ -49,7 +50,9 @@ char *plat_home_uri(void);        /* where the window starts */
 
 /* Filesystems to mount, mounted or not (platform/linux/disks_linux.c; none on Android). Requests run in the
  * background, and plat_wake() tells when one finished or the list changed. */
-enum { DISK_MOUNT = 1, DISK_UNMOUNT, DISK_EJECT };
+/* DISK_MOUNT_RO and DISK_RELEASE are the disk manager's look-inside mount and its unmount; DISK_POWER_OFF powers a
+ * drive off as it is (UDisks2 refuses while it is in use) */
+enum { DISK_MOUNT = 1, DISK_UNMOUNT, DISK_EJECT, DISK_MOUNT_RO, DISK_RELEASE, DISK_POWER_OFF };
 
 typedef struct {
     char *id; /* names it in requests */
@@ -80,4 +83,26 @@ void fr_disks_free(fr_disks *d);
 void plat_disk_request(int op, const char *id); /* DISK_EJECT: unmounts the drive's filesystems, then powers it off */
 int plat_disk_done(fr_disk_done *out);           /* 1 with a finished request (its strings are the caller's), 0 none */
 void fr_disk_done_free(fr_disk_done *d);
+
+/* The disk manager (src/app/disks_view.c): partitioning, formatting and image writes through UDisks2 on the desktop.
+ * Where it is not supported (Android) the view is a storage overview of the places instead. Every call UDisks2 makes
+ * for it is judged by dk_refusal on the live tree first. */
+int plat_dm_supported(void);
+unsigned plat_dm_serial(void);   /* changes with UDisks2's objects */
+int plat_dm_tree(dk_tree *out);  /* a copy of them; -1 when UDisks2 is not running */
+void plat_dm_apply(dk_steps *steps); /* takes the steps; runs them in order on a thread, stopping at the first error */
+
+typedef struct {
+    int running;
+    int done;         /* steps finished so far */
+    int step_done;    /* a step finished since the last call */
+    int finished;     /* the run ended since the last call; error says how */
+    double progress;  /* of the step ferret drives itself (an image write), -1 else */
+    char text[128];   /* what that step or UDisks2's job does now */
+    char error[512];
+} fr_dm_run;
+void plat_dm_status(fr_dm_run *out); /* takes step_done and finished */
+
+/* the local path holding a place's files (for the usage scan), NULL when there is none */
+char *plat_volume_path(const char *uri);
 #endif
