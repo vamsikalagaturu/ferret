@@ -147,9 +147,9 @@ static void exercise(const char *base, int how)
     fr_entries es = {0};
     CHECK(fr_vfs_list(dir, &es) == 0 && es.n == 2);
     fr_entries_free(&es);
-    /* remove() takes an empty folder only, whatever the protocol would do with a full one (WebDAV's DELETE); SMB is
-     * left out: Samba takes the full folder through libsmb2's rmdir */
-    if (strncmp(base, "smb:", 4)) CHECK(fr_vfs_remove(dir) != 0 && fr_vfs_exists(b));
+    /* remove() takes an empty folder only, whatever the protocol would do with a full one (WebDAV's DELETE, SMB's
+     * delete-on-close rmdir) */
+    CHECK(fr_vfs_remove(dir) != 0 && fr_vfs_exists(b));
 
     /* a folder there and back through the jobs, with a file bigger than one read or write */
     char tmpl[] = "/tmp/ferret-remote-XXXXXX";
