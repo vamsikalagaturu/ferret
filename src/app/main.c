@@ -1,5 +1,7 @@
 #define _GNU_SOURCE
 #include "app.h"
+#include "jobs/async.h"
+#include "net/net.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -327,7 +329,7 @@ static int frame(void)
         ui_redraw_in(0.5);
         return 0;
     }
-    int modal = ops_dialog_open() || ui_menu_is_open() || app.help_open;
+    int modal = ops_dialog_open() || connect_dialog_open() || ui_menu_is_open() || app.help_open;
     Rectangle s = ui.safe;
     if (app_wide()) {
         float sw = DP(240);
@@ -369,6 +371,7 @@ static int frame(void)
     }
     draw_menus();
     ops_draw_dialogs();
+    connect_draw_dialogs();
     draw_help();
     ui_toast_draw(list.y + list.height);
     if (modal && ui_key(KEY_BACK, 0)) ui_menu_close();
@@ -382,6 +385,7 @@ static void between_frames(int keys)
     thumbs_poll();
     if (keys) keys_handle();
     if (!app.storage_ok) return;
+    fr_async_poll();
     if (app_wide() || app.drawer_open) places_refresh(0);
     ops_poll_jobs();
     search_poll();
@@ -403,6 +407,9 @@ int fr_app_main(int argc, char **argv)
     theme_load(settings.theme);
     if (!replay) ui_input_init();
     fr_jobs_start(plat_wake);
+    fr_async_start(plat_wake);
+    static const fr_secret_store keystore = {plat_secret_load, plat_secret_save, plat_secret_forget};
+    if (plat_secret_available()) fr_creds_set_store(&keystore);
     thumbs_start();
     app.menu_more = ui_id("menu-more", 0), app.menu_row = ui_id("menu-row", 0), app.menu_bg = ui_id("menu-bg", 0);
     app.menu_selection = ui_id("menu-selection", 0);
@@ -444,6 +451,7 @@ int fr_app_main(int argc, char **argv)
     fr_jobs_stop();
     thumbs_stop();
     search_stop();
+    fr_conn_close_all();
     plat_close_window();
     return replay ? replay_status() : 0;
 }

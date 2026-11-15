@@ -1,6 +1,7 @@
 #include "app.h"
+#include "jobs/async.h"
 #include <dirent.h>
-#include <pthread.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -84,7 +85,7 @@ static void push_placeholder(void)
     FR_PUSH(br.items, it);
 }
 
-/* shows the listing of uri, which es hands over */
+/* the listing of uri (rc its result) as the items, keeping the selection when uri is the folder shown; takes es */
 static void apply(const char *uri, fr_entries *es, int rc)
 {
     fr_strs selected = {0};
@@ -97,7 +98,6 @@ static void apply(const char *uri, fr_entries *es, int rc)
     items_free();
     free(br.error);
     br.error = NULL;
-    br.loading = 0;
     if (rc) br.error = fr_strdup(fr_vfs_error(rc));
     for (int i = 0; i < es->n; i++) {
         fr_item it = {.e = es->v[i], .kind = kind_of(es->v[i].name, es->v[i].is_dir), .count = -1};
@@ -110,7 +110,7 @@ static void apply(const char *uri, fr_entries *es, int rc)
     *es = (fr_entries){0};
     fr_strs_free(&selected);
     if (same && naming) push_placeholder();
-    br.dir_mtime = fr_uri_local(uri) ? dir_mtime(uri) : -1;
+    br.dir_mtime = fr_uri_local(uri) ? dir_mtime(uri) : 0;
     br.checked_at = ui.now;
     if (!same) {
         free(br.uri);
@@ -119,71 +119,38 @@ static void apply(const char *uri, fr_entries *es, int rc)
     rebuild_now(NULL, 0);
 }
 
-/* the cursor on br.focus_name, scrolled to; it takes the name */
-static void land_on_focus(void)
+static unsigned serial; /* of the last listing asked for: an older one's answer comes too late */
+
+static void listed(const char *uri, fr_entries *es, int rc, void *ctx)
 {
-    if (br.focus_name && br.cursor >= 0) {
-        float rh = app_row_height();
-        br.scroll.target = br.scroll.offset = br.cursor * rh - DP(120);
-        if (br.scroll.target < 0) br.scroll.target = br.scroll.offset = 0;
-    }
+    if ((unsigned)(uintptr_t)ctx != serial || !br.uri || strcmp(br.uri, uri)) return;
+    br.loading = 0;
+    if (rc) net_ask(uri, rc, browser_reload);
+    apply(uri, es, rc);
+    if (br.focus_name && br.cursor >= 0) view_reveal(br.cursor);
     free(br.focus_name);
     br.focus_name = NULL;
 }
 
-/* ---- folders off this machine (a phone, a network share) are listed on a thread, so a slow one does not hold
- * the window; remote_finish() shows the latest listing asked for ---- */
+/* A folder on this device is listed at once; a remote one on a thread of its own (listed() takes the answer), the
+ * last items staying until then when it is the same folder again. */
+static void restat_results(void);
 
-static struct {
-    pthread_mutex_t lock;
-    unsigned want, got;
-    char *uri;
-    fr_entries es;
-    int rc;
-} remote = {.lock = PTHREAD_MUTEX_INITIALIZER};
-
-typedef struct {
-    unsigned seq;
-    char *uri;
-} remote_request;
-
-static void *remote_run(void *arg)
+static void load(const char *uri)
 {
-    remote_request *r = arg;
-    fr_entries es = {0};
-    int rc = fr_vfs_list(r->uri, &es);
-    pthread_mutex_lock(&remote.lock);
-    if (r->seq == remote.want) {
-        fr_entries_free(&remote.es);
-        free(remote.uri);
-        remote.es = es, remote.rc = rc, remote.uri = r->uri, remote.got = r->seq;
-        es = (fr_entries){0}, r->uri = NULL;
+    if (br.results && br.uri && !strcmp(br.uri, uri)) {
+        restat_results();
+        return;
     }
-    pthread_mutex_unlock(&remote.lock);
-    fr_entries_free(&es);
-    free(r->uri);
-    free(r);
-    plat_wake();
-    return NULL;
-}
-
-/* 0: uri is on this machine, list it in place */
-static int remote_load(const char *uri)
-{
-    pthread_mutex_lock(&remote.lock);
-    unsigned seq = ++remote.want;
-    pthread_mutex_unlock(&remote.lock);
-    if (fr_uri_local(uri)) return 0;
-    remote_request *r = fr_realloc(NULL, sizeof *r);
-    *r = (remote_request){seq, fr_strdup(uri)};
-    pthread_t t;
-    if (pthread_create(&t, NULL, remote_run, r)) {
-        free(r->uri);
-        free(r);
-        return 0;
+    br.results = 0;
+    serial++;
+    br.loading = 0;
+    if (fr_uri_local(uri) || !fr_vfs_backend(uri)) {
+        fr_entries es = {0};
+        int rc = fr_vfs_list(uri, &es);
+        apply(uri, &es, rc);
+        return;
     }
-    pthread_detach(t);
-    br.loading = 1;
     if (!br.uri || strcmp(br.uri, uri)) {
         items_free();
         free(br.error);
@@ -192,25 +159,9 @@ static int remote_load(const char *uri)
         br.uri = fr_strdup(uri);
         rebuild_now(NULL, 0);
     }
-    return 1;
-}
-
-static void remote_finish(void)
-{
-    pthread_mutex_lock(&remote.lock);
-    int ready = remote.uri && remote.got == remote.want;
-    fr_entries es = remote.es;
-    char *uri = remote.uri;
-    int rc = remote.rc;
-    if (ready) remote.es = (fr_entries){0}, remote.uri = NULL;
-    pthread_mutex_unlock(&remote.lock);
-    if (!ready) return;
-    if (br.uri && !strcmp(br.uri, uri)) {
-        apply(uri, &es, rc);
-        land_on_focus();
-    }
-    fr_entries_free(&es);
-    free(uri);
+    br.loading = 1;
+    net_prepare(uri);
+    fr_async_list(uri, listed, (void *)(uintptr_t)serial);
 }
 
 /* ---- search results ---- */
@@ -246,6 +197,7 @@ void browser_results_begin(void)
     free(br.error);
     br.error = NULL;
     br.loading = 0;
+    serial++;
     br.results = 1;
     br.filtering = 0;
     br.scroll = (fr_scroll){0};
@@ -296,19 +248,6 @@ void browser_results_renamed(const char *from, const char *to)
     }
 }
 
-static void load(const char *uri)
-{
-    if (br.results && br.uri && !strcmp(br.uri, uri)) {
-        restat_results();
-        return;
-    }
-    br.results = 0;
-    if (remote_load(uri)) return;
-    fr_entries es = {0};
-    int rc = fr_vfs_list(uri, &es);
-    apply(uri, &es, rc);
-}
-
 static void reload_now(const char *s, int n)
 {
     if (br.uri) load(br.uri);
@@ -343,7 +282,17 @@ static void open_now(const char *uri, int push_history)
     br.nselected = 0;
     for (int i = 0; i < br.items.n; i++) br.items.v[i].selected = 0;
     load(uri);
-    if (!br.loading) land_on_focus();
+    if (br.loading) {
+        free(previous);
+        return;
+    }
+    if (br.focus_name && br.cursor >= 0) {
+        float rh = app_row_height();
+        br.scroll.target = br.scroll.offset = br.cursor * rh - DP(120);
+        if (br.scroll.target < 0) br.scroll.target = br.scroll.offset = 0;
+    }
+    free(br.focus_name);
+    br.focus_name = NULL;
     free(previous);
 }
 
@@ -442,9 +391,9 @@ void browser_drop_placeholder(void) { app_defer(drop_placeholder_now, NULL, 0); 
 
 void browser_poll(void)
 {
-    remote_finish();
     for (int i = 0; i < br.items.n; i++)
         if (br.items.v[i].placeholder) return;
+    /* a server is asked again on a refresh, and after the jobs that change it */
     if (!br.uri || br.results || !fr_uri_local(br.uri) || ui.now - br.checked_at < 1.5) return;
     br.checked_at = ui.now;
     int64_t t = dir_mtime(br.uri);

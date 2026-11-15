@@ -109,6 +109,7 @@ typedef struct {
     char buf[1024];
     int len, caret, anchor; /* selection: between anchor and caret */
     float scroll;
+    int secret; /* shown as dots, and never copied out (a password) */
 } fr_text;
 void text_set(fr_text *t, const char *s);
 void text_select(fr_text *t, int from, int to);
@@ -154,6 +155,8 @@ void ui_menu_close(void);
 typedef struct {
     const char *title, *message;
     fr_text *field;             /* a text field, focused */
+    fr_text *field2;            /* a second one under it; Tab and Enter move on to it (focused when field has text) */
+    const char *hint, *hint2;   /* the fields' placeholders */
     const char *check;          /* a checkbox label */
     int *checked;
     const char *buttons[4];     /* left to right; the last is the main one */

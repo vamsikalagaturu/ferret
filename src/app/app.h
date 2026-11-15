@@ -46,7 +46,7 @@ typedef struct {
     int keyboard;       /* the cursor moved by key since the last click: show it */
     int nselected;
     char *error;        /* the listing failed */
-    int loading;        /* a listing off this machine is being fetched on a thread */
+    int loading;        /* a listing off this machine is on its way (async.h); the items are the last ones until then */
     int results;        /* the items are search results below uri, each named by its path from there */
     int64_t dir_mtime;
     double checked_at;
@@ -134,6 +134,7 @@ int thumb_draw(const fr_item *it, Rectangle box);
 /* ---- settings.toml, favorites, theme overrides (settings.c) ---- */
 typedef struct {
     fr_strs favorites; /* URIs, in the order shown */
+    fr_strs servers;   /* the Network section's URIs (never with a password), in the order shown */
     char *theme[THEME_ROLES]; /* [theme] values as written, NULL for roles not set */
 } fr_settings;
 extern fr_settings settings;
@@ -145,6 +146,22 @@ void settings_load(void);
 void settings_poll(void); /* saves what changed (sort, layout, hidden, favorites); reloads after a hand edit */
 int favorite_index(const char *uri); /* -1 when not a favorite */
 void favorite_toggle(const char *uri);
+int server_index(const char *uri); /* -1 when not in the Network section */
+void server_set(const char *uri, int on); /* adds it to the Network section, or takes it out */
+
+/* ---- network locations, for any scheme with a backend (connect.c) ---- */
+/* an address as typed made one to save and open: normalized, any password dropped; NULL when it is not one */
+char *server_uri(const char *typed);
+/* the Network section of the sidebar from y down: the saved servers and "Connect to server"; the y after it */
+float network_draw(Rectangle r, float y, float ih);
+void connect_start(void); /* the "Connect to server" dialog */
+/* window thread, before a remote location is used: what the keystore has for its server, into memory */
+void net_prepare(const char *uri);
+/* a remote call on uri failed with rc: asks for a sign-in or the server's trust when that is what it wants (1),
+ * then retry() runs once the user answered yes */
+int net_ask(const char *uri, int rc, void (*retry)(void));
+int connect_dialog_open(void);
+void connect_draw_dialogs(void);
 
 /* ---- keys (keys.c) ---- */
 typedef enum { MODE_NORMAL, MODE_VISUAL, MODE_INSERT } fr_mode;

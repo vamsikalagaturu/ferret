@@ -102,4 +102,6 @@ int fr_name_valid(const char *name);
 
 extern const fr_backend fr_backend_file;
 extern const fr_backend fr_backend_archive;
+extern const fr_backend fr_backend_smb;  /* vfs_smb.c */
+extern const fr_backend fr_backend_sftp; /* vfs_sftp.c */
 #endif

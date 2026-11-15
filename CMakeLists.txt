@@ -40,7 +40,7 @@ function(fr_embed_assets gen)
 endfunction()
 
 # Storage, file operations and jobs: no window, so the tests and every platform share it.
-file(GLOB FR_CORE_SOURCES CONFIGURE_DEPENDS src/core/*.c src/vfs/*.c src/jobs/*.c src/thumbs/*.c)
+file(GLOB FR_CORE_SOURCES CONFIGURE_DEPENDS src/core/*.c src/vfs/*.c src/jobs/*.c src/thumbs/*.c src/net/*.c)
 list(FILTER FR_CORE_SOURCES EXCLUDE REGEX "/vfs_mtp\\.c$")
 add_library(fercore STATIC ${FR_CORE_SOURCES})
 target_include_directories(fercore PUBLIC src)
@@ -67,6 +67,29 @@ endforeach()
 target_include_directories(fercore SYSTEM PUBLIC ${FR_LIBARCHIVE_DIR}/include)
 target_compile_definitions(fercore PUBLIC LIBARCHIVE_STATIC)
 target_link_libraries(fercore PUBLIC ${FR_ARCHIVE_LIBS})
+
+# SMB and SFTP (src/net, src/vfs/vfs_{smb,sftp}.c): libsmb2 and libssh2 as platform/*/deps.sh builds them, over
+# OpenSSL's libcrypto, built there too (Android) or the system's
+set(FR_NET_PREFIX "" CACHE PATH "Where platform/*/deps.sh installed libsmb2 (smb2/), libssh2 (ssh2/) and OpenSSL (openssl/)")
+if(NOT EXISTS "${FR_NET_PREFIX}/smb2/lib/libsmb2.a" OR NOT EXISTS "${FR_NET_PREFIX}/ssh2/lib/libssh2.a")
+  message(FATAL_ERROR "FR_NET_PREFIX ('${FR_NET_PREFIX}') has no libsmb2 and libssh2: platform/*/build.sh builds them")
+endif()
+foreach(lib smb2 ssh2)
+  add_library(fr_${lib} STATIC IMPORTED GLOBAL)
+  set_target_properties(fr_${lib} PROPERTIES IMPORTED_LOCATION ${FR_NET_PREFIX}/${lib}/lib/lib${lib}.a
+                        INTERFACE_INCLUDE_DIRECTORIES ${FR_NET_PREFIX}/${lib}/include)
+endforeach()
+if(EXISTS "${FR_NET_PREFIX}/openssl/lib/libcrypto.a")
+  add_library(fr_crypto STATIC IMPORTED GLOBAL)
+  set_target_properties(fr_crypto PROPERTIES IMPORTED_LOCATION ${FR_NET_PREFIX}/openssl/lib/libcrypto.a
+                        INTERFACE_INCLUDE_DIRECTORIES ${FR_NET_PREFIX}/openssl/include)
+  set_property(TARGET fr_ssh2 APPEND PROPERTY INTERFACE_LINK_LIBRARIES fr_crypto)
+else()
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(LIBCRYPTO REQUIRED IMPORTED_TARGET GLOBAL libcrypto)
+  set_property(TARGET fr_ssh2 APPEND PROPERTY INTERFACE_LINK_LIBRARIES PkgConfig::LIBCRYPTO)
+endif()
+target_link_libraries(fercore PUBLIC fr_smb2 fr_ssh2)
 
 # A release (FR_RELEASE=1 in the environment) is the plain version; any other build is a development one, as semver
 # pre-release + build metadata: 0.1.0-dev+1b42e42, .dirty with uncommitted changes. Fixed when configured.
@@ -104,22 +127,33 @@ if(FR_BUILD_PROGRAMS)
   endif()
 
   enable_testing()
-  foreach(t util vfs jobs settings mode thumbs archive mtp search rename undo)
+  foreach(t util vfs jobs settings mode thumbs archive mtp net remote search rename undo)
     add_executable(test_${t} tests/test_${t}.c)
     target_link_libraries(test_${t} PRIVATE fercore)
     target_compile_options(test_${t} PRIVATE ${FR_WARNINGS})
     add_test(NAME ${t} COMMAND test_${t})
   endforeach()
+  # needs servers (tests/net/server.sh); 77 when the environment names none
+  set_tests_properties(remote PROPERTIES SKIP_RETURN_CODE 77)
 
   find_package(raylib 6.2 REQUIRED CONFIG)
   fr_embed_assets(${CMAKE_CURRENT_BINARY_DIR}/generated)
   file(GLOB FR_UI_SOURCES CONFIGURE_DEPENDS src/ui/*.c src/app/*.c)
   find_package(PkgConfig REQUIRED)
   pkg_check_modules(SYSTEMD REQUIRED IMPORTED_TARGET libsystemd)
-  add_executable(ferret ${FR_UI_SOURCES} platform/linux/platform_linux.c platform/linux/disks_linux.c ${FR_ASSET_SOURCES})
+  add_executable(ferret ${FR_UI_SOURCES} platform/linux/platform_linux.c platform/linux/disks_linux.c
+                 platform/linux/secret_linux.c ${FR_ASSET_SOURCES})
   target_include_directories(ferret PRIVATE src/ui src/app thirdparty/nanosvg)
   target_compile_options(ferret PRIVATE ${FR_WARNINGS})
   target_link_libraries(ferret PRIVATE fercore raylib m PkgConfig::SYSTEMD)
+  # the keystore for server passwords; without it they last until ferret quits
+  pkg_check_modules(LIBSECRET IMPORTED_TARGET libsecret-1>=0.19)
+  if(LIBSECRET_FOUND)
+    target_compile_definitions(ferret PRIVATE FR_HAVE_LIBSECRET)
+    target_link_libraries(ferret PRIVATE PkgConfig::LIBSECRET)
+  else()
+    message(STATUS "libsecret-1 not found: server passwords are not remembered")
+  endif()
   include(GNUInstallDirs)
   install(TARGETS ferret RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
