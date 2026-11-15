@@ -15,7 +15,7 @@
 #pragma GCC diagnostic pop
 
 typedef struct {
-    const char *name;
+    char *name;
     int px;
     Texture2D tex;
 } cached_icon;
@@ -84,7 +84,7 @@ void ui_icon(const char *name, Rectangle box, float size_dp, Color c)
         }
         tex = render(d, px);
         /* cached under the name asked for, so a missing one warns once, not every frame */
-        FR_PUSH(cache, ((cached_icon){name, px, tex}));
+        FR_PUSH(cache, ((cached_icon){fr_strdup(name), px, tex}));
     }
     float x = roundf(box.x + (box.width - (float)px) / 2), y = roundf(box.y + (box.height - (float)px) / 2);
     DrawTexture(tex, (int)x, (int)y, c);
@@ -92,6 +92,6 @@ void ui_icon(const char *name, Rectangle box, float size_dp, Color c)
 
 void ui_icons_clear(void)
 {
-    for (int i = 0; i < cache.n; i++) UnloadTexture(cache.v[i].tex);
+    for (int i = 0; i < cache.n; i++) UnloadTexture(cache.v[i].tex), free(cache.v[i].name);
     cache.n = 0;
 }
