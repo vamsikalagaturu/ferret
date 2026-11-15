@@ -84,12 +84,42 @@ if(EXISTS "${FR_NET_PREFIX}/openssl/lib/libcrypto.a")
   set_target_properties(fr_crypto PROPERTIES IMPORTED_LOCATION ${FR_NET_PREFIX}/openssl/lib/libcrypto.a
                         INTERFACE_INCLUDE_DIRECTORIES ${FR_NET_PREFIX}/openssl/include)
   set_property(TARGET fr_ssh2 APPEND PROPERTY INTERFACE_LINK_LIBRARIES fr_crypto)
+  add_library(fr_ssl STATIC IMPORTED GLOBAL)
+  set_target_properties(fr_ssl PROPERTIES IMPORTED_LOCATION ${FR_NET_PREFIX}/openssl/lib/libssl.a
+                        INTERFACE_INCLUDE_DIRECTORIES ${FR_NET_PREFIX}/openssl/include INTERFACE_LINK_LIBRARIES fr_crypto)
 else()
   find_package(PkgConfig REQUIRED)
   pkg_check_modules(LIBCRYPTO REQUIRED IMPORTED_TARGET GLOBAL libcrypto)
   set_property(TARGET fr_ssh2 APPEND PROPERTY INTERFACE_LINK_LIBRARIES PkgConfig::LIBCRYPTO)
+  pkg_check_modules(LIBSSL REQUIRED IMPORTED_TARGET GLOBAL libssl)
+  add_library(fr_ssl INTERFACE IMPORTED GLOBAL)
+  set_property(TARGET fr_ssl PROPERTY INTERFACE_LINK_LIBRARIES PkgConfig::LIBSSL)
 endif()
 target_link_libraries(fercore PUBLIC fr_smb2 fr_ssh2)
+
+# FTP/FTPS, WebDAV and NFS (src/vfs/vfs_{curl,ftp,dav,nfs}.c): libcurl, expat and libnfs from FR_NET_PREFIX's curl/,
+# expat/ and nfs/ where deps.sh built them, else the system's. ferret checks TLS certificates through libcurl's
+# OpenSSL (its SSL_CTX), so libssl is linked directly too.
+function(fr_net_lib name pkg)
+  if(EXISTS "${FR_NET_PREFIX}/${name}/lib/lib${name}.a")
+    add_library(fr_${name} STATIC IMPORTED GLOBAL)
+    set_target_properties(fr_${name} PROPERTIES IMPORTED_LOCATION ${FR_NET_PREFIX}/${name}/lib/lib${name}.a
+                          INTERFACE_INCLUDE_DIRECTORIES ${FR_NET_PREFIX}/${name}/include)
+  else()
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(FR_PC_${name} REQUIRED IMPORTED_TARGET GLOBAL ${pkg})
+    add_library(fr_${name} INTERFACE IMPORTED GLOBAL)
+    set_property(TARGET fr_${name} PROPERTY INTERFACE_LINK_LIBRARIES PkgConfig::FR_PC_${name})
+  endif()
+endfunction()
+fr_net_lib(curl libcurl)
+fr_net_lib(expat expat)
+fr_net_lib(nfs libnfs)
+if(EXISTS "${FR_NET_PREFIX}/curl/lib/libcurl.a")
+  set_property(TARGET fr_curl APPEND PROPERTY INTERFACE_LINK_LIBRARIES fr_ssl)
+  set_property(TARGET fr_curl APPEND PROPERTY INTERFACE_COMPILE_DEFINITIONS CURL_STATICLIB)
+endif()
+target_link_libraries(fercore PUBLIC fr_curl fr_expat fr_nfs fr_ssl)
 
 # A release (FR_RELEASE=1 in the environment) is the plain version; any other build is a development one, as semver
 # pre-release + build metadata: 0.1.0-dev+1b42e42, .dirty with uncommitted changes. Fixed when configured.
@@ -127,7 +157,8 @@ if(FR_BUILD_PROGRAMS)
   endif()
 
   enable_testing()
-  foreach(t util vfs jobs settings mode thumbs archive mtp net remote search rename undo hash xdg trash sniff disks tabs opencache)
+  foreach(t util vfs jobs settings mode thumbs archive mtp net remote search rename undo hash xdg trash sniff disks tabs
+          netparse opencache)
     add_executable(test_${t} tests/test_${t}.c)
     target_link_libraries(test_${t} PRIVATE fercore)
     target_compile_options(test_${t} PRIVATE ${FR_WARNINGS})

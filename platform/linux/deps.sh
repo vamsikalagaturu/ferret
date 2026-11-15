@@ -29,12 +29,33 @@ if [ ! -f "$RAYLIB_OUT/lib/libraylib.a" ]; then
 fi
 
 step "libsmb2 $LIBSMB2_VERSION, libssh2 $LIBSSH2_VERSION (over the system's libcrypto)"
+pkg-config --exists libssl || { echo "missing: OpenSSL's libssl (libssl-dev)" >&2; exit 1; }
 fetch_net_sources "$REPO"
-NET_OUT=$ROOT/net-smb2-$LIBSMB2_VERSION-ssh2-$LIBSSH2_VERSION-$BUILD_TAG
+NET_OUT=$ROOT/net-smb2-$LIBSMB2_VERSION-ssh2-$LIBSSH2_VERSION-nfs-$LIBNFS_VERSION-curl-$CURL_VERSION-expat-$EXPAT_VERSION-$BUILD_TAG
 if [ ! -f "$NET_OUT/smb2/lib/libsmb2.a" ] || [ ! -f "$NET_OUT/ssh2/lib/libssh2.a" ]; then
     command -v ninja >/dev/null || { echo "missing: ninja" >&2; exit 1; }
     pkg-config --exists libcrypto || { echo "missing: OpenSSL's libcrypto (libssl-dev)" >&2; exit 1; }
     build_net "$NET_OUT"
+fi
+
+# FR_NET_PREFIX gets curl/, expat/ and nfs/ only for what the system lacks; CMakeLists.txt looks there first
+if pkg-config --exists libnfs; then
+    step "libnfs $(pkg-config --modversion libnfs) (the system's)"
+else
+    step "libnfs $LIBNFS_VERSION (static)"
+    [ -f "$NET_OUT/nfs/lib/libnfs.a" ] || build_nfs "$NET_OUT"
+fi
+if pkg-config --exists expat; then
+    step "expat $(pkg-config --modversion expat) (the system's)"
+else
+    step "expat $EXPAT_VERSION (static)"
+    [ -f "$NET_OUT/expat/lib/libexpat.a" ] || build_expat "$NET_OUT"
+fi
+if pkg-config --exists libcurl; then
+    step "libcurl $(pkg-config --modversion libcurl) (the system's)"
+else
+    step "libcurl $CURL_VERSION (static, over the system's OpenSSL)"
+    [ -f "$NET_OUT/curl/lib/libcurl.a" ] || build_curl "$NET_OUT"
 fi
 
 step "libarchive $LIBARCHIVE_VERSION (static; the system's zlib, bzip2, xz and zstd)"
