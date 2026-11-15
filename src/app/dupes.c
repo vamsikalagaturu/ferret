@@ -122,6 +122,14 @@ void dupes_select_copies(void)
         seen[it->group] = 1;
     }
     free(seen);
+    /* D and X act on the cursor row alone when it is outside the selection: here that row may be a group's first,
+     * the one to keep */
+    fr_item *cur = browser_item(br.cursor);
+    for (int v = 0; n && (!cur || !cur->selected) && v < br.view.n; v++)
+        if (browser_item(v)->selected) {
+            move_cursor(v, 0);
+            break;
+        }
     if (n) ui_toast("Selected %d %s; the first of each group is left", n, n == 1 ? "copy" : "copies");
 }
 
