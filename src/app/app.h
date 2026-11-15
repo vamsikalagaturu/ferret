@@ -112,6 +112,7 @@ void view_set_layout(fr_layout layout);
 void view_reveal(int v); /* scroll so view row v shows */
 int view_grid_columns(void); /* items per row in the grid layout, 1 in the others */
 void view_flash(const fr_item *it, Rectangle r); /* the yank flash over a row or tile */
+fr_item *view_item_at(Vector2 p); /* the row or tile the last frame drew under p, NULL none */
 void browser_flash_targets(void); /* flashes the selected rows, else the cursor row */
 
 /* ---- image thumbnails (thumbnails.c) ---- */
@@ -126,6 +127,7 @@ int thumb_draw(const fr_item *it, Rectangle box);
 typedef struct {
     fr_strs favorites; /* URIs, in the order shown */
     char *theme[THEME_ROLES]; /* [theme] values as written, NULL for roles not set */
+    char *last_folder, *start_folder; /* URIs, NULL when not set */
 } fr_settings;
 extern fr_settings settings;
 #define UI_SCALE_MIN 0.5
@@ -134,6 +136,7 @@ extern fr_settings settings;
 #define TEXT_SCALE_MAX 2.0
 void settings_load(void);
 void settings_poll(void); /* saves what changed (sort, layout, hidden, favorites); reloads after a hand edit */
+char *settings_start_uri(void); /* start_folder, else last_folder, when it is a folder that is there; else NULL */
 int favorite_index(const char *uri); /* -1 when not a favorite */
 void favorite_toggle(const char *uri);
 
@@ -182,4 +185,21 @@ int replay_status(void); /* the exit status: 0 when every expectation held */
 void props_open(fr_strs *uris); /* takes the URIs */
 int props_draw(void);           /* 0 once it closed itself */
 void props_close(void);
+
+/* ---- open with (openwith.c), one of ops.c's dialogs ---- */
+int openwith_open(void); /* the targets' apps; 0 when no dialog is needed (handed to the system, or said why) */
+int openwith_draw(void); /* 0 once it closed itself */
+void openwith_close(void);
+void ops_open_with(void);
+void ops_terminal_here(void);
+/* asks before deleting uris (taken) for good, with this title and message */
+void ops_delete_uris(fr_strs *uris, const char *title, const char *message);
+
+/* ---- trash:/// (views_trash.c) ---- */
+void trash_draw_menus(void);
+void trash_restore(void); /* the targets, back where they came from */
+void trash_empty(void);   /* asks first */
+
+/* ---- files dropped on the window (drop.c), between frames ---- */
+void drop_poll(void);
 #endif

@@ -11,6 +11,7 @@ int view_draw_folder_state(Rectangle r);       /* draws the error or empty state
 void view_draw_name(const char *s, Rectangle r, float size_dp, Color c); /* centred, up to two lines */
 
 void columns_draw(Rectangle r);
+void trash_draw(Rectangle r); /* trash:/// in any layout */
 
 void grid_draw(Rectangle r);
 int grid_columns_for(float width);

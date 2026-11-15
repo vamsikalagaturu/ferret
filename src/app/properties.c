@@ -1,7 +1,9 @@
 #define _GNU_SOURCE
 #include "app.h"
+#include "core/hash.h"
 #include "vfs/local_info.h"
 #include <errno.h>
+#include <strings.h>
 #include <math.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -15,6 +17,14 @@ typedef struct {
     fr_tree_count c;
     int cancel, done, refs;
 } count_task;
+
+/* MD5, SHA-1 and SHA-256 of one file in a single read, on a thread of its own, shared with the panel the same way */
+typedef struct {
+    char *uri;
+    uint64_t done, total;
+    int cancel, finished, err, refs;
+    char hex[3][65];
+} hash_task;
 
 enum { BIT_OFF, BIT_ON, BIT_MIXED };
 static const char *const classes[3] = {"Owner", "Group", "Others"};
@@ -39,6 +49,8 @@ static struct {
     int has_mount;
     fr_local_info folder_info; /* several: of the folder holding them */
     count_task *count;
+    hash_task *hash;
+    int compared; /* 0 not yet, 1 + the matching hash, -1 none matched, -2 the clipboard was empty */
     fr_scroll scroll;
     float content_h;
 } P;
@@ -88,6 +100,83 @@ static void count_stop(void)
     __atomic_store_n(&P.count->cancel, 1, __ATOMIC_RELAXED);
     task_drop(P.count);
     P.count = NULL;
+}
+
+/* ---- checksums ---- */
+
+static void hash_drop(hash_task *t)
+{
+    if (__atomic_sub_fetch(&t->refs, 1, __ATOMIC_ACQ_REL)) return;
+    free(t->uri);
+    free(t);
+}
+
+static void *hash_run(void *arg)
+{
+    hash_task *t = arg;
+    static const fr_hash_kind kinds[3] = {FR_MD5, FR_SHA1, FR_SHA256};
+    fr_hash h[3];
+    for (int i = 0; i < 3; i++) fr_hash_init(&h[i], kinds[i]);
+    int err = 0;
+    fr_stream *s = fr_vfs_open_read(t->uri, &err);
+    char *buf = fr_realloc(NULL, 256 * 1024);
+    while (s && !err) {
+        if (__atomic_load_n(&t->cancel, __ATOMIC_RELAXED)) err = -ECANCELED;
+        long n = err ? 0 : s->read(s, buf, 256 * 1024);
+        if (n < 0) err = (int)n;
+        if (n <= 0) break;
+        for (int i = 0; i < 3; i++) fr_hash_update(&h[i], buf, (size_t)n);
+        __atomic_add_fetch(&t->done, (uint64_t)n, __ATOMIC_RELAXED);
+    }
+    if (s) s->close(s);
+    free(buf);
+    if (!err)
+        for (int i = 0; i < 3; i++) fr_hash_final_hex(&h[i], t->hex[i]);
+    t->err = err;
+    __atomic_store_n(&t->finished, 1, __ATOMIC_RELEASE);
+    plat_wake();
+    hash_drop(t);
+    return NULL;
+}
+
+static void hash_start(void)
+{
+    hash_task *t = fr_realloc(NULL, sizeof *t);
+    *t = (hash_task){.uri = fr_strdup(P.uris.v[0]), .total = P.ents[0].size, .refs = 2};
+    pthread_t th;
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    if (pthread_create(&th, &attr, hash_run, t)) {
+        t->err = -EAGAIN, t->finished = 1, t->refs = 1;
+    }
+    pthread_attr_destroy(&attr);
+    P.hash = t;
+    P.compared = 0;
+}
+
+static void hash_stop(void)
+{
+    if (!P.hash) return;
+    __atomic_store_n(&P.hash->cancel, 1, __ATOMIC_RELAXED);
+    hash_drop(P.hash);
+    P.hash = NULL;
+}
+
+/* the clipboard's first word (sha256sum prints "<hash>  <file>"), in any case, against the three */
+static void compare_clipboard(void)
+{
+    char *clip = plat_clipboard();
+    P.compared = -2;
+    if (clip) {
+        char *s = clip;
+        while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r') s++;
+        size_t n = strcspn(s, " \t\r\n");
+        P.compared = n ? -1 : -2;
+        for (int i = 0; n && i < 3; i++)
+            if (n == strlen(P.hash->hex[i]) && !strncasecmp(s, P.hash->hex[i], n)) P.compared = 1 + i;
+    }
+    free(clip);
 }
 
 /* ---- what the panel shows ---- */
@@ -153,6 +242,7 @@ void props_close(void)
 {
     if (!P.open) return;
     count_stop();
+    hash_stop();
     for (int i = 0; i < P.uris.n; i++) fr_entry_free(&P.ents[i]);
     free(P.ents);
     fr_strs_free(&P.uris);
@@ -385,6 +475,65 @@ static void general(void)
     if (counting) ui_redraw_in(0.1);
 }
 
+/* a secondary button in the value column that scrolls with the body; 1 when clicked */
+static int body_button(const char *id, const char *text, float *right)
+{
+    float h = DP(ui.touch ? 40 : 32), w = ui_button_width(text);
+    Rectangle b = {L.x + L.lw - DP(8), L.y + (row_h() - h) / 2, w, h};
+    int state, clicked = ui_clickable(ui_id(id, 0), in_body(b), &state);
+    ui_round(b, 8, state == 2 ? theme.pressed : state ? theme.hover : ui_alpha(theme.accent, 0.12f));
+    ui_text_box(text, b, 14, FONT_SEMIBOLD, theme.accent, ALIGN_CENTER, 0);
+    *right = b.x + b.width;
+    return clicked;
+}
+
+static void checksums(void)
+{
+    fr_entry *e = &P.ents[0];
+    if (P.uris.n != 1 || !e->name || e->is_dir) return;
+    section("Checksums");
+    hash_task *t = P.hash;
+    float h = row_h(), right;
+    if (!t) {
+        label("Not computed", h);
+        if (body_button("props-hash", "Compute MD5, SHA-1, SHA-256", &right)) hash_start();
+        L.y += h;
+        return;
+    }
+    if (!__atomic_load_n(&t->finished, __ATOMIC_ACQUIRE)) {
+        uint64_t done = __atomic_load_n(&t->done, __ATOMIC_RELAXED);
+        char buf[96], a[32], b[32];
+        fr_format_size(done, a, sizeof a);
+        fr_format_size(t->total, b, sizeof b);
+        snprintf(buf, sizeof buf, "Reading... %s of %s", a, b);
+        row("Computing", buf);
+        Rectangle bar = {L.x + L.lw, L.y, L.w - L.lw, DP(4)};
+        ui_progress(bar, t->total ? (float)((double)done / (double)t->total) : 0, theme.accent);
+        L.y += DP(12);
+        ui_redraw_in(0.1);
+        return;
+    }
+    if (t->err) {
+        row_c("Checksums", t->err == -ECANCELED ? "Stopped" : fr_vfs_error(t->err), theme.danger);
+        return;
+    }
+    static const char *const names[3] = {"MD5", "SHA-1", "SHA-256"};
+    for (int i = 0; i < 3; i++) row_long(names[i], t->hex[i], 3 + i);
+    label("Compare", h);
+    if (body_button("props-compare", "With the clipboard", &right)) compare_clipboard();
+    if (P.compared) {
+        char buf[64];
+        const char *icon = P.compared > 0 ? "circle-check" : P.compared == -1 ? "circle-x" : NULL;
+        Color c = P.compared > 0 ? theme.success : P.compared == -1 ? theme.danger : theme.text_faint;
+        if (P.compared > 0) snprintf(buf, sizeof buf, "Matches the %s", names[P.compared - 1]);
+        else snprintf(buf, sizeof buf, P.compared == -1 ? "No match" : "The clipboard is empty");
+        float x = right + DP(12);
+        if (icon) ui_icon(icon, (Rectangle){x, L.y, DP(20), h}, 18, c), x += DP(26);
+        ui_text_box(buf, (Rectangle){x, L.y, L.x + L.w - x, h}, 14, FONT_SEMIBOLD, c, ALIGN_LEFT, 0);
+    }
+    L.y += fmaxf(h, DP(ui.touch ? 40 : 32));
+}
+
 static void dates(void)
 {
     char buf[64];
@@ -599,6 +748,7 @@ int props_draw(void)
     L.top = L.y = body.y + DP(8) - P.scroll.offset;
     ui_clip_begin(body);
     general();
+    checksums();
     if (P.local) {
         dates();
         ownership();

@@ -6,12 +6,16 @@
 
 #ifdef __ANDROID__
 extern const fr_backend fr_backend_saf; /* platform/android/saf.c */
+#else
+extern const fr_backend fr_backend_trash; /* trash_linux.c */
 #endif
 
 static const fr_backend *backends[] = {
     &fr_backend_file,
 #ifdef __ANDROID__
     &fr_backend_saf,
+#else
+    &fr_backend_trash,
 #endif
 };
 

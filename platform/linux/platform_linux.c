@@ -195,7 +195,7 @@ static void add(fr_places *p, const char *label, const char *path, const char *i
     struct stat st;
     if (stat(path, &st) || !S_ISDIR(st.st_mode)) return;
     for (int i = 0; i < p->n; i++)
-        if (!strcmp(fr_uri_path(p->v[i].uri), path)) return;
+        if (fr_uri_local(p->v[i].uri) && !strcmp(fr_uri_local(p->v[i].uri), path)) return;
     FR_PUSH(*p, ((fr_place){fr_strdup(label), fr_uri_from_path(path), fr_strdup(icon), 0}));
 }
 
@@ -236,10 +236,7 @@ void plat_places(fr_places *out)
             if (strcmp(p, home)) add(out, strrchr(p, '/') + 1, p, dirs[i].icon);
             free(p);
         }
-        const char *data = getenv("XDG_DATA_HOME");
-        char *trash = data && *data == '/' ? fr_format("%s/Trash/files", data) : fr_format("%s/.local/share/Trash/files", home);
-        add(out, "Trash", trash, "trash-2");
-        free(trash);
+        FR_PUSH(*out, ((fr_place){fr_strdup("Trash"), fr_strdup("trash:///"), fr_strdup("trash-2"), 0}));
     }
     add(out, "/", "/", "hard-drive");
 }

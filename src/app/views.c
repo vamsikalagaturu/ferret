@@ -1,4 +1,5 @@
 #include "views.h"
+#include "vfs/trash.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,6 +13,7 @@ static int reveal_pending;
 
 static fr_layout layout_in_effect(void)
 {
+    if (br.uri && fr_trash_is_root(br.uri)) return LAYOUT_DETAILS;
     if (app.layout == LAYOUT_COLUMNS && (ui.touch || shown_w < DP(720))) return LAYOUT_DETAILS;
     return app.layout;
 }
@@ -84,6 +86,18 @@ void view_row_pressed(int v, int right_click)
         browser_set_selected(idx, 1);
         br.cursor = br.anchor = v;
     }
+}
+
+fr_item *view_item_at(Vector2 p)
+{
+    for (int v = 0; v < br.view.n; v++) {
+        fr_item *it = browser_item(v);
+        Rectangle r;
+        if ((ui_clickable_rect(ui_id(it->e.name, (int)ui_id("row", 0)), &r) || ui_clickable_rect(ui_id(it->e.name, (int)ui_id("tile", 0)), &r)) &&
+            CheckCollisionPointRec(p, r))
+            return it;
+    }
+    return NULL;
 }
 
 void view_background_input(Rectangle r)
@@ -307,7 +321,8 @@ void view_draw(Rectangle r)
     }
     reveal_pending = 0;
     fr_layout layout = layout_in_effect();
-    if (layout == LAYOUT_COLUMNS) columns_draw(r);
+    if (br.uri && fr_trash_is_root(br.uri)) trash_draw(r);
+    else if (layout == LAYOUT_COLUMNS) columns_draw(r);
     else if (view_draw_folder_state(r)) return;
     else if (layout == LAYOUT_GRID) grid_draw(r);
     else draw_details(r);

@@ -48,10 +48,10 @@ expect missing empty
 expect missing gamma
 expect selected 0
 
-# the trash place in the sidebar lists what went there
+# the trash place in the sidebar lists what went there, from every trash folder
 click place Trash
-expect folder ../data/Trash/files
+expect folder trash:///
 expect cursor alpha
 key l
-expect folder ../data/Trash/files/alpha
+expect folder trash:///alpha
 quit

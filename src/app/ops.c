@@ -8,7 +8,7 @@
 fr_clip clip;
 
 /* the one dialog open at a time */
-static enum { DLG_NONE, DLG_RENAME, DLG_NEW_FOLDER, DLG_DELETE, DLG_PROPERTIES, DLG_ERROR } dlg;
+static enum { DLG_NONE, DLG_RENAME, DLG_NEW_FOLDER, DLG_DELETE, DLG_PROPERTIES, DLG_ERROR, DLG_OPEN_WITH } dlg;
 static fr_text field;
 static char *dlg_uri;          /* rename: the item */
 static fr_strs dlg_uris;       /* delete: the items */
@@ -29,6 +29,7 @@ int ops_dialog_open(void) { return dlg != DLG_NONE || job_asking(); }
 static void dlg_close(void)
 {
     if (dlg == DLG_PROPERTIES) props_close();
+    if (dlg == DLG_OPEN_WITH) openwith_close();
     dlg = DLG_NONE;
     free(dlg_uri);
     dlg_uri = NULL;
@@ -94,6 +95,29 @@ void ops_delete(int permanently)
     free(first);
     fr_strs_free(&dlg_uris);
     dlg_uris = uris;
+}
+
+void ops_delete_uris(fr_strs *uris, const char *title, const char *message)
+{
+    dlg = DLG_DELETE;
+    dlg_permanent = 1;
+    snprintf(dlg_title, sizeof dlg_title, "%s", title);
+    snprintf(dlg_message, sizeof dlg_message, "%s", message);
+    fr_strs_free(&dlg_uris);
+    dlg_uris = *uris;
+    *uris = (fr_strs){0};
+}
+
+void ops_open_with(void)
+{
+    if (dlg == DLG_NONE && openwith_open()) dlg = DLG_OPEN_WITH;
+}
+
+void ops_terminal_here(void)
+{
+    const char *dir = br.uri ? fr_uri_local(br.uri) : NULL;
+    if (!dir) ui_toast("A terminal opens only in a folder on this device");
+    else if (plat_terminal(dir)) ui_toast("No terminal found: set $TERMINAL, or install one such as foot or xterm");
 }
 
 void ops_rename_start(void)
@@ -346,6 +370,9 @@ void ops_draw_dialogs(void)
     }
     case DLG_PROPERTIES:
         if (!props_draw()) dlg_close();
+        break;
+    case DLG_OPEN_WITH:
+        if (!openwith_draw()) dlg_close();
         break;
     case DLG_ERROR: {
         fr_dialog d = {.title = dlg_title, .message = dlg_message, .buttons = {"Close"}, .nbuttons = 1, .cancel = 0};

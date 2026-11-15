@@ -21,6 +21,7 @@ typedef struct {
     fr_layout layout;
     float ui_scale, font_scale;
     fr_strs favorites;
+    char *folder;
 } state;
 
 static char *path;
@@ -31,11 +32,12 @@ static int64_t file_mtime;
 
 static state live(void)
 {
-    return (state){br.sort, br.desc, br.show_hidden, app.layout, ui.user_scale, ui.text_scale, settings.favorites};
+    return (state){br.sort, br.desc, br.show_hidden, app.layout, ui.user_scale, ui.text_scale, settings.favorites, br.uri};
 }
 
 static int differs(const state *a, const state *b)
 {
+    if (!a->folder != !b->folder || (a->folder && strcmp(a->folder, b->folder))) return 1;
     if (a->sort != b->sort || a->desc != b->desc || a->hidden != b->hidden || a->layout != b->layout ||
         a->ui_scale != b->ui_scale || a->font_scale != b->font_scale || a->favorites.n != b->favorites.n)
         return 1;
@@ -47,8 +49,10 @@ static int differs(const state *a, const state *b)
 static void snapshot(state *s)
 {
     fr_strs_free(&s->favorites);
+    free(s->folder);
     *s = live();
     s->favorites = fr_strs_copy(&settings.favorites);
+    s->folder = s->folder ? fr_strdup(s->folder) : NULL;
 }
 
 /* $XDG_CONFIG_HOME, else ~/.config (XDG Base Directory Specification 0.8: a relative value is ignored) */
@@ -105,6 +109,20 @@ static char *favorite_uri(const char *s)
     return strstr(s, "://") ? fr_strdup(s) : NULL;
 }
 
+static char *start_written; /* start_folder as the user wrote it, written back the same */
+
+/* a path ("~" for home), else a URI */
+static char *folder_uri(const char *s)
+{
+    const char *home = getenv("HOME");
+    if (home && s[0] == '~' && (!s[1] || s[1] == '/')) {
+        char *p = fr_format("%s%s", home, s + 1), *uri = favorite_uri(p);
+        free(p);
+        return uri;
+    }
+    return favorite_uri(s);
+}
+
 static void apply(const fr_toml *t)
 {
     const fr_toml_value *v;
@@ -127,6 +145,16 @@ static void apply(const fr_toml *t)
             else free(uri);
         }
     }
+    const char *folder_keys[2] = {"last_folder", "start_folder"};
+    char **folders[2] = {&settings.last_folder, &settings.start_folder};
+    for (i = 0; i < 2; i++) {
+        free(*folders[i]);
+        v = fr_toml_get(t, "", folder_keys[i], TOML_STRING);
+        *folders[i] = v ? folder_uri(v->str) : NULL;
+    }
+    free(start_written);
+    v = fr_toml_get(t, "", "start_folder", TOML_STRING);
+    start_written = v ? fr_strdup(v->str) : NULL;
     for (i = 0; i < THEME_ROLES; i++) {
         free(settings.theme[i]);
         v = fr_toml_get(t, "theme", theme_roles[i], TOML_STRING);
@@ -177,6 +205,14 @@ static char *settings_text(void)
     }
     fr_toml_strings(&o, "favorites", &shown);
     fr_strs_free(&shown);
+    fr_toml_comment(&o, "The folder open when ferret last ran; it starts there again when the folder is still there.");
+    if (br.uri) {
+        const char *p = fr_uri_local(br.uri);
+        fr_toml_string(&o, "last_folder", p ? p : br.uri);
+    }
+    fr_toml_comment(&o, "Start in this folder every time instead (a path, \"~\" for home, or a URI), for example:");
+    if (start_written) fr_toml_string(&o, "start_folder", start_written);
+    else fr_toml_comment(&o, "start_folder = \"~/Downloads\"");
     fr_toml_comment(&o, "");
     fr_toml_table(&o, "theme");
     fr_toml_comment(&o, "Colours as \"#rrggbb\", over the desktop's and the Nord defaults, for any of: accent,");
@@ -245,6 +281,23 @@ void settings_poll(void)
     browser_rebuild_view();
     view_set_layout(app.layout);
     theme_load(settings.theme);
+}
+
+/* only local folders and the trash: a network share that is gone would hold up the start */
+static int usable_start(const char *uri)
+{
+    if (!uri || !(fr_uri_local(uri) || !strncmp(uri, "trash://", 8))) return 0;
+    fr_entry e = {0};
+    int ok = !fr_vfs_stat(uri, &e) && e.is_dir;
+    fr_entry_free(&e);
+    return ok;
+}
+
+char *settings_start_uri(void)
+{
+    if (usable_start(settings.start_folder)) return fr_strdup(settings.start_folder);
+    if (usable_start(settings.last_folder)) return fr_strdup(settings.last_folder);
+    return NULL;
 }
 
 int favorite_index(const char *uri)
