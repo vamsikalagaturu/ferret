@@ -672,3 +672,55 @@ fr_stream *fr_curl_stream(fr_curl *h, int upload, int (*finish)(fr_curl *h, int 
     }
     return &st->s;
 }
+
+/* ---- a plain HTTPS GET, outside the servers' pool ---- */
+
+static size_t file_cb(char *p, size_t size, size_t n, void *ud) { return fwrite(p, size, n, ud); }
+
+static size_t buf_cb(char *p, size_t size, size_t n, void *ud)
+{
+    fr_curl_buf_add(ud, p, size * n);
+    return size * n;
+}
+
+int fr_curl_fetch(const char *url, fr_curl_buf *body, const char *path)
+{
+    pthread_once(&once, global_init);
+    CURL *e = curl_easy_init();
+    if (!e) return -ENOMEM;
+    FILE *f = path ? fopen(path, "wb") : NULL;
+    if (path && !f) {
+        int rc = -errno;
+        curl_easy_cleanup(e);
+        return rc;
+    }
+    struct curl_slist *headers = curl_slist_append(NULL, "Accept: application/vnd.github+json");
+    curl_easy_setopt(e, CURLOPT_URL, url);
+    curl_easy_setopt(e, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(e, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(e, CURLOPT_MAXREDIRS, 5L);
+    curl_easy_setopt(e, CURLOPT_PROTOCOLS_STR, "https");
+    curl_easy_setopt(e, CURLOPT_REDIR_PROTOCOLS_STR, "https");
+    curl_easy_setopt(e, CURLOPT_CONNECTTIMEOUT_MS, (long)CONNECT_TIMEOUT_MS);
+    curl_easy_setopt(e, CURLOPT_LOW_SPEED_LIMIT, 1L);
+    curl_easy_setopt(e, CURLOPT_LOW_SPEED_TIME, (long)STALL_S);
+    curl_easy_setopt(e, CURLOPT_USERAGENT, "ferret/" FR_VERSION);
+    if (!path) curl_easy_setopt(e, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(e, CURLOPT_WRITEFUNCTION, f ? file_cb : buf_cb);
+    curl_easy_setopt(e, CURLOPT_WRITEDATA, f ? (void *)f : (void *)body);
+    curl_easy_setopt(e, CURLOPT_SSL_VERIFYPEER, 1L);
+    curl_easy_setopt(e, CURLOPT_SSL_VERIFYHOST, 2L);
+    if (ca_blob.n) {
+        struct curl_blob blob = {ca_blob.v, ca_blob.n, CURL_BLOB_NOCOPY};
+        curl_easy_setopt(e, CURLOPT_CAINFO_BLOB, &blob);
+    } else if (ca_file) curl_easy_setopt(e, CURLOPT_CAINFO, ca_file);
+    CURLcode r = curl_easy_perform(e);
+    long status = 0;
+    curl_easy_getinfo(e, CURLINFO_RESPONSE_CODE, &status);
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(e);
+    int rc = r != CURLE_OK ? -EIO : status >= 300 ? fr_http_errno(status) : 0;
+    if (f && fclose(f) && !rc) rc = -errno;
+    if (f && rc) unlink(path);
+    return rc;
+}

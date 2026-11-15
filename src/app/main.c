@@ -209,6 +209,7 @@ static void draw_menus(void)
         if (br.uri && fr_uri_local(br.uri) && !plat_terminal(NULL) && ui_menu_item("Open terminal here", "terminal", -1))
             ops_terminal_here();
         ui_menu_separator();
+        if (ui_menu_item("Check for updates", "download", -1)) update_check(1);
         if (ui_menu_item("Refresh", "refresh-cw", -1)) browser_reload();
         ui_menu_end();
     }
@@ -500,6 +501,7 @@ static int frame(void)
             list.y += th, list.height -= th;
         }
         list.height -= ops_draw_jobs(list);
+        list.height -= update_bar_draw(list);
         list.height -= draw_paste_bar(list);
         list.height -= compare_bar_draw(list);
         panes_draw(list);
@@ -584,6 +586,7 @@ int fr_app_main(int argc, char **argv)
     static const fr_secret_store keystore = {plat_secret_load, plat_secret_save, plat_secret_forget};
     if (plat_secret_available()) fr_creds_set_store(&keystore);
     thumbs_start();
+    if (!replay) update_check(0);
     app.menu_more = ui_id("menu-more", 0), app.menu_row = ui_id("menu-row", 0), app.menu_bg = ui_id("menu-bg", 0);
     app.menu_selection = ui_id("menu-selection", 0);
     char *start = NULL;

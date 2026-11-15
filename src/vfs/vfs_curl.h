@@ -57,6 +57,11 @@ int fr_curl_perform(fr_curl *h, int http_any);
 /* back to the server's idle handles */
 void fr_curl_end(fr_curl *h);
 
+/* A plain HTTPS GET of url outside the pool (GitHub's release API and downloads): into body, or into the file at
+ * path when path is not NULL (removed again on failure). Redirects followed, https only, the certificate checked
+ * with no trust-on-first-use. 0 or -errno. */
+int fr_curl_fetch(const char *url, fr_curl_buf *body, const char *path);
+
 /* a stream over what h was set up for (a download, or an upload when upload), started: it fails here when the
  * server refuses it. It owns h. finish (may be NULL) runs when an upload ended, on its status: its -errno or 0. */
 fr_stream *fr_curl_stream(fr_curl *h, int upload, int (*finish)(fr_curl *h, int rc), int *err);
