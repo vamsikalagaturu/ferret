@@ -87,6 +87,7 @@ enum { DISK_MOUNT = 1, DISK_UNMOUNT, DISK_EJECT, DISK_MOUNT_RO, DISK_RELEASE, DI
 typedef struct {
     char *id; /* names it in requests */
     char *label, *device;
+    char *drive; /* the drive's vendor and model, NULL none */
     fr_strs mounts; /* none: not mounted */
     char *uri;      /* a device opened as this location instead of mounted (a phone over MTP), else NULL */
     uint64_t size;

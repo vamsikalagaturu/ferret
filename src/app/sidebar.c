@@ -128,13 +128,14 @@ static float disks_draw(Rectangle r, float y, float ih, int current)
     ui_text_box("Disks", (Rectangle){r.x + DP(20), y, r.width - DP(40), DP(24)}, 13, FONT_SEMIBOLD, theme.text_dim, ALIGN_LEFT, 0);
     y += DP(24);
     y = manage_row(r, y, ih);
+    float l1 = ui_line_height(15), l2 = ui_line_height(13), dh = fmaxf(ih, l1 + l2 + DP(14));
     for (int i = 0; i < app.disks.n; i++) {
         const fr_disk *d = &app.disks.v[i];
         int mounted = d->mounts.n > 0, sel = i == current, eject = mounted && !d->busy;
-        Rectangle row = {r.x + DP(8), y, r.width - DP(16), ih};
+        Rectangle row = {r.x + DP(8), y, r.width - DP(16), dh};
         float bs = DP(24);
-        Rectangle btn = {row.x + row.width - bs - DP(4), y + (ih - bs) / 2, bs, bs};
-        Rectangle hit = eject ? (Rectangle){row.x, y, btn.x - row.x, ih} : row;
+        Rectangle btn = {row.x + row.width - bs - DP(4), y + (dh - bs) / 2, bs, bs};
+        Rectangle hit = eject ? (Rectangle){row.x, y, btn.x - row.x, dh} : row;
         int state;
         if (ui_clickable(ui_id("disk", i), hit, &state) && !d->busy) {
             dview_close();
@@ -147,23 +148,23 @@ static float disks_draw(Rectangle r, float y, float ih, int current)
         }
         if (sel) ui_round(row, 8, theme.selection);
         else if (state) ui_round(row, 8, state == 2 ? theme.pressed : theme.hover);
-        ui_icon(d->uri ? "smartphone" : d->locked ? "lock" : d->removable ? "usb" : "hard-drive", (Rectangle){row.x + DP(8), y, DP(32), ih},
+        ui_icon(d->uri ? "smartphone" : d->locked ? "lock" : d->removable ? "usb" : "hard-drive", (Rectangle){row.x + DP(8), y, DP(32), dh},
                 20, sel ? theme.accent : theme.text_dim);
-        char size[32];
-        fr_format_size(d->size, size, sizeof size);
-        const char *note = d->busy ? disk_busy[d->busy] : !d->size || strstr(d->label, size) ? "" : size;
-        float right = btn.x - DP(4), nw = ui_text_width(note, 13, FONT_REGULAR);
-        ui_text_box(note, (Rectangle){right - nw, y, nw, ih}, 13, FONT_REGULAR, theme.text_dim, ALIGN_RIGHT, 0);
-        float lx = row.x + DP(52);
-        ui_text_box(d->label, (Rectangle){lx, y, right - nw - DP(8) - lx, ih}, 15, sel ? FONT_SEMIBOLD : FONT_REGULAR,
-                    sel ? theme.text : theme.text_dim, ALIGN_LEFT, 0);
+        char size[32] = "", sub[192];
+        if (d->size) fr_format_size(d->size, size, sizeof size);
+        if (d->busy) snprintf(sub, sizeof sub, "%s", disk_busy[d->busy]);
+        else snprintf(sub, sizeof sub, "%s%s%s", size, *size && d->drive ? "  ·  " : "", d->drive ? d->drive : "");
+        float lx = row.x + DP(52), lw = btn.x - DP(4) - lx, ty = y + (dh - l1 - l2) / 2;
+        ui_text_box(d->label, (Rectangle){lx, ty, lw, l1}, 15, sel ? FONT_SEMIBOLD : FONT_REGULAR, sel ? theme.text : theme.text_dim,
+                    ALIGN_LEFT, 0);
+        ui_text_box(sub, (Rectangle){lx, ty + l1, lw, l2}, 13, FONT_REGULAR, theme.text_faint, ALIGN_LEFT, 0);
         if (eject) {
             int bstate;
             if (ui_clickable(ui_id("disk-eject", i), btn, &bstate)) plat_disk_request(d->removable ? DISK_EJECT : DISK_UNMOUNT, d->id);
             if (bstate) ui_round(btn, 12, bstate == 2 ? theme.pressed : theme.hover);
             ui_icon("eject", btn, 16, theme.text_dim);
         }
-        y += ih;
+        y += dh;
     }
     return y;
 }

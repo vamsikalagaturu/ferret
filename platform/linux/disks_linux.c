@@ -271,8 +271,36 @@ static int by_place(const void *a, const void *b)
     return fr_natcmp(x->device, y->device);
 }
 
-static void build(const dk_objs *o, fr_disks *out)
+/* the disk manager's segment for a block (an unlocked one's is its encrypted partition's), with its drive */
+static const dk_seg *seg_of(const dk_disks *dd, const dk_obj *b, const dk_disk **drive)
 {
+    const char *path = b->backing && !none(b->backing) ? b->backing : b->path;
+    for (int i = 0; i < dd->n; i++)
+        for (int k = 0; k < dd->v[i].segs.n; k++)
+            if (dd->v[i].segs.v[k].path && !strcmp(dd->v[i].segs.v[k].path, path)) {
+                *drive = &dd->v[i];
+                return &dd->v[i].segs.v[k];
+            }
+    return NULL;
+}
+
+/* An unlabeled filesystem is named by the OS found on it; "Windows" from partition types alone only on internal
+ * drives, as every NTFS or exFAT stick carries Microsoft's type too. Neighbours' OS (inferred) names nothing. */
+static char *name_of(const dk_obj *b, const dk_seg *s, int removable)
+{
+    if (b->id_label && *b->id_label) return fr_strdup(b->id_label);
+    if (s && !s->inferred && (s->group_kind == GROUP_OS || s->group_kind == GROUP_RUNNING || (s->group_kind == GROUP_WINDOWS && !removable)))
+        return fr_strdup(s->group);
+    return fr_strdup(b->id_type && *b->id_type ? b->id_type : "Disk");
+}
+
+static void build(const dk_tree *t, fr_disks *out)
+{
+    const dk_objs *o = &t->objs;
+    dk_env env = {0};
+    dk_env_read(&env);
+    dk_disks dd = {0};
+    dk_build(t, &env, &dd);
     for (int i = 0; i < o->n; i++) {
         const dk_obj *b = &o->v[i];
         if (!b->block || b->loop || b->swap || (b->id_type && !strcmp(b->id_type, "swap"))) continue;
@@ -281,20 +309,23 @@ static void build(const dk_objs *o, fr_disks *out)
         int locked = b->encrypted && none(b->cleartext);
         if ((!b->fs && !locked) || system_mount(&b->mounts)) continue;
         const dk_obj *d = dk_drive_of(o, b);
-        char size[32];
-        fr_format_size(b->size, size, sizeof size);
+        const dk_disk *drive = NULL;
+        const dk_seg *s = seg_of(&dd, b, &drive);
+        int removable = d && (d->removable || d->ejectable || (d->bus && !strcmp(d->bus, "usb")));
         fr_disk disk = {
             .id = fr_strdup(b->path),
-            .label = b->id_label && *b->id_label ? fr_strdup(b->id_label)
-                                                 : fr_format("%s %s", b->id_type && *b->id_type ? b->id_type : "Disk", size),
+            .label = name_of(b, s, removable),
             .device = fr_strdup(b->device),
+            .drive = drive && drive->name && *drive->name ? fr_strdup(drive->name) : NULL,
             .mounts = fr_strs_copy(&b->mounts),
             .size = b->size,
-            .removable = d && (d->removable || d->ejectable || (d->bus && !strcmp(d->bus, "usb"))),
+            .removable = removable,
             .locked = locked,
         };
         FR_PUSH(*out, disk);
     }
+    dk_disks_free(&dd);
+    dk_env_free(&env);
     if (out->n) qsort(out->v, (size_t)out->n, sizeof *out->v, by_place);
 }
 
@@ -332,7 +363,7 @@ static void refresh(sd_bus *bus, int *caps_done)
         pthread_mutex_unlock(&lock);
     }
     fr_disks fresh = {0};
-    build(&t.objs, &fresh);
+    build(&t, &fresh);
     pthread_mutex_lock(&lock);
     fr_disks old = list;
     dk_tree old_tree = tree;
@@ -410,7 +441,7 @@ void plat_disks(fr_disks *out)
     pthread_mutex_lock(&lock);
     for (int i = 0; i < list.n; i++) {
         fr_disk d = list.v[i];
-        d.id = fr_strdup(d.id), d.label = fr_strdup(d.label), d.device = fr_strdup(d.device);
+        d.id = fr_strdup(d.id), d.label = fr_strdup(d.label), d.device = fr_strdup(d.device), d.drive = d.drive ? fr_strdup(d.drive) : NULL;
         d.mounts = fr_strs_copy(&d.mounts);
         int k = running_index(d.id);
         d.busy = k < 0 ? 0 : running.v[k].op;
