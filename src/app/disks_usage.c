@@ -34,7 +34,13 @@ static struct {
 
 int usage_is_open(void) { return U.open; }
 
-static float row_h(void) { return fmaxf(DP(ui.touch ? 44 : 32), ui_line_height(13) + DP(12)); }
+static float row_h(void)
+{
+    if (ui.touch) return DP(12) + ui_line_height(15) + DP(2) + ui_line_height(13) + DP(8) + DP(6) + DP(12);
+    return fmaxf(DP(32), ui_line_height(13) + DP(12));
+}
+
+static float row_step(void) { return row_h() + DP(ui.touch ? 8 : 3); }
 
 /* ---- the mount the scan borrowed ---- */
 
@@ -224,7 +230,7 @@ static void move(int to)
 {
     int n = U.rows.n;
     U.cursor = to < 0 ? 0 : to >= n ? (n ? n - 1 : 0) : to;
-    float rh = row_h() + DP(3);
+    float rh = row_step();
     ui_scroll_to(&U.scroll, U.cursor * rh, (U.cursor + 1) * rh);
     ui.dirty = 1;
 }
@@ -260,13 +266,144 @@ static void count_text(uint64_t n, char *buf, size_t len)
     else snprintf(buf, len, "%llu", (unsigned long long)n);
 }
 
-static int text_link(const char *id, const char *label, float x, float y, float h, float size)
+void usage_back(void)
 {
-    float w = ui_text_width(label, size, FONT_SEMIBOLD);
-    Rectangle r = {x - DP(4), y, w + DP(8), h};
-    int state, clicked = ui_clickable(ui_id(id, 0), r, &state);
-    ui_text_box(label, (Rectangle){x, y, w + DP(2), h}, size, FONT_SEMIBOLD, state ? theme.text : theme.accent, ALIGN_LEFT, 0);
-    return clicked;
+    if (U.depth) up(U.depth - 1);
+    else usage_close();
+}
+
+const char *usage_title(void) { return U.title ? U.title : ""; }
+
+/* the card on top: the used space, the share of it counted so far, when, and Rescan; returns the y under it */
+static float summary(const dk_scan *s, float x, float y, float w)
+{
+    float pad = DP(14), big = ui_line_height(18), small = ui_line_height(13), bs = DP(36);
+    Rectangle card = {x, y, w, pad + big + DP(10) + DP(6) + DP(10) + 2 * small + pad};
+    ui_round(card, 12, theme.surface);
+    float ix = x + pad, iw = w - 2 * pad, cy = y + pad;
+    char head[64], l1[128] = "", l2[128] = "";
+    char used[32], scanned[32], files[32], rest[32];
+    dk_size_text(U.rows.used, used, sizeof used), dk_size_text(U.rows.scanned, scanned, sizeof scanned);
+    count_text(U.rows.files, files, sizeof files);
+    if (s->status == SCAN_MOUNTING) snprintf(head, sizeof head, "Mounting read-only...");
+    else if (s->status == SCAN_ERROR) snprintf(head, sizeof head, "Could not count");
+    else {
+        snprintf(head, sizeof head, "%s used", used);
+        snprintf(l1, sizeof l1, "%s in %s files counted%s", scanned, files, s->status == SCAN_SCANNING ? " so far" : "");
+    }
+    if (s->status == SCAN_SCANNING) snprintf(l2, sizeof l2, "Counting... you can go back meanwhile");
+    else if (s->status == SCAN_DONE) {
+        struct tm tm;
+        char when[16];
+        localtime_r(&s->when, &tm);
+        strftime(when, sizeof when, "%H:%M", &tm);
+        if (U.rows.unaccounted) dk_size_text(U.rows.unaccounted, rest, sizeof rest), snprintf(l2, sizeof l2, "%s not counted  \xc2\xb7  %s", rest, when);
+        else snprintf(l2, sizeof l2, "Counted at %s", when);
+    }
+    int can_rescan = s->status == SCAN_DONE || s->status == SCAN_ERROR;
+    ui_text_box(head, (Rectangle){ix, cy, iw - (can_rescan ? bs + DP(8) : 0), big}, 18, FONT_SEMIBOLD, theme.text, ALIGN_LEFT, 0);
+    if (can_rescan && ui_icon_button(ui_id("usage-rescan", 0), (Rectangle){x + w - DP(8) - bs, y + DP(8), bs, bs}, "refresh-cw", theme.text_dim))
+        usage_rescan();
+    cy += big + DP(10);
+    float done = U.rows.used ? (float)fmin(1, (double)U.rows.scanned / (double)U.rows.used) : 0;
+    ui_round((Rectangle){ix, cy, iw, DP(6)}, 3, theme.border);
+    if (done > 0) ui_round((Rectangle){ix, cy, fmaxf(DP(6), iw * done), DP(6)}, 3, theme.accent);
+    cy += DP(6) + DP(10);
+    ui_text_box(l1, (Rectangle){ix, cy, iw, small}, 13, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 1);
+    ui_text_box(l2, (Rectangle){ix, cy + small, iw, small}, 13, FONT_REGULAR, theme.text_faint, ALIGN_LEFT, 1);
+    return y + card.height;
+}
+
+/* the folders down to the one shown, as chips (the volume first); the first ones give way to "..." when they do not
+ * fit; the shown folder's size after them */
+static float crumbs(const dk_scan *s, float x, float y, float w)
+{
+    float h = DP(30), gap = DP(18), sw;
+    char size[32];
+    dk_size_text(U.rows.here, size, sizeof size);
+    sw = ui_text_width(size, 13, FONT_REGULAR) + DP(12);
+    float widths[MAX_DEPTH + 1], room = w - sw, used = 0;
+    for (int i = 0; i <= U.depth; i++) widths[i] = ui_text_width(i ? U.path[i - 1]->name : s->title, 13, FONT_SEMIBOLD) + DP(20);
+    int first = U.depth;
+    used = widths[first];
+    float more = ui_text_width("...", 13, FONT_SEMIBOLD) + DP(20) + gap;
+    while (first > 0 && used + gap + widths[first - 1] + (first - 1 > 0 ? more : 0) <= room) used += gap + widths[--first];
+    float cx = x;
+    if (first > 0) {
+        Rectangle cr = {cx, y, more - gap, h};
+        int state;
+        if (ui_clickable(ui_id("usage-crumb-more", 0), cr, &state)) up(first - 1);
+        ui_round(cr, 8, state ? theme.surface_hi : theme.surface);
+        ui_text_box("...", cr, 13, FONT_SEMIBOLD, theme.accent, ALIGN_CENTER, 0);
+        cx += more;
+        ui_text_box("\xe2\x80\xba", (Rectangle){cx - gap, y, gap, h}, 13, FONT_REGULAR, theme.text_faint, ALIGN_CENTER, 0);
+    }
+    for (int i = first; i <= U.depth; i++) {
+        float cw = fminf(widths[i], x + room - cx);
+        Rectangle cr = {cx, y, cw, h};
+        int state = 0, last = i == U.depth;
+        if (!last && ui_clickable(ui_id("usage-crumb", i), cr, &state)) up(i);
+        ui_round(cr, 8, last ? ui_mix(theme.surface, theme.accent, 0.22f) : state ? theme.surface_hi : theme.surface);
+        ui_text_box(i ? U.path[i - 1]->name : s->title, (Rectangle){cr.x + DP(10), y, cw - DP(20), h}, 13, FONT_SEMIBOLD,
+                    last ? theme.text : theme.accent, ALIGN_LEFT, 1);
+        cx += cw;
+        if (!last) ui_text_box("\xe2\x80\xba", (Rectangle){cx, y, gap, h}, 13, FONT_REGULAR, theme.text_faint, ALIGN_CENTER, 0), cx += gap;
+    }
+    ui_text_box(size, (Rectangle){cx + DP(12), y, x + w - cx - DP(12), h}, 13, FONT_REGULAR, theme.text_faint, ALIGN_LEFT, 0);
+    return y + h;
+}
+
+static void row_name(const dk_row *row, char *buf, size_t len)
+{
+    snprintf(buf, len, "%s%s", row->name, row->kind == ROW_DENIED ? "  (no access)" : "");
+}
+
+static Color row_fill(const dk_row *row)
+{
+    return row->kind != ROW_DIR && row->kind != ROW_FILE ? theme.text_faint : row->kind == ROW_DIR ? theme.accent : theme.success;
+}
+
+static void share_bar(const dk_row *row, Rectangle track)
+{
+    ui_round(track, 3, theme.border);
+    if (row->size) ui_round((Rectangle){track.x, track.y, fmaxf(DP(6), track.width * (float)fmin(1, row->share)), track.height}, 3, row_fill(row));
+}
+
+/* name and share; files and size under them; the bar across */
+static void row_touch(const dk_row *row, Rectangle rr)
+{
+    float p = DP(12), l1 = ui_line_height(15), l2 = ui_line_height(13), x = rr.x + p, w = rr.width - 2 * p, y = rr.y + p;
+    int dimmed = row->kind != ROW_DIR && row->kind != ROW_FILE;
+    char name[320], pct[16], meta[96], files[32] = "", size[32];
+    row_name(row, name, sizeof name);
+    snprintf(pct, sizeof pct, "%.1f%%", row->share * 100);
+    float pw = ui_text_width(pct, 13, FONT_SEMIBOLD) + DP(4);
+    ui_text_box(name, (Rectangle){x, y, w - pw - DP(12), l1}, 15, FONT_SEMIBOLD, dimmed ? theme.text_dim : theme.text, ALIGN_LEFT, 1);
+    ui_text_box(pct, (Rectangle){x + w - pw, y, pw, l1}, 13, FONT_SEMIBOLD, theme.text_dim, ALIGN_RIGHT, 0);
+    y += l1 + DP(2);
+    dk_size_text(row->size, size, sizeof size);
+    if (row->kind == ROW_DIR) count_text(row->files, files, sizeof files);
+    snprintf(meta, sizeof meta, "%s%s%s", files, *files ? (row->files == 1 ? " file  \xc2\xb7  " : " files  \xc2\xb7  ") : "", size);
+    ui_text_box(meta, (Rectangle){x, y, w, l2}, 13, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 1);
+    y += l2 + DP(8);
+    share_bar(row, (Rectangle){x, y, w, DP(6)});
+}
+
+static void row_desktop(const dk_row *row, Rectangle rr)
+{
+    float track_w = fminf(DP(160), rr.width * 0.2f), meta_w = fminf(DP(250), rr.width * 0.4f), ry = rr.y, rh = rr.height;
+    int dimmed = row->kind != ROW_DIR && row->kind != ROW_FILE;
+    char name[320];
+    row_name(row, name, sizeof name);
+    if (row->kind == ROW_DIR || row->kind == ROW_DENIED) strncat(name, "/", sizeof name - strlen(name) - 1);
+    float nx = rr.x + DP(10), tx = rr.x + rr.width - DP(10) - meta_w - DP(14) - track_w;
+    ui_text_box(name, (Rectangle){nx, ry, tx - nx - DP(12), rh}, 14, FONT_REGULAR, dimmed ? theme.text_dim : theme.text, ALIGN_LEFT, 1);
+    share_bar(row, (Rectangle){tx, ry + (rh - DP(6)) / 2, track_w, DP(6)});
+    char meta[96], files[32] = "", size[32];
+    if (row->kind == ROW_DIR) count_text(row->files, files, sizeof files);
+    dk_size_text(row->size, size, sizeof size);
+    snprintf(meta, sizeof meta, "%s%s%5.1f%%   %s", files, *files ? " files   " : "", row->share * 100, size);
+    ui_text_box(meta, (Rectangle){rr.x + rr.width - DP(10) - meta_w, ry, meta_w, rh}, 13, FONT_REGULAR, theme.text_dim, ALIGN_RIGHT, 0);
 }
 
 void usage_draw(Rectangle r)
@@ -284,117 +421,43 @@ void usage_draw(Rectangle r)
     dk_usage_rows(s, here(), &U.rows);
     if (U.cursor >= U.rows.n) U.cursor = U.rows.n ? U.rows.n - 1 : 0;
 
-    float pad = DP(ui.touch ? 16 : 20), x = r.x + pad, w = r.width - 2 * pad, y = r.y + DP(14), lh = ui_line_height(16) + DP(6);
-    const char *back = plat_dm_supported() ? "< Disks" : "< Storage";
-    float bw = ui_text_width(back, 13, FONT_SEMIBOLD) + DP(16);
-    if (text_link("usage-back", back, x, y, lh, 13)) usage_close();
-    char head[512];
-    snprintf(head, sizeof head, "Inside %s", s->title);
-    float hw = fminf(ui_text_width(head, 16, FONT_SEMIBOLD) + DP(4), w - bw);
-    ui_text_box(head, (Rectangle){x + bw, y, hw, lh}, 16, FONT_SEMIBOLD, theme.text, ALIGN_LEFT, 0);
-    if (s->mount_point)
-        ui_text_box(s->mount_point, (Rectangle){x + bw + hw + DP(12), y, w - bw - hw - DP(12), lh}, 13, FONT_REGULAR, theme.text_faint, ALIGN_LEFT, 1);
-    y += lh + DP(4);
-
-    char line[512] = "";
-    if (s->status == SCAN_MOUNTING) snprintf(line, sizeof line, "Mounting read-only...");
-    else if (s->status != SCAN_ERROR) {
-        char used[32], scanned[32], files[32], rest[32];
-        dk_size_text(U.rows.used, used, sizeof used), dk_size_text(U.rows.scanned, scanned, sizeof scanned);
-        count_text(U.rows.files, files, sizeof files);
-        int n = snprintf(line, sizeof line, "%s used  \xc2\xb7  %s in %s files", used, scanned, files);
-        if (s->status == SCAN_DONE && U.rows.unaccounted) {
-            dk_size_text(U.rows.unaccounted, rest, sizeof rest);
-            n += snprintf(line + n, sizeof line - (size_t)n, "  \xc2\xb7  %s not counted", rest);
-        }
-        if (s->status == SCAN_DONE) {
-            struct tm tm;
-            char when[16];
-            localtime_r(&s->when, &tm);
-            strftime(when, sizeof when, "%H:%M", &tm);
-            snprintf(line + n, sizeof line - (size_t)n, "  \xc2\xb7  counted %s", when);
-        }
-    }
-    float lw = fminf(ui_text_width(line, 13, FONT_REGULAR) + DP(4), w);
-    ui_text_box(line, (Rectangle){x, y, lw, DP(22)}, 13, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 0);
-    if ((s->status == SCAN_DONE || s->status == SCAN_ERROR) && text_link("usage-rescan", "Rescan", x + lw + DP(12), y, DP(22), 13)) usage_rescan();
-    y += DP(26);
+    float pad = DP(ui.touch ? 16 : 20), x = r.x + pad, w = r.width - 2 * pad, y = r.y + DP(12);
+    y = summary(s, x, y, w) + DP(10);
     if (s->status == SCAN_ERROR) {
         int lines = ui_text_wrapped(s->error, (Rectangle){x, y, w, 0}, 13, FONT_REGULAR, theme.danger, 1);
-        y += lines * ui_line_height(13) + DP(6);
+        y += lines * ui_line_height(13) + DP(10);
     }
-    if (s->status == SCAN_SCANNING) {
-        ui_progress((Rectangle){x, y, w, DP(4)}, U.rows.used ? (float)fmin(1, (double)U.rows.scanned / (double)U.rows.used) : 0, theme.accent);
-        y += DP(12);
-    }
-    if (s->status == SCAN_SCANNING || s->status == SCAN_DONE) {
-        float cx = x;
-        for (int i = 0; i <= U.depth; i++) {
-            const char *name = i ? U.path[i - 1]->name : "/";
-            char label[300];
-            snprintf(label, sizeof label, "%s%s", name, i && i < U.depth ? "/" : "");
-            float cw = ui_text_width(label, 13, FONT_REGULAR) + DP(2);
-            if (cx + cw > x + w) break;
-            Rectangle cr = {cx, y, cw, DP(24)};
-            int state = 0;
-            if (i < U.depth && ui_clickable(ui_id("usage-crumb", i), cr, &state)) up(i);
-            ui_text_box(label, cr, 13, i == U.depth ? FONT_SEMIBOLD : FONT_REGULAR, i == U.depth ? theme.text : state ? theme.text : theme.accent,
-                        ALIGN_LEFT, 0);
-            cx += cw + (i ? 0 : DP(2));
-        }
-        char size[32];
-        dk_size_text(U.rows.here, size, sizeof size);
-        ui_text_box(size, (Rectangle){cx + DP(12), y, x + w - cx - DP(12), DP(24)}, 13, FONT_REGULAR, theme.text_faint, ALIGN_LEFT, 0);
-        y += DP(30);
-    }
+    if (s->status == SCAN_SCANNING || s->status == SCAN_DONE) y = crumbs(s, x, y, w) + DP(8);
 
     float kb = ui.touch ? 0 : DP(30);
     if (!ui.touch)
         ui_text_box("j k move   l open   h up   gg G top/bottom   r rescan   q back   ? all keys",
                     (Rectangle){x, r.y + r.height - kb, w, kb}, 12, FONT_REGULAR, theme.text_faint, ALIGN_LEFT, 0);
     Rectangle list = {x, y, w, r.y + r.height - kb - y - DP(4)};
-    float rh = row_h(), step = rh + DP(3);
-    int note = s->status == SCAN_SCANNING;
-    ui_scroll(ui_id("usage-list", 0), &U.scroll, list, U.rows.n * step + (note ? DP(28) : 0));
+    float rh = row_h(), step = row_step();
+    ui_scroll(ui_id("usage-list", 0), &U.scroll, list, U.rows.n * step);
     ui_clip_begin(list);
-    float track_w = fminf(DP(160), w * 0.2f), meta_w = fminf(DP(250), w * 0.4f);
     for (int i = 0; i < U.rows.n; i++) {
         float ry = list.y + i * step - U.scroll.offset;
         if (ry + rh < list.y || ry > list.y + list.height) continue;
         const dk_row *row = &U.rows.v[i];
         Rectangle rr = {list.x, ry, list.width, rh};
-        int state, open = row->kind == ROW_DIR, dimmed = row->kind != ROW_DIR && row->kind != ROW_FILE;
+        int state, open = row->kind == ROW_DIR;
         if (ui_clickable(ui_id("usage-row", i), GetCollisionRec(rr, list), &state)) {
             U.cursor = i;
             if (open) enter(i);
         }
-        ui_round(rr, 6, i == U.cursor || (open && state) ? theme.surface_hi : theme.surface);
+        ui_round(rr, ui.touch ? 10 : 6, (i == U.cursor && !ui.touch) || (open && state) ? theme.surface_hi : theme.surface);
         if (i == U.cursor && !ui.touch) ui_round_line(rr, 6, ui_alpha(theme.accent, 0.7f));
-        char name[320];
-        snprintf(name, sizeof name, "%s%s%s", row->name, row->kind == ROW_DIR || row->kind == ROW_DENIED ? "/" : "",
-                 row->kind == ROW_DENIED ? "  no access" : "");
-        float nx = rr.x + DP(10), tx = rr.x + rr.width - DP(10) - meta_w - DP(14) - track_w;
-        ui_text_box(name, (Rectangle){nx, ry, tx - nx - DP(12), rh}, 14, FONT_REGULAR, dimmed ? theme.text_dim : theme.text, ALIGN_LEFT, 1);
-        Rectangle track = {tx, ry + (rh - DP(6)) / 2, track_w, DP(6)};
-        Color fill = dimmed ? theme.text_faint : open ? theme.accent : theme.success;
-        ui_round(track, 3, theme.border);
-        if (row->size) ui_round((Rectangle){track.x, track.y, fmaxf(DP(6), track_w * (float)fmin(1, row->share)), track.height}, 3, fill);
-        char meta[96], files[32] = "", size[32];
-        if (row->kind == ROW_DIR) count_text(row->files, files, sizeof files);
-        dk_size_text(row->size, size, sizeof size);
-        snprintf(meta, sizeof meta, "%s%s%5.1f%%   %s", files, *files ? " files   " : "", row->share * 100, size);
-        ui_text_box(meta, (Rectangle){rr.x + rr.width - DP(10) - meta_w, ry, meta_w, rh}, 13, FONT_REGULAR, theme.text_dim, ALIGN_RIGHT, 0);
+        if (ui.touch) row_touch(row, rr);
+        else row_desktop(row, rr);
     }
-    if (note)
-        ui_text_box("Counting... folders appear as each one finishes. You can go back meanwhile; counting continues.",
-                    (Rectangle){list.x, list.y + U.rows.n * step - U.scroll.offset + DP(4), list.width, DP(22)}, 12, FONT_REGULAR,
-                    theme.text_faint, ALIGN_LEFT, 0);
     ui_clip_end();
 }
 
 void usage_keys(void)
 {
-    int page = (int)(U.scroll.view / (row_h() + DP(3)) / 2);
+    int page = (int)(U.scroll.view / row_step() / 2);
     if (page < 1) page = 1;
     if (ui_key(KEY_DOWN, 0)) move(U.cursor + 1);
     if (ui_key(KEY_UP, 0)) move(U.cursor - 1);

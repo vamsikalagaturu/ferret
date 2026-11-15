@@ -893,11 +893,16 @@ static void top_bar(Rectangle r)
         if (ui_icon_button(ui_id("dview-drawer", 0), (Rectangle){x, cy, b, b}, "menu", theme.text)) app.drawer_open = 1, places_refresh(1);
         x += b;
     }
-    if (ui_icon_button(ui_id("dview-back", 0), (Rectangle){x, cy, b, b}, "arrow-left", theme.text)) dview_close();
+    int inside = usage_is_open();
+    if (ui_icon_button(ui_id("dview-back", 0), (Rectangle){x, cy, b, b}, "arrow-left", theme.text)) {
+        if (inside) usage_back();
+        else dview_close();
+    }
     x += b + DP(8);
-    const char *title = plat_dm_supported() ? "Disks" : "Storage";
-    ui_text_box(title, (Rectangle){x, r.y, ui_text_width(title, 17, FONT_SEMIBOLD) + DP(4), r.height}, 17, FONT_SEMIBOLD, theme.text, ALIGN_LEFT, 0);
-    if (plat_dm_supported() && V.available) {
+    const char *title = inside ? usage_title() : plat_dm_supported() ? "Disks" : "Storage";
+    ui_text_box(title, (Rectangle){x, r.y, fminf(ui_text_width(title, 17, FONT_SEMIBOLD) + DP(4), r.x + r.width - x - DP(16)), r.height}, 17,
+                FONT_SEMIBOLD, theme.text, ALIGN_LEFT, 0);
+    if (plat_dm_supported() && V.available && !inside) {
         float tw = ui_text_width(title, 17, FONT_SEMIBOLD) + DP(16);
         ui_text_box("Changes are queued and written only when you apply them", (Rectangle){x + tw, r.y, r.x + r.width - x - tw - DP(16), r.height},
                     13, FONT_REGULAR, theme.text_faint, ALIGN_LEFT, 0);

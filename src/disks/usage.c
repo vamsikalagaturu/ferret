@@ -351,7 +351,8 @@ static const dk_node *sort_base;
 static int by_node_size(const void *a, const void *b)
 {
     const dk_node *x = sort_base->kids[*(const int *)a], *y = sort_base->kids[*(const int *)b];
-    return x->size < y->size ? 1 : x->size > y->size ? -1 : 0;
+    /* by name among equal sizes: qsort is not stable, and rows that swap between frames take the wrong tap */
+    return x->size < y->size ? 1 : x->size > y->size ? -1 : fr_natcmp(x->name, y->name);
 }
 
 void dk_usage_rows(const dk_scan *s, const dk_node *at, dk_rows *out)

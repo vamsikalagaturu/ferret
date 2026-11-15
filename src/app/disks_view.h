@@ -12,6 +12,8 @@ int usage_is_open(void);
 void usage_open(const char *key, const char *mount_point, const char *title); /* mount_point NULL: mounted read-only first */
 void usage_rescan(void);
 void usage_close(void);
+void usage_back(void);         /* up a folder; at the top, out of look inside */
+const char *usage_title(void); /* the volume looked inside */
 void usage_draw(Rectangle r);
 void usage_keys(void);
 void usage_poll(void);
