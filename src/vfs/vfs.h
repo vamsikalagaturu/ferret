@@ -1,7 +1,13 @@
 #ifndef FR_VFS_H
 #define FR_VFS_H
 /* Every location is a URI, scheme://authority/path, kept unescaped (file:///home/a b.txt). Each scheme has a
- * backend; the calls below pick it by the URI. Errors are negative errno values (0 = done). */
+ * backend; the calls below pick it by the URI. Errors are negative errno values (0 = done).
+ *
+ * Inside an archive: archive://<outer URI>!/<path inside>, the outer URI written as it is (any scheme, unescaped),
+ * so archive://file:///home/a b.zip!/docs/x.txt. The first "!/" after the outer URI's own path ends it; an archive
+ * in an archive nests (archive://archive://file:///a.zip!/b.tar!/c), each "archive://" in front taking one more
+ * "!/". A folder on the outer path whose name ends in "!" cannot be told apart and is not supported. The archive's
+ * root, archive://<outer>!/, has the outer file's name and parent. */
 #include "core/util.h"
 #include <stdint.h>
 
@@ -93,6 +99,7 @@ char *fr_uri_free_name(const char *dir, const char *name, int is_dir);
 int fr_name_valid(const char *name);
 
 extern const fr_backend fr_backend_file;
+extern const fr_backend fr_backend_archive;
 extern const fr_backend fr_backend_smb;  /* vfs_smb.c */
 extern const fr_backend fr_backend_sftp; /* vfs_sftp.c */
 #endif

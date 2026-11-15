@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Fetches the sources pinned in platform/versions.sh into thirdparty/ and builds raylib (GLFW with Wayland and
-# X11) into $FR_LINUX_OUT (default ~/.cache/ferret/linux). build.sh sources this file first.
+# X11), and libmtp when the system has none, into $FR_LINUX_OUT (default ~/.cache/ferret/linux). build.sh sources
+# this file first.
 # Separate worktrees build side by side with their own FR_LINUX_OUT.
 set -euo pipefail
 
@@ -34,4 +35,41 @@ if [ ! -f "$NET_OUT/smb2/lib/libsmb2.a" ] || [ ! -f "$NET_OUT/ssh2/lib/libssh2.a
     command -v ninja >/dev/null || { echo "missing: ninja" >&2; exit 1; }
     pkg-config --exists libcrypto || { echo "missing: OpenSSL's libcrypto (libssl-dev)" >&2; exit 1; }
     build_net "$NET_OUT"
+fi
+
+step "libarchive $LIBARCHIVE_VERSION (static; the system's zlib, bzip2, xz and zstd)"
+for h in zlib.h bzlib.h lzma.h zstd.h; do
+    echo "#include <$h>" | cc -E -x c - >/dev/null 2>&1 || { echo "missing: $h (the zlib, bzip2, xz, zstd headers)" >&2; exit 1; }
+done
+fetch_tarball "$REPO" "$LIBARCHIVE_URL" "$LIBARCHIVE_SHA256" "libarchive-$LIBARCHIVE_VERSION"
+LIBARCHIVE_OUT=$ROOT/libarchive-$LIBARCHIVE_VERSION-$BUILD_TAG
+if [ ! -f "$LIBARCHIVE_OUT/lib/libarchive.a" ]; then
+    cmake -S "$REPO/thirdparty/libarchive-$LIBARCHIVE_VERSION" -B "$ROOT/libarchive-build-$BUILD_TAG" -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS_RELEASE="$SIZE_CFLAGS -DNDEBUG" -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+        -DCMAKE_INSTALL_PREFIX="$LIBARCHIVE_OUT" -DCMAKE_INSTALL_LIBDIR=lib -DBUILD_SHARED_LIBS=OFF \
+        -DENABLE_TAR=OFF -DENABLE_CPIO=OFF -DENABLE_CAT=OFF -DENABLE_UNZIP=OFF -DENABLE_TEST=OFF \
+        -DENABLE_OPENSSL=OFF -DENABLE_MBEDTLS=OFF -DENABLE_NETTLE=OFF -DENABLE_MD=OFF -DENABLE_CNG=OFF \
+        -DENABLE_LIBB2=OFF -DENABLE_LZ4=OFF -DENABLE_LZO=OFF -DENABLE_LIBXML2=OFF -DENABLE_EXPAT=OFF \
+        -DENABLE_BSDXML=OFF -DENABLE_PCREPOSIX=OFF -DENABLE_PCRE2POSIX=OFF -DENABLE_LIBGCC=OFF \
+        -DENABLE_ACL=OFF -DENABLE_XATTR=OFF -DENABLE_ICONV=OFF -DENABLE_WERROR=OFF >/dev/null
+    cmake --build "$ROOT/libarchive-build-$BUILD_TAG" --target install -j"$JOBS" >/dev/null
+fi
+
+if pkg-config --exists libmtp; then
+    step "libmtp $(pkg-config --modversion libmtp) (the system's)"
+else
+    step "libmtp $LIBMTP_VERSION (static, over the system's libusb-1.0)"
+    pkg-config --exists libusb-1.0 || { echo "missing: libusb-1.0 development files" >&2; exit 1; }
+    MTP_OUT=$ROOT/libmtp-$LIBMTP_VERSION-$BUILD_TAG
+    if [ ! -f "$MTP_OUT/lib/libmtp.a" ]; then
+        fetch "$LIBMTP_URL" "$REPO/thirdparty/libmtp-$LIBMTP_VERSION.tar.gz" "$LIBMTP_SHA256"
+        rm -rf "$ROOT/libmtp-src"
+        mkdir -p "$ROOT/libmtp-src"
+        tar -xzf "$REPO/thirdparty/libmtp-$LIBMTP_VERSION.tar.gz" -C "$ROOT/libmtp-src" --strip-components=1
+        # mtpz needs libgcrypt and is only for a few old Zune players; the udev rules stay inside the prefix
+        (cd "$ROOT/libmtp-src" && ./configure --prefix="$MTP_OUT" --libdir="$MTP_OUT/lib" --disable-shared --enable-static \
+            --with-pic --disable-mtpz --disable-doxygen --with-udev="$MTP_OUT/udev" CFLAGS="$SIZE_CFLAGS -DNDEBUG" >/dev/null &&
+            make -C src -j"$JOBS" install >/dev/null && make install-pkgconfigDATA >/dev/null)
+    fi
+    export PKG_CONFIG_PATH=$MTP_OUT/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}
 fi

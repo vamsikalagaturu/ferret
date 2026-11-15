@@ -85,6 +85,26 @@ public class FerretActivity extends NativeActivity {
         });
     }
 
+    /* ---- SD cards and USB drives (Saf.java, for platform/android/saf.c) ---- */
+
+    private volatile Saf saf;
+
+    public String safVolumes() { return saf.volumes(); }
+    public String safGranted(String tree) { return saf.isGranted(tree); }
+    public String safRequest(String tree) { return saf.request(tree); }
+    public String safStat(String tree, String path) { return saf.stat(tree, path); }
+    public String safList(String tree, String path) { return saf.list(tree, path); }
+    public String safOpen(String tree, String path, String mode) { return saf.open(tree, path, mode); }
+    public String safMkdir(String tree, String path) { return saf.mkdir(tree, path); }
+    public String safRename(String tree, String from, String to) { return saf.rename(tree, from, to); }
+    public String safRemove(String tree, String path) { return saf.remove(tree, path); }
+
+    @Override
+    protected void onActivityResult(int request, int result, Intent data) {
+        super.onActivityResult(request, result, data);
+        if (request == Saf.REQUEST_TREE) saf.onResult(result, data);
+    }
+
     /* ---- opening files ---- */
 
     /* path in the app the system picks for its type, through OpenProvider; null when no app takes it */
@@ -227,6 +247,8 @@ public class FerretActivity extends NativeActivity {
 
     @Override
     protected void onCreate(Bundle state) {
+        /* before super.onCreate(), which starts the native thread that calls it */
+        saf = new Saf(this);
         super.onCreate(state);
         /* the window reaches into the camera cutout so the strip shows the app's background, not black; the
          * native side keeps clear of it through systemInsets() */

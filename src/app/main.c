@@ -67,6 +67,31 @@ static float draw_paste_bar(Rectangle area)
 
 /* ---- menus ---- */
 
+/* Extract here, Extract to <name>/, Compress to <name>.zip, for what is chosen */
+static void archive_items(void)
+{
+    int n = ops_archive_targets();
+    if (n) {
+        if (ui_menu_item("Extract here", "package", -1)) ops_extract(0);
+        char label[300] = "Extract each to its own folder";
+        if (n == 1) {
+            fr_strs uris = browser_target_uris();
+            char *name = fr_uri_name(uris.v[0]), *stem = fr_archive_stem(name);
+            snprintf(label, sizeof label, "Extract to %s/", stem);
+            free(name), free(stem);
+            fr_strs_free(&uris);
+        }
+        if (ui_menu_item(label, "folder-archive", -1)) ops_extract(1);
+    }
+    char *zip = br.uri && !fr_archive_is_uri(br.uri) ? ops_compress_name() : NULL;
+    if (zip) {
+        char label[300];
+        snprintf(label, sizeof label, "Compress to %s", zip);
+        if (ui_menu_item(label, "file-archive", -1)) ops_compress();
+        free(zip);
+    }
+}
+
 static void draw_menus(void)
 {
     if (ui_menu_begin(app.menu_more)) {
@@ -137,6 +162,7 @@ static void draw_menus(void)
             if (ui_menu_item(fav ? "Remove from favorites" : "Add to favorites", fav ? "star-off" : "star", -1)) favorite_toggle(uri);
             free(uri);
         }
+        archive_items();
         ui_menu_separator();
         if (br.uri && fr_vfs_can_trash(br.uri) && ui_menu_item("Move to trash", "trash", -1)) ops_delete(0);
         if (ui_menu_item("Delete permanently", "trash-2", -1)) ops_delete(1);
@@ -161,6 +187,7 @@ static void draw_menus(void)
     if (ui_menu_begin(app.menu_selection)) {
         if (ui.touch && ui_menu_item("Select all", "check-check", -1)) browser_select_all();
         if (br.nselected == 1 && ui_menu_item("Rename", "pencil", -1)) ops_rename_start();
+        archive_items();
         if (ui_menu_item("Properties", "info", -1)) ops_properties();
         if (br.uri && fr_vfs_can_trash(br.uri) && ui_menu_item("Delete permanently", "trash-2", -1)) ops_delete(1);
         ui_menu_end();
@@ -201,6 +228,8 @@ static const char *const shortcuts[][2] = {
     {"Enter / Esc", "keep / drop the new name"},       {"a", "new file, or folder when the name ends in /"},
     {"Ctrl+Shift+N", "new folder"},
     {"D, Delete", "move to the trash"},    {"X, Shift+Delete", "delete permanently"},
+    {"Enter on an archive", "browse inside it (zip, tar, 7z, rar, iso)"},
+    {"ze / zf", "extract here / into a folder named after it"}, {"zc", "compress to <name>.zip"},
     {"Alt+Enter", "properties"},           {".", "show hidden files"},
     {"sn ss sm se", "sort by name, size, date, extension"}, {"S", "reverse the order"},
     {"Ctrl+1 / 2 / 3", "details, columns, grid"},          {"m", "add or remove this folder as a favorite"},
@@ -334,6 +363,7 @@ static int frame(void)
 static void between_frames(int keys)
 {
     run_deferred();
+    thumbs_poll();
     if (keys) keys_handle();
     if (!app.storage_ok) return;
     fr_async_poll();
@@ -360,6 +390,7 @@ int fr_app_main(int argc, char **argv)
     fr_async_start(plat_wake);
     static const fr_secret_store keystore = {plat_secret_load, plat_secret_save, plat_secret_forget};
     if (plat_secret_available()) fr_creds_set_store(&keystore);
+    thumbs_start();
     app.menu_more = ui_id("menu-more", 0), app.menu_row = ui_id("menu-row", 0), app.menu_bg = ui_id("menu-bg", 0);
     app.menu_selection = ui_id("menu-selection", 0);
     char *start = NULL;
@@ -398,6 +429,7 @@ int fr_app_main(int argc, char **argv)
         }
     }
     fr_jobs_stop();
+    thumbs_stop();
     fr_conn_close_all();
     plat_close_window();
     return replay ? replay_status() : 0;

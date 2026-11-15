@@ -36,14 +36,29 @@ static void open_path(const char *path)
     app.drawer_open = 0;
 }
 
+static int device_of(const fr_disks *ds, const char *uri)
+{
+    for (int i = 0; uri && i < ds->n; i++)
+        if (ds->v[i].uri && fr_uri_within(ds->v[i].uri, uri)) return i;
+    return -1;
+}
+
 void disks_poll(void)
 {
     unsigned serial = plat_disks_serial();
     if (serial != app.disks_serial) {
         app.disks_serial = serial;
-        fr_disks_free(&app.disks);
+        fr_disks old = app.disks;
+        app.disks = (fr_disks){0};
         plat_disks(&app.disks);
         ui.dirty = 1;
+        /* the device being shown was unplugged */
+        if (device_of(&old, br.uri) >= 0 && device_of(&app.disks, br.uri) < 0) {
+            char *home = plat_home_uri();
+            browser_open(home, 1);
+            free(home);
+        }
+        fr_disks_free(&old);
     }
     fr_disk_done d;
     while (plat_disk_done(&d)) {
@@ -77,7 +92,7 @@ static int disk_of(const char *uri)
             if (fr_uri_within(m, uri) && n > best_len) best = i, best_len = n;
             free(m);
         }
-    return best;
+    return best >= 0 ? best : device_of(&app.disks, uri);
 }
 
 static float disks_draw(Rectangle r, float y, float ih, int current)
@@ -96,17 +111,20 @@ static float disks_draw(Rectangle r, float y, float ih, int current)
         Rectangle hit = eject ? (Rectangle){row.x, y, btn.x - row.x, ih} : row;
         int state;
         if (ui_clickable(ui_id("disk", i), hit, &state) && !d->busy) {
-            if (d->locked) ui_toast("Unlocking is not supported yet");
+            if (d->uri) {
+                browser_open(d->uri, 1);
+                app.drawer_open = 0;
+            } else if (d->locked) ui_toast("Unlocking is not supported yet");
             else if (mounted) open_path(d->mounts.v[0]);
             else plat_disk_request(DISK_MOUNT, d->id);
         }
         if (sel) ui_round(row, 8, theme.selection);
         else if (state) ui_round(row, 8, state == 2 ? theme.pressed : theme.hover);
-        ui_icon(d->locked ? "lock" : d->removable ? "usb" : "hard-drive", (Rectangle){row.x + DP(8), y, DP(32), ih}, 20,
-                sel ? theme.accent : theme.text_dim);
+        ui_icon(d->uri ? "smartphone" : d->locked ? "lock" : d->removable ? "usb" : "hard-drive", (Rectangle){row.x + DP(8), y, DP(32), ih},
+                20, sel ? theme.accent : theme.text_dim);
         char size[32];
         fr_format_size(d->size, size, sizeof size);
-        const char *note = d->busy ? disk_busy[d->busy] : strstr(d->label, size) ? "" : size;
+        const char *note = d->busy ? disk_busy[d->busy] : !d->size || strstr(d->label, size) ? "" : size;
         float right = btn.x - DP(4), nw = ui_text_width(note, 13, FONT_REGULAR);
         ui_text_box(note, (Rectangle){right - nw, y, nw, ih}, 13, FONT_REGULAR, theme.text_dim, ALIGN_RIGHT, 0);
         float lx = row.x + DP(52);

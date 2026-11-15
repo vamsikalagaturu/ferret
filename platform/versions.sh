@@ -30,6 +30,25 @@ OPENSSL_VERSION=3.5.9
 OPENSSL_URL=https://github.com/openssl/openssl/releases/download/openssl-$OPENSSL_VERSION/openssl-$OPENSSL_VERSION.tar.gz
 OPENSSL_SHA256=603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a
 
+# archives (src/vfs/vfs_archive.c); the codecs are built for Android only, Linux links the system's
+LIBARCHIVE_VERSION=3.8.11
+LIBARCHIVE_URL=https://github.com/libarchive/libarchive/releases/download/v$LIBARCHIVE_VERSION/libarchive-$LIBARCHIVE_VERSION.tar.xz
+LIBARCHIVE_SHA256=a3dc0872b1b39da34dc18ef1b944f0f11ffd37425d70ae04be679279f1cf43d2
+ZSTD_VERSION=1.5.7
+ZSTD_URL=https://github.com/facebook/zstd/releases/download/v$ZSTD_VERSION/zstd-$ZSTD_VERSION.tar.gz
+ZSTD_SHA256=eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3
+XZ_VERSION=5.8.3
+XZ_URL=https://github.com/tukaani-project/xz/releases/download/v$XZ_VERSION/xz-$XZ_VERSION.tar.gz
+XZ_SHA256=3d3a1b973af218114f4f889bbaa2f4c037deaae0c8e815eec381c3d546b974a0
+BZIP2_VERSION=1.0.8
+BZIP2_URL=https://sourceware.org/pub/bzip2/bzip2-$BZIP2_VERSION.tar.gz
+BZIP2_SHA256=ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269
+
+# desktop only, and only where the system has no libmtp development files (LGPL-2.1, linked statically)
+LIBMTP_VERSION=1.1.23
+LIBMTP_URL=https://github.com/libmtp/libmtp/releases/download/v$LIBMTP_VERSION/libmtp-$LIBMTP_VERSION.tar.gz
+LIBMTP_SHA256=74a2b6e8cb4a0304e95b995496ea3ac644c29371649b892b856e22f12a0bdeed
+
 # download $1 to $2 once and check it against SHA-256 $3
 fetch() {
     [ -f "$2" ] || { curl -fL -o "$2.part" "$1" && mv "$2.part" "$2"; }
@@ -38,8 +57,9 @@ fetch() {
     [ "$sum" = "$3" ] || { echo "checksum mismatch for $2: $sum" >&2; return 1; }
 }
 
-# tarball $1 (checked against $2) unpacked as thirdparty/$3 ($4 = repo root)
-fetch_tarball() {
+# tarball $1 (checked against $2) unpacked as thirdparty/$3 whatever its top folder is called ($4 = repo root):
+# GitHub's tag archives name it repo-tag (libsmb2-libsmb2-6.3)
+fetch_unpacked() {
     [ -d "$4/thirdparty/$3" ] && return 0
     fetch "$1" "$4/thirdparty/$3.tar.gz" "$2"
     mkdir -p "$4/thirdparty/$3.part"
@@ -49,9 +69,9 @@ fetch_tarball() {
 
 # libsmb2 and libssh2 into thirdparty/ ($1 = repo root); OpenSSL too with $2 = openssl
 fetch_net_sources() {
-    fetch_tarball "$LIBSMB2_URL" "$LIBSMB2_SHA256" "libsmb2-$LIBSMB2_VERSION" "$1"
-    fetch_tarball "$LIBSSH2_URL" "$LIBSSH2_SHA256" "libssh2-$LIBSSH2_VERSION" "$1"
-    if [ "${2:-}" = openssl ]; then fetch_tarball "$OPENSSL_URL" "$OPENSSL_SHA256" "openssl-$OPENSSL_VERSION" "$1"; fi
+    fetch_unpacked "$LIBSMB2_URL" "$LIBSMB2_SHA256" "libsmb2-$LIBSMB2_VERSION" "$1"
+    fetch_unpacked "$LIBSSH2_URL" "$LIBSSH2_SHA256" "libssh2-$LIBSSH2_VERSION" "$1"
+    if [ "${2:-}" = openssl ]; then fetch_unpacked "$OPENSSL_URL" "$OPENSSL_SHA256" "openssl-$OPENSSL_VERSION" "$1"; fi
 }
 
 # cmake project $1 built and installed into $2, with the extra arguments after them
@@ -81,4 +101,11 @@ fetch_sources() {
     fetch "$NANOSVG_URL/src/nanosvg.h" "$1/thirdparty/nanosvg/nanosvg.h" "$NANOSVG_H_SHA256"
     fetch "$NANOSVG_URL/src/nanosvgrast.h" "$1/thirdparty/nanosvg/nanosvgrast.h" "$NANOSVGRAST_H_SHA256"
     fetch "$NANOSVG_URL/LICENSE.txt" "$1/thirdparty/nanosvg/LICENSE.txt" "$NANOSVG_LICENSE_SHA256"
+}
+
+# $2 (URL, SHA-256 $3) unpacked once into thirdparty/$4 ($1 = repo root)
+fetch_tarball() {
+    [ -d "$1/thirdparty/$4" ] && return
+    fetch "$2" "$1/thirdparty/${2##*/}" "$3"
+    tar -C "$1/thirdparty" -xf "$1/thirdparty/${2##*/}"
 }

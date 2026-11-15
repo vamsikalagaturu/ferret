@@ -4,6 +4,7 @@
 #include "platform.h"
 #include "ui.h"
 #include "vfs/vfs.h"
+#include "vfs/vfs_archive.h"
 
 /* ---- file kinds (filetypes.c) ---- */
 typedef enum { KIND_FOLDER, KIND_IMAGE, KIND_VIDEO, KIND_AUDIO, KIND_ARCHIVE, KIND_DOCUMENT, KIND_SHEET, KIND_SLIDES, KIND_CODE, KIND_TEXT, KIND_OTHER } fr_kind;
@@ -45,7 +46,7 @@ typedef struct {
     int keyboard;       /* the cursor moved by key since the last click: show it */
     int nselected;
     char *error;        /* the listing failed */
-    int loading;        /* a remote folder's listing is on its way (async.h); the items are the last ones until then */
+    int loading;        /* a listing off this machine is on its way (async.h); the items are the last ones until then */
     int64_t dir_mtime;
     double checked_at;
     char *focus_name;   /* the row the next browser_open() or browser_reload() lands on; it takes it */
@@ -115,6 +116,14 @@ int view_grid_columns(void); /* items per row in the grid layout, 1 in the other
 void view_flash(const fr_item *it, Rectangle r); /* the yank flash over a row or tile */
 void browser_flash_targets(void); /* flashes the selected rows, else the cursor row */
 
+/* ---- image thumbnails (thumbnails.c) ---- */
+void thumbs_start(void);
+void thumbs_stop(void); /* before the window closes */
+void thumbs_poll(void); /* between frames: asks for what the frame lacked, uploads what is ready */
+int thumbs_busy(void);
+/* its thumbnail fitted in box, aspect kept: 1 drawn, 0 not ready yet, -1 it has none */
+int thumb_draw(const fr_item *it, Rectangle box);
+
 /* ---- settings.toml, favorites, theme overrides (settings.c) ---- */
 typedef struct {
     fr_strs favorites; /* URIs, in the order shown */
@@ -167,6 +176,12 @@ typedef struct {
 extern fr_clip clip;
 
 void ops_open_item(fr_item *it);
+void ops_open_entry(const char *uri, const fr_entry *e); /* a folder or an archive is browsed, a file handed on */
+int ops_rename(const char *from, const char *to);       /* inside an archive as a job (0 once it is asked for) */
+int ops_archive_targets(void);  /* how many targets there are when all are archives to extract, else 0 */
+void ops_extract(int into_folder); /* the targets here, or each into a folder of its own named after it */
+char *ops_compress_name(void);  /* "<name>.zip" for the targets, NULL without any */
+void ops_compress(void);        /* the targets into a new zip here */
 void ops_copy(int cut);
 void ops_paste(void);
 void ops_clip_clear(void);

@@ -40,12 +40,33 @@ function(fr_embed_assets gen)
 endfunction()
 
 # Storage, file operations and jobs: no window, so the tests and every platform share it.
-file(GLOB FR_CORE_SOURCES CONFIGURE_DEPENDS src/core/*.c src/vfs/*.c src/jobs/*.c src/net/*.c)
+file(GLOB FR_CORE_SOURCES CONFIGURE_DEPENDS src/core/*.c src/vfs/*.c src/jobs/*.c src/thumbs/*.c src/net/*.c)
+list(FILTER FR_CORE_SOURCES EXCLUDE REGEX "/vfs_mtp\\.c$")
 add_library(fercore STATIC ${FR_CORE_SOURCES})
 target_include_directories(fercore PUBLIC src)
+# stb_image, stb_image_write and qoi.h as raylib vendors them; that folder also has a dirent.h for Windows, so
+# only this file sees it
+set_source_files_properties(src/thumbs/thumbs.c PROPERTIES INCLUDE_DIRECTORIES ${FR_REPO}/thirdparty/raylib/src/external)
 target_compile_options(fercore PRIVATE ${FR_WARNINGS})
 find_package(Threads REQUIRED)
-target_link_libraries(fercore PUBLIC Threads::Threads)
+target_link_libraries(fercore PUBLIC Threads::Threads m)
+
+# libarchive, static, from platform/*/deps.sh; a codec built beside it is linked from there, else the system's
+set(FR_LIBARCHIVE_DIR "" CACHE PATH "libarchive's install prefix (include/archive.h, lib/libarchive.a)")
+if(NOT EXISTS "${FR_LIBARCHIVE_DIR}/lib/libarchive.a")
+  message(FATAL_ERROR "FR_LIBARCHIVE_DIR: no lib/libarchive.a in '${FR_LIBARCHIVE_DIR}' (platform/*/deps.sh builds it)")
+endif()
+set(FR_ARCHIVE_LIBS ${FR_LIBARCHIVE_DIR}/lib/libarchive.a)
+foreach(codec zstd lzma bz2 z)
+  if(EXISTS ${FR_LIBARCHIVE_DIR}/lib/lib${codec}.a)
+    list(APPEND FR_ARCHIVE_LIBS ${FR_LIBARCHIVE_DIR}/lib/lib${codec}.a)
+  else()
+    list(APPEND FR_ARCHIVE_LIBS ${codec})
+  endif()
+endforeach()
+target_include_directories(fercore SYSTEM PUBLIC ${FR_LIBARCHIVE_DIR}/include)
+target_compile_definitions(fercore PUBLIC LIBARCHIVE_STATIC)
+target_link_libraries(fercore PUBLIC ${FR_ARCHIVE_LIBS})
 
 # SMB and SFTP (src/net, src/vfs/vfs_{smb,sftp}.c): libsmb2 and libssh2 as platform/*/deps.sh builds them, over
 # OpenSSL's libcrypto, built there too (Android) or the system's
@@ -93,8 +114,20 @@ message(STATUS "ferret ${FR_VERSION_STRING}")
 target_compile_definitions(fercore PUBLIC FR_VERSION="${FR_VERSION_STRING}")
 
 if(FR_BUILD_PROGRAMS)
+  # MTP devices, on the desktop only: the system's libmtp, or the static one platform/linux/deps.sh builds
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(MTP REQUIRED libmtp)
+  target_sources(fercore PRIVATE src/vfs/vfs_mtp.c)
+  target_compile_definitions(fercore PUBLIC FR_HAVE_MTP)
+  target_include_directories(fercore PRIVATE ${MTP_INCLUDE_DIRS})
+  if(EXISTS "${MTP_LIBDIR}/libmtp.so")
+    target_link_libraries(fercore PUBLIC ${MTP_LINK_LIBRARIES})
+  else()
+    target_link_libraries(fercore PUBLIC ${MTP_STATIC_LDFLAGS})
+  endif()
+
   enable_testing()
-  foreach(t util vfs jobs settings mode net remote)
+  foreach(t util vfs jobs settings mode thumbs archive mtp net remote)
     add_executable(test_${t} tests/test_${t}.c)
     target_link_libraries(test_${t} PRIVATE fercore)
     target_compile_options(test_${t} PRIVATE ${FR_WARNINGS})

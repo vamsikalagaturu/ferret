@@ -27,9 +27,15 @@ char *server_uri(const char *typed)
 
 void net_prepare(const char *uri)
 {
-    char *key = fr_net_key_of(uri);
-    if (key) fr_creds_preload(key);
-    free(key);
+    fr_net_uri u;
+    if (fr_net_parse(uri, &u)) return;
+    /* only servers that sign in have passwords (not mtp://, archive://) */
+    if (fr_net_default_port(u.scheme)) {
+        char *key = fr_net_key(&u);
+        fr_creds_preload(key);
+        free(key);
+    }
+    fr_net_uri_free(&u);
 }
 
 static void close_dialog(void)

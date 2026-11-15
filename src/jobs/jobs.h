@@ -1,11 +1,11 @@
 #ifndef FR_JOBS_H
 #define FR_JOBS_H
-/* Copy, move, delete and trash run one at a time on a worker thread. The window polls their state; a name that
+/* Copy, move, delete, trash and the archive work run one at a time on a worker thread. The window polls their state; a name that
  * is taken in the destination pauses the job until the window answers. */
 #include "core/util.h"
 #include <stdint.h>
 
-typedef enum { JOB_COPY, JOB_MOVE, JOB_DELETE, JOB_TRASH, JOB_CHMOD } fr_job_kind;
+typedef enum { JOB_COPY, JOB_MOVE, JOB_DELETE, JOB_TRASH, JOB_CHMOD, JOB_EXTRACT, JOB_COMPRESS, JOB_RENAME, JOB_CREATE } fr_job_kind;
 typedef enum { JOB_QUEUED, JOB_RUNNING, JOB_ASKING, JOB_DONE, JOB_CANCELLED } fr_job_state;
 typedef enum { CONFLICT_ASK, CONFLICT_SKIP, CONFLICT_REPLACE, CONFLICT_KEEP_BOTH } fr_conflict;
 
@@ -33,6 +33,15 @@ int fr_job_submit(fr_job_kind kind, const fr_strs *sources, const char *dest_dir
 /* JOB_CHMOD: the permission bits of sources and everything under them, as fr_mode_edit() makes them; symlinks
  * are left alone */
 int fr_job_submit_chmod(const fr_strs *sources, uint32_t set, uint32_t clear);
+/* Copying, moving and deleting into, out of or inside an archive (vfs/vfs_archive.h) take one pass over it each;
+ * a change inside rewrites it whole, and lands all at once or not at all. */
+/* JOB_EXTRACT: what each archive holds into dest_dir, or (into_folder) into a new folder there named after it */
+int fr_job_submit_extract(const fr_strs *archives, const char *dest_dir, int into_folder);
+/* JOB_COMPRESS: sources into a new archive at archive_uri, its kind by its name */
+int fr_job_submit_compress(const fr_strs *sources, const char *archive_uri);
+/* JOB_RENAME, JOB_CREATE (a folder, else an empty file): for where these take long, inside an archive */
+int fr_job_submit_rename(const char *from, const char *to);
+int fr_job_submit_create(const char *uri, int folder);
 /* the jobs not yet dismissed, oldest first; at most max */
 int fr_jobs_list(fr_job_status *out, int max);
 void fr_job_answer(int id, fr_conflict answer, int for_all);
