@@ -276,7 +276,15 @@ static int do_remove(session *s, const char *share, const char *rest, void *ctx)
     if (rc) return rc;
     struct smb2_stat_64 st;
     if ((rc = smb2_stat(s->ctx, rest, &st))) return rc;
-    return st.smb2_type == SMB2_TYPE_DIRECTORY ? smb2_rmdir(s->ctx, rest) : smb2_unlink(s->ctx, rest);
+    if (st.smb2_type != SMB2_TYPE_DIRECTORY) return smb2_unlink(s->ctx, rest);
+    /* rmdir is a delete-on-close open, and Samba removes a full folder that way without reporting an error */
+    struct smb2dir *d = smb2_opendir(s->ctx, rest);
+    if (!d) return nt_error(s);
+    struct smb2dirent *de;
+    int empty = 1;
+    while (empty && (de = smb2_readdir(s->ctx, d))) empty = !strcmp(de->name, ".") || !strcmp(de->name, "..");
+    smb2_closedir(s->ctx, d);
+    return empty ? smb2_rmdir(s->ctx, rest) : -ENOTEMPTY;
 }
 
 static int smb_remove(const char *uri) { return call(uri, do_remove, NULL); }

@@ -728,7 +728,8 @@ int props_draw(void)
     Color ic = P.uris.n > 1 || !P.ents[0].name ? theme.text_dim : kind_color(kind_of(P.ents[0].name, P.ents[0].is_dir));
     Rectangle ib = {x, card.y + pad, head, head};
     ui_round(ib, 12, ui_alpha(ic, 0.14f));
-    ui_icon(P.uris.n == 1 && P.ents[0].is_link ? "link" : icon, ib, 28, ic);
+    if (!(P.uris.n == 1 && P.ents[0].name && !P.ents[0].is_link && preview_image_draw(P.uris.v[0], &P.ents[0], ib) == 1))
+        ui_icon(P.uris.n == 1 && P.ents[0].is_link ? "link" : icon, ib, 28, ic);
     char title[300];
     if (P.uris.n == 1) {
         char *name = fr_uri_name(P.uris.v[0]);

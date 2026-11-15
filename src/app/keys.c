@@ -332,12 +332,16 @@ static void command(int c)
 {
     int p = pending[0];
     if (c < ' ') return;
-    if (!p && strchr("gsydzf", c)) {
+    if (!p && strchr("gsydzfm'\"", c)) {
         set_pending(c);
         return;
     }
     if (p) set_pending(0);
     if (c > '~') return;
+    if (p == 'm' || p == '\'' || p == '"') {
+        bookmark_key(p, c);
+        return;
+    }
     if (p == 'g' && c >= '1' && c <= '9') {
         go_favorite(c - '0');
         return;
@@ -380,9 +384,12 @@ static void command(int c)
     case K('g', 'T'): tab_step(-1); break;
     case K('g', 'n'): tab_new(NULL, 1); break;
     case K('g', 'c'): close_tab(); break;
-    case K(0, 'm'):
+    case K(0, 'M'):
         if (br.uri) favorite_toggle(br.uri);
         break;
+    case K('d', 'c'): sizes_measure(0); break;
+    case K('f', 'd'): dupes_start(); break;
+    case K('f', 'D'): dupes_select_copies(); break;
     case K('s', 'n'): sort_by(SORT_NAME); break;
     case K('s', 's'): sort_by(SORT_SIZE); break;
     case K('s', 'm'): sort_by(SORT_DATE); break;
@@ -395,7 +402,7 @@ static void command(int c)
     case K('f', 'i'): kinds_set(KF_IMAGES); break;
     case K('f', 'v'): kinds_set(KF_VIDEO); break;
     case K('f', 'a'): kinds_set(KF_AUDIO); break;
-    case K('f', 'd'): kinds_set(KF_DOCUMENTS); break;
+    case K('f', 'o'): kinds_set(KF_DOCUMENTS); break;
     case K('f', 'z'): kinds_set(KF_ARCHIVES); break;
     case K('f', 'c'): kinds_set(KF_CODE); break;
     case K('f', 'x'): kinds_set(KF_ALL); break;

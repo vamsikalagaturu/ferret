@@ -227,6 +227,7 @@ static void draw_row(int v, Rectangle row, Rectangle area)
     int right = ui_hover(hit) && ui.rpressed;
     if (it->selected) ui_rect(row, theme.selection);
     else if (state) ui_rect(row, state == 2 ? theme.pressed : theme.hover);
+    else if (br.dupes && !(it->group & 1)) ui_rect(row, theme.surface); /* every other group tinted, to tell them apart */
     view_flash(it, row);
     if (!ui.touch && br.keyboard && v == br.cursor && !it->selected)
         ui_round_line((Rectangle){row.x + DP(2), row.y + DP(1), row.width - DP(4), row.height - DP(2)}, 4, ui_alpha(theme.accent, 0.5f));
@@ -242,7 +243,14 @@ static void draw_row(int v, Rectangle row, Rectangle area)
 
     char size[32] = "", date[32];
     if (it->e.is_dir) {
-        if (it->count >= 0) snprintf(size, sizeof size, it->count == 1 ? "1 item" : "%d items", it->count);
+        uint64_t sofar = 0;
+        int measuring = sizes_progress(it, &sofar);
+        if (measuring == 1) {
+            fr_format_size(sofar, size, sizeof size - 4);
+            strcat(size, "…");
+        } else if (measuring == 2) snprintf(size, sizeof size, "…");
+        else if (it->sized) fr_format_size(it->tree_size, size, sizeof size);
+        else if (it->count >= 0) snprintf(size, sizeof size, it->count == 1 ? "1 item" : "%d items", it->count);
     } else fr_format_size(it->e.size, size, sizeof size);
     fr_format_time(it->e.mtime, (int64_t)time(NULL), date, sizeof date);
     if (it->placeholder) size[0] = date[0] = 0;
@@ -292,7 +300,8 @@ int view_draw_folder_state(Rectangle r)
         char detail[64];
         snprintf(detail, sizeof detail, "Showing only %s", kind_filter_label(br.kinds));
         view_draw_empty(r, "shapes", "Nothing of this kind here", detail, 0);
-    } else if (!br.view.n && br.results) view_draw_empty(r, "search", search_running() ? "Searching..." : "Nothing found", NULL, 0);
+    } else if (!br.view.n && br.dupes) view_draw_empty(r, "file-stack", dupes_running() ? "Looking for duplicates..." : "No duplicates found", NULL, 0);
+    else if (!br.view.n && br.results) view_draw_empty(r, "search", search_running() ? "Searching..." : "Nothing found", NULL, 0);
     else if (!br.view.n) view_draw_empty(r, "folder-open", "Empty folder", br.items.n ? "Only hidden items are here" : NULL, 0);
     else return 0;
     return 1;

@@ -159,6 +159,10 @@ static void draw_menus(void)
         if (ui_menu_item("Show hidden", "eye", br.show_hidden)) br.show_hidden = !br.show_hidden, browser_rebuild_view();
         if (ui_menu_item("Search names below", "search", -1)) search_prompt(0);
         if (ui_menu_item("Search inside files", "file-text", -1)) search_prompt(1);
+        if (ui_menu_item("Find duplicates below", "file-stack", -1)) dupes_start();
+        if (br.dupes && br.view.n && ui_menu_item("Select all but the first of each group", "list-checks", -1)) dupes_select_copies();
+        if (ui_menu_item(sizes_running() ? "Stop measuring folders" : "Measure the folders' sizes", "ruler", -1)) sizes_measure(1);
+        if (ui_menu_item("Bookmarks", "bookmark", -1)) bookmarks_panel_open();
         if (settings.recent.n > 1 && ui_menu_item("Recent folders", "history", -1)) recent_pick();
         if (ops_clip_history_count() && ui_menu_item("Paste from history", "clipboard-paste", -1)) ops_clip_history();
         if (undo_can(0) && ui_menu_item("Undo", "undo-2", -1)) undo_run(0);
@@ -191,6 +195,7 @@ static void draw_menus(void)
         if (app_split() && ui_menu_item("Copy to the other pane", "copy", -1)) ops_to_other_pane(0);
         if (app_split() && ui_menu_item("Move to the other pane", "scissors", -1)) ops_to_other_pane(1);
         if (it && it->e.is_dir && br.nselected <= 1 && ui_menu_item("Open in a new tab", "plus", -1)) view_open_in_tab(br.cursor);
+        if (it && it->e.is_dir && ui_menu_item(sizes_running() ? "Stop measuring folders" : "Measure the size", "ruler", -1)) sizes_measure(0);
         if (br.nselected == 1 && ui_menu_item("Rename", "pencil", -1)) ops_rename_start();
         rename_items();
         if (br.results && br.nselected == 1 && ui_menu_item("Show in folder", "folder-open", -1)) search_reveal();
@@ -281,13 +286,17 @@ static const char *const shortcuts[][2] = {
     {"ze / zf", "extract here / into a folder named after it"},
     {"zt", "extract to a folder you type, each archive into its own"}, {"zc", "compress to <name>.zip"},
     {"fi fv fa", "show only images / video / audio (folders stay)"},
-    {"fd fz fc", "show only documents / archives / code"}, {"fx, Esc", "show every kind again"},
+    {"fo fz fc", "show only documents / archives / code"}, {"fx, Esc", "show every kind again"},
     {"Alt+Enter", "properties"},           {".", "show hidden files"},
     {"O", "open with another app"},        {"T", "a terminal in this folder"},
     {"sn ss sm se", "sort by name, size, date, extension"}, {"S", "reverse the order"},
-    {"Ctrl+1 / 2 / 3", "details, columns, grid"},          {"m", "add or remove this folder as a favorite"},
+    {"Ctrl+1 / 2 / 3", "details, columns, grid"},          {"M", "add or remove this folder as a favorite"},
     {"g1 .. g9", "open favorite 1 to 9"},  {"gh, g~", "home"},
     {"g-", "recent folders (the last 20)"},
+    {"m<key>", "bookmark this folder as key (a letter or digit)"}, {"'<key>", "go to that bookmark"},
+    {"''", "back to the folder shown before"}, {"\"<key>", "remove that bookmark"},
+    {"dc", "folder sizes: the targets', else all shown (again: stop)"},
+    {"fd", "find duplicate files below this folder"}, {"fD", "in the duplicates: select all but the first of each group"},
     {"Ctrl+= / Ctrl+- / Ctrl+0", "bigger / smaller / default interface"},
     {"Ctrl+Alt+= / - / 0", "bigger / smaller / default text"},
     {"F5, Ctrl+R", "refresh (Ctrl+R in the split view)"}, {"gd", "disks (the disk manager)"},
@@ -390,7 +399,7 @@ static int frame(void)
         ui_redraw_in(0.5);
         return 0;
     }
-    int modal = ops_dialog_open() || connect_dialog_open() || ui_menu_is_open() || app.help_open || dview_modal();
+    int modal = ops_dialog_open() || connect_dialog_open() || ui_menu_is_open() || app.help_open || dview_modal() || bookmarks_panel_is_open();
     Rectangle s = ui.safe;
     if (app_wide()) {
         float sw = DP(240);
@@ -440,6 +449,7 @@ static int frame(void)
     ops_draw_dialogs();
     connect_draw_dialogs();
     draw_help();
+    bookmarks_draw(list);
     ui_toast_draw(list.y + list.height);
     if (modal && ui_key(KEY_BACK, 0)) ui_menu_close();
     return !modal;
@@ -456,7 +466,10 @@ static void between_frames(int keys)
     fr_async_poll();
     if (app_wide() || app.drawer_open) places_refresh(0);
     ops_poll_jobs();
+    sizes_poll();
     search_poll();
+    dupes_poll();
+    preview_poll();
     disks_poll();
     dview_poll();
     browser_poll();
