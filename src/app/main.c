@@ -90,6 +90,13 @@ static void archive_items(void)
     }
 }
 
+static void rename_items(void)
+{
+    if (br.nselected < 2) return;
+    if (ui_menu_item("Rename as text", "list", -1)) ops_bulk_rename(1);
+    if (ui_menu_item("Find and replace in names", "pencil", -1)) ops_bulk_rename(0);
+}
+
 static void draw_menus(void)
 {
     if (ui_menu_begin(app.menu_more)) {
@@ -135,6 +142,10 @@ static void draw_menus(void)
         }
         ui_menu_separator();
         if (ui_menu_item("Show hidden", "eye", br.show_hidden)) br.show_hidden = !br.show_hidden, browser_rebuild_view();
+        if (ui_menu_item("Search names below", "search", -1)) search_prompt(0);
+        if (ui_menu_item("Search inside files", "file-text", -1)) search_prompt(1);
+        if (undo_can(0) && ui_menu_item("Undo", "undo-2", -1)) undo_run(0);
+        if (undo_can(1) && ui_menu_item("Redo", "redo-2", -1)) undo_run(1);
         ui_menu_separator();
         char pct[16];
         snprintf(pct, sizeof pct, "%d%%", (int)lroundf(ui.user_scale * 100));
@@ -154,6 +165,8 @@ static void draw_menus(void)
         if (ui_menu_item("Copy", "copy", -1)) ops_copy(0);
         if (ui_menu_item("Cut", "scissors", -1)) ops_copy(1);
         if (br.nselected == 1 && ui_menu_item("Rename", "pencil", -1)) ops_rename_start();
+        rename_items();
+        if (br.results && br.nselected == 1 && ui_menu_item("Show in folder", "folder-open", -1)) search_reveal();
         if (br.nselected == 1 && it && it->e.is_dir) {
             char *uri = fr_uri_join(br.uri, it->e.name);
             int fav = favorite_index(uri) >= 0;
@@ -185,6 +198,8 @@ static void draw_menus(void)
     if (ui_menu_begin(app.menu_selection)) {
         if (ui.touch && ui_menu_item("Select all", "check-check", -1)) browser_select_all();
         if (br.nselected == 1 && ui_menu_item("Rename", "pencil", -1)) ops_rename_start();
+        rename_items();
+        if (br.results && br.nselected == 1 && ui_menu_item("Show in folder", "folder-open", -1)) search_reveal();
         archive_items();
         if (ui_menu_item("Properties", "info", -1)) ops_properties();
         if (br.uri && fr_vfs_can_trash(br.uri) && ui_menu_item("Delete permanently", "trash-2", -1)) ops_delete(1);
@@ -225,7 +240,11 @@ static const char *const shortcuts[][2] = {
     {"I", "rename here, at the start"},    {"c", "retype the name, keep the extension"},
     {"Enter / Esc", "keep / drop the new name"},       {"a", "new file, or folder when the name ends in /"},
     {"Ctrl+Shift+N", "new folder"},
+    {"R", "rename the targets as text, one name per line"}, {"E", "find and replace in the targets' names"},
     {"D, Delete", "move to the trash"},    {"X, Shift+Delete", "delete permanently"},
+    {"u, Ctrl+Z", "undo the last file operation"},         {"U, Ctrl+Shift+Z", "redo"},
+    {"ff", "search names below this folder (* and ?)"},   {"fg", "search the text inside files below"},
+    {"gr", "show a search result in its folder"},          {"Esc, Backspace, h", "leave the search results"},
     {"Enter on an archive", "browse inside it (zip, tar, 7z, rar, iso)"},
     {"ze / zf", "extract here / into a folder named after it"}, {"zc", "compress to <name>.zip"},
     {"Alt+Enter", "properties"},           {".", "show hidden files"},
@@ -365,6 +384,7 @@ static void between_frames(int keys)
     if (!app.storage_ok) return;
     if (app_wide() || app.drawer_open) places_refresh(0);
     ops_poll_jobs();
+    search_poll();
     disks_poll();
     browser_poll();
     settings_poll();
@@ -423,6 +443,7 @@ int fr_app_main(int argc, char **argv)
     }
     fr_jobs_stop();
     thumbs_stop();
+    search_stop();
     plat_close_window();
     return replay ? replay_status() : 0;
 }

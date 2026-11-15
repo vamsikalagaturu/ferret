@@ -57,6 +57,7 @@ int step_back(int quit_at_end)
     if (app.drawer_open) return app.drawer_open = 0, 1;
     if (br.nselected) return browser_clear_selection(), 1;
     if (br.filtering) return filter_stop(), 1;
+    if (br.results) return browser_results_leave(), 1;
     if (!quit_at_end) return 0;
     if (br.back.n) return browser_back(), 1;
     char *parent = br.uri ? fr_uri_parent(br.uri) : NULL;
@@ -83,8 +84,9 @@ static void insert_start(int how)
     fr_item *it = browser_item(br.cursor);
     if (!it || !br.uri) return;
     visual = 0;
-    int stem = (int)fr_stem_len(it->e.name, it->e.is_dir);
-    text_set(&insert.text, how == 'c' ? it->e.name + stem : it->e.name);
+    const char *name = strrchr(it->e.name, '/') ? strrchr(it->e.name, '/') + 1 : it->e.name; /* a search result's path */
+    int stem = (int)fr_stem_len(name, it->e.is_dir);
+    text_set(&insert.text, how == 'c' ? name + stem : name);
     int at = how == 'I' || how == 'c' ? 0 : how == 'i' ? stem : insert.text.len;
     text_select(&insert.text, at, at);
     free(insert.uri);
@@ -297,7 +299,7 @@ static void command(int c)
 {
     int p = pending[0];
     if (c < ' ') return;
-    if (!p && strchr("gsydz", c)) {
+    if (!p && strchr("gsydzf", c)) {
         set_pending(c);
         return;
     }
@@ -348,6 +350,13 @@ static void command(int c)
     case K('z', 'e'): ops_extract(0); break;
     case K('z', 'f'): ops_extract(1); break;
     case K('z', 'c'): ops_compress(); break;
+    case K('f', 'f'): search_prompt(0); break;
+    case K('f', 'g'): search_prompt(1); break;
+    case K('g', 'r'): search_reveal(); break;
+    case K(0, 'u'): undo_run(0); break;
+    case K(0, 'U'): undo_run(1); break;
+    case K(0, 'R'): ops_bulk_rename(1); break;
+    case K(0, 'E'): ops_bulk_rename(0); break;
     case K(0, 'S'):
         br.desc = !br.desc;
         browser_rebuild_view();
@@ -402,6 +411,8 @@ void keys_handle(void)
         else insert_start('i');
     }
     if (ui_key(KEY_N, MOD_CTRL | MOD_SHIFT)) keys_new_start("New folder/");
+    if (ui_key(KEY_Z, MOD_CTRL)) undo_run(0);
+    if (ui_key(KEY_Z, MOD_CTRL | MOD_SHIFT)) undo_run(1);
     if (ui_key(KEY_H, MOD_CTRL)) toggle_hidden();
     if (ui_key(KEY_F5, 0) || ui_key(KEY_R, MOD_CTRL)) browser_reload();
     if (ui_key(KEY_F, MOD_CTRL)) filter_start(0);

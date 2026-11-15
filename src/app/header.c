@@ -266,6 +266,7 @@ void header_draw(Rectangle r)
         ui_hline(r.x, r.y + r.height - DP(1), r.width, theme.border);
         return;
     }
+    if (search_header(r)) return;
     if (!app_wide()) {
         if (ui_icon_button(ui_id("drawer", 0), btn, "menu", theme.text)) app.drawer_open = 1, places_refresh(1);
         x += b;

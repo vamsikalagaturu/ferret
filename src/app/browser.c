@@ -213,8 +213,96 @@ static void remote_finish(void)
     free(uri);
 }
 
+/* ---- search results ---- */
+
+static void restat_results(void)
+{
+    int kept = 0;
+    br.nselected = 0;
+    for (int i = 0; i < br.items.n; i++) {
+        fr_item *it = &br.items.v[i];
+        char *uri = fr_uri_join(br.uri, it->e.name);
+        fr_entry e = {0};
+        int gone = it->placeholder || fr_vfs_stat(uri, &e);
+        free(uri);
+        if (gone) {
+            fr_entry_free(&it->e);
+            continue;
+        }
+        free(e.name);
+        e.name = it->e.name, e.hidden = it->e.hidden;
+        it->e = e;
+        it->kind = kind_of(e.name, e.is_dir);
+        br.nselected += it->selected;
+        br.items.v[kept++] = *it;
+    }
+    br.items.n = kept;
+    rebuild_now(NULL, 0);
+}
+
+void browser_results_begin(void)
+{
+    items_free();
+    free(br.error);
+    br.error = NULL;
+    br.loading = 0;
+    br.results = 1;
+    br.filtering = 0;
+    br.scroll = (fr_scroll){0};
+    br.anchor = 0;
+    rebuild_now(NULL, 0);
+}
+
+void browser_results_add(fr_entries *es)
+{
+    if (!br.results || !es->n) return;
+    for (int i = 0; i < es->n; i++) {
+        fr_item it = {.e = es->v[i], .kind = kind_of(es->v[i].name, es->v[i].is_dir), .count = -1};
+        FR_PUSH(br.items, it);
+    }
+    free(es->v);
+    *es = (fr_entries){0};
+    rebuild_now(NULL, 0);
+}
+
+static void load(const char *uri);
+
+void browser_results_leave(void)
+{
+    if (!br.results) return;
+    br.results = 0;
+    if (br.uri) load(br.uri);
+}
+
+void browser_results_renamed(const char *from, const char *to)
+{
+    if (!br.results || !br.uri) return;
+    for (int i = 0; i < br.items.n; i++) {
+        fr_item *it = &br.items.v[i];
+        char *uri = fr_uri_join(br.uri, it->e.name);
+        if (fr_uri_within(from, uri) && fr_uri_within(br.uri, to)) {
+            char *moved = fr_format("%s%s", to, uri + strlen(from));
+            const char *base = fr_uri_path(br.uri), *path = fr_uri_path(moved);
+            size_t bl = strlen(base);
+            if (!strncmp(path, base, bl)) {
+                const char *rel = path + bl;
+                while (*rel == '/') rel++;
+                free(it->e.name);
+                it->e.name = fr_strdup(rel);
+            }
+            free(moved);
+        }
+        free(uri);
+    }
+}
+
 static void load(const char *uri)
 {
+    if (br.results && br.uri && !strcmp(br.uri, uri)) {
+        restat_results();
+        return;
+    }
+    br.results = 0;
     if (remote_load(uri)) return;
     fr_entries es = {0};
     int rc = fr_vfs_list(uri, &es);
@@ -263,6 +351,10 @@ void browser_open(const char *uri, int push_history) { app_defer(open_now, uri, 
 
 static void back_now(const char *s, int n)
 {
+    if (br.results) {
+        browser_results_leave();
+        return;
+    }
     if (!br.back.n) return;
     char *to = br.back.v[--br.back.n];
     FR_PUSH(br.forward, fr_strdup(br.uri));
@@ -285,6 +377,10 @@ void browser_forward(void) { app_defer(forward_now, NULL, 0); }
 
 static void up_now(const char *s, int n)
 {
+    if (br.results) {
+        browser_results_leave();
+        return;
+    }
     char *parent = fr_uri_parent(br.uri);
     if (parent) open_now(parent, 1);
     free(parent);
@@ -349,7 +445,7 @@ void browser_poll(void)
     remote_finish();
     for (int i = 0; i < br.items.n; i++)
         if (br.items.v[i].placeholder) return;
-    if (!br.uri || !fr_uri_local(br.uri) || ui.now - br.checked_at < 1.5) return;
+    if (!br.uri || br.results || !fr_uri_local(br.uri) || ui.now - br.checked_at < 1.5) return;
     br.checked_at = ui.now;
     int64_t t = dir_mtime(br.uri);
     /* the folder went away (a disk ejected or unmounted, deleted elsewhere): home, quietly */

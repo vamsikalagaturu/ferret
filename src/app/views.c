@@ -260,6 +260,7 @@ int view_draw_folder_state(Rectangle r)
     if (br.error) view_draw_empty(r, "triangle-alert", "This folder cannot be shown", br.error, 1);
     else if (!br.view.n && br.loading) view_draw_empty(r, "loader-circle", "Loading...", NULL, 0);
     else if (!br.view.n && br.filtering && br.filter.len) view_draw_empty(r, "search", "Nothing matches", NULL, 0);
+    else if (!br.view.n && br.results) view_draw_empty(r, "search", search_running() ? "Searching..." : "Nothing found", NULL, 0);
     else if (!br.view.n) view_draw_empty(r, "folder-open", "Empty folder", br.items.n ? "Only hidden items are here" : NULL, 0);
     else return 0;
     return 1;

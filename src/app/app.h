@@ -47,6 +47,7 @@ typedef struct {
     int nselected;
     char *error;        /* the listing failed */
     int loading;        /* a listing off this machine is being fetched on a thread */
+    int results;        /* the items are search results below uri, each named by its path from there */
     int64_t dir_mtime;
     double checked_at;
     char *focus_name;   /* the row the next browser_open() or browser_reload() lands on; it takes it */
@@ -69,6 +70,12 @@ fr_item *browser_item(int view_index);
 void browser_count_some(int first, int last); /* folder item counts for the rows shown */
 void browser_add_placeholder(void);           /* an empty row at the top, under the cursor */
 void browser_drop_placeholder(void);
+/* search results (between frames only): begin empties the list into results of uri's tree, add takes es's
+ * entries, leave lists uri again; a reload re-reads the results' entries and drops those gone */
+void browser_results_begin(void);
+void browser_results_add(fr_entries *es);
+void browser_results_leave(void);
+void browser_results_renamed(const char *from, const char *to); /* the results under from follow it */
 
 /* ---- the window's state (main.c) ---- */
 typedef enum { LAYOUT_DETAILS, LAYOUT_COLUMNS, LAYOUT_GRID } fr_layout;
@@ -165,6 +172,7 @@ int ops_archive_targets(void);  /* how many targets there are when all are archi
 void ops_extract(int into_folder); /* the targets here, or each into a folder of its own named after it */
 char *ops_compress_name(void);  /* "<name>.zip" for the targets, NULL without any */
 void ops_compress(void);        /* the targets into a new zip here */
+void ops_bulk_rename(int as_text); /* the targets' names in an editor, or find and replace across them */
 void ops_copy(int cut);
 void ops_paste(void);
 void ops_clip_clear(void);
@@ -179,6 +187,28 @@ void ops_draw_dialogs(void);
 int ops_dialog_open(void); /* also a job's question about a name taken */
 float ops_draw_jobs(Rectangle area); /* the job strip at the bottom of area; returns its height */
 void ops_poll_jobs(void);
+
+/* ---- searching below the folder (search.c) ---- */
+void search_prompt(int content); /* a field in the header for a name (content 0) or the text inside files */
+int search_header(Rectangle r);  /* draws the field or the results' bar; 0 when neither shows */
+void search_poll(void);          /* between frames: the results found meanwhile into the list */
+int search_running(void);
+void search_reveal(void);        /* the cursor row's result, shown in its folder */
+void search_stop(void);          /* before the window closes */
+
+/* ---- renaming the targets together (bulk_rename.c), one of ops.c's dialogs ---- */
+int bulk_rename_open(int as_text); /* as_text: the names in an editor; else find and replace. 0 when nothing to rename */
+int bulk_rename_draw(void);        /* 0 once it closed itself */
+void bulk_rename_close(void);
+
+/* ---- undo and redo of what was done to files (undo.c); kept until the window closes ---- */
+void undo_record(const char *label, fr_steps *steps); /* takes the steps */
+void undo_record_rename(const char *from, const char *to);
+void undo_record_created(const char *uri, int folder);
+/* a finished job: what it did, recorded (an undo or redo job toasts its own outcome); 1 when it toasted */
+int undo_job_done(const fr_job_status *st);
+void undo_run(int redo);
+int undo_can(int redo);
 
 /* ---- ferret --replay SCRIPT [FOLDER] (replay.c): a script's input between frames, checked as it goes ---- */
 int replay_load(const char *script, const char *folder); /* 0, or -1 after saying why; relative paths are FOLDER's */

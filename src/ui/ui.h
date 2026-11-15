@@ -115,6 +115,17 @@ void text_select(fr_text *t, int from, int to);
 enum { TEXT_CHANGED = 1, TEXT_SUBMIT = 2, TEXT_CANCEL = 4 };
 int ui_text_field(unsigned id, fr_text *t, Rectangle r, const char *placeholder);
 
+/* several lines of text, growing as typed; Enter breaks the line */
+typedef struct {
+    char *buf;
+    int len, cap, caret, anchor;
+    float scroll_x, scroll_y;
+} fr_textarea;
+void textarea_set(fr_textarea *t, const char *s);
+void textarea_free(fr_textarea *t);
+/* TEXT_CHANGED, TEXT_SUBMIT for Ctrl+Enter, TEXT_CANCEL for Esc */
+int ui_text_area(unsigned id, fr_textarea *t, Rectangle r);
+
 typedef struct {
     float offset, target, content, view;
     int bar_drag;
