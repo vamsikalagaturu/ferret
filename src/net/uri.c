@@ -5,11 +5,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* IANA's service names registry; the schemes other backends add go here too */
+/* IANA's service names registry; the schemes other backends add go here too. ftps:// is FTP with explicit TLS (AUTH
+ * TLS, RFC 4217) on the FTP port: IANA's 990 is implicit TLS, which vfs_ftp.c speaks when the address names 990. */
 static const struct {
     const char *scheme;
     int port;
-} ports[] = {{"smb", 445}, {"sftp", 22}, {"ftp", 21}, {"ftps", 990}, {"dav", 80}, {"davs", 443}, {"nfs", 2049}};
+} ports[] = {{"smb", 445}, {"sftp", 22}, {"ftp", 21}, {"ftps", 21}, {"dav", 80}, {"davs", 443}, {"nfs", 2049}};
 
 int fr_net_default_port(const char *scheme)
 {

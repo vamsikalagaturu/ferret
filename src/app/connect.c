@@ -103,7 +103,7 @@ static void connect_commit(void)
 {
     char *uri = server_uri(address.buf);
     if (!uri) {
-        ui_toast("ferret cannot open that: an address starts with smb:// or sftp://");
+        ui_toast("ferret cannot open that: an address starts with smb://, sftp://, ftp(s)://, dav(s):// or nfs://");
         return;
     }
     if (save_server) server_set(uri, 1);
@@ -118,7 +118,7 @@ void connect_draw_dialogs(void)
     int b;
     switch (dlg) {
     case CONNECT: {
-        fr_dialog d = {.title = "Connect to server", .message = "An address such as smb://nas/share or sftp://user@host/path.",
+        fr_dialog d = {.title = "Connect to server", .message = "An address such as smb://nas/share, sftp://user@host/path, ftps://host, davs://host/dav or nfs://nas/export.",
                        .field = &address, .hint = "smb://nas/share", .check = "Show it in the sidebar",
                        .checked = &save_server, .buttons = {"Cancel", "Connect"}, .nbuttons = 2, .cancel = 0};
         b = ui_dialog(&d);

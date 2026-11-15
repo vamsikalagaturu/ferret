@@ -30,6 +30,19 @@ OPENSSL_VERSION=3.5.9
 OPENSSL_URL=https://github.com/openssl/openssl/releases/download/openssl-$OPENSSL_VERSION/openssl-$OPENSSL_VERSION.tar.gz
 OPENSSL_SHA256=603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a
 
+# FTP/FTPS and WebDAV (src/vfs/vfs_ftp.c, vfs_dav.c): libcurl (curl licence, MIT-like) with expat (MIT) for
+# PROPFIND, over OpenSSL; NFS (src/vfs/vfs_nfs.c): libnfs (LGPL-2.1, static like libsmb2). Linux takes the system's
+# libcurl and expat when it has their development files.
+CURL_VERSION=8.23.0
+CURL_URL=https://curl.se/download/curl-$CURL_VERSION.tar.xz
+CURL_SHA256=8dadd7d2536a314f982ad05a651b713f426bf7d02cc2c76cffb9796f2218e6c5
+EXPAT_VERSION=2.9.0
+EXPAT_URL=https://github.com/libexpat/libexpat/releases/download/R_${EXPAT_VERSION//./_}/expat-$EXPAT_VERSION.tar.xz
+EXPAT_SHA256=1e6371862cc31999b368c3b89b49994f0677e1bab5f1b2b85ae3741f5d803051
+LIBNFS_VERSION=8.0.0
+LIBNFS_URL=https://github.com/sahlberg/libnfs/archive/refs/tags/libnfs-$LIBNFS_VERSION.tar.gz
+LIBNFS_SHA256=bc91216e927a85142b5de611c7f711558e02119a7daad67620ea631634038350
+
 # archives (src/vfs/vfs_archive.c); the codecs are built for Android only, Linux links the system's
 LIBARCHIVE_VERSION=3.8.11
 LIBARCHIVE_URL=https://github.com/libarchive/libarchive/releases/download/v$LIBARCHIVE_VERSION/libarchive-$LIBARCHIVE_VERSION.tar.xz
@@ -92,6 +105,41 @@ build_net() {
         -DENABLE_EXAMPLES=OFF "$@"
     build_static "$REPO/thirdparty/libssh2-$LIBSSH2_VERSION" "$out/ssh2" -DCRYPTO_BACKEND=OpenSSL -DBUILD_STATIC_LIBS=ON \
         -DBUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF -DENABLE_ZLIB_COMPRESSION=OFF "$@"
+}
+
+# libnfs into $1/nfs (NFSv3 and v4, no RPC-over-TLS); the rest goes to cmake
+build_nfs() {
+    local out=$1
+    shift
+    fetch_unpacked "$LIBNFS_URL" "$LIBNFS_SHA256" "libnfs-$LIBNFS_VERSION" "$REPO"
+    build_static "$REPO/thirdparty/libnfs-$LIBNFS_VERSION" "$out/nfs" -DENABLE_TLS=OFF -DENABLE_UTILS=OFF \
+        -DENABLE_EXAMPLES=OFF -DENABLE_TESTS=OFF -DENABLE_DOCUMENTATION=OFF "$@"
+}
+
+# expat into $1/expat
+build_expat() {
+    local out=$1
+    shift
+    fetch_tarball "$REPO" "$EXPAT_URL" "$EXPAT_SHA256" "expat-$EXPAT_VERSION"
+    build_static "$REPO/thirdparty/expat-$EXPAT_VERSION" "$out/expat" -DEXPAT_BUILD_TOOLS=OFF -DEXPAT_BUILD_EXAMPLES=OFF \
+        -DEXPAT_BUILD_TESTS=OFF -DEXPAT_SHARED_LIBS=OFF -DEXPAT_BUILD_DOCS=OFF -DEXPAT_BUILD_FUZZERS=OFF "$@"
+}
+
+# libcurl into $1/curl with HTTP(S) and FTP(S) only, over OpenSSL (the toolchain and OPENSSL_* in the rest); the CA
+# certificates are the system's, named at run time
+build_curl() {
+    local out=$1 off=()
+    shift
+    fetch_tarball "$REPO" "$CURL_URL" "$CURL_SHA256" "curl-$CURL_VERSION"
+    for p in DICT FILE GOPHER IMAP LDAP LDAPS MQTT POP3 RTSP SMTP TELNET TFTP WEBSOCKETS IPFS ALTSVC HSTS COOKIES DOH \
+        AWS NETRC KERBEROS_AUTH NEGOTIATE_AUTH BEARER_AUTH FORM_API MIME HTTPSIG; do
+        off+=(-DCURL_DISABLE_$p=ON)
+    done
+    build_static "$REPO/thirdparty/curl-$CURL_VERSION" "$out/curl" -DBUILD_CURL_EXE=OFF -DBUILD_STATIC_LIBS=ON \
+        -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF -DBUILD_LIBCURL_DOCS=OFF -DBUILD_MISC_DOCS=OFF -DENABLE_CURL_MANUAL=OFF \
+        -DCURL_USE_OPENSSL=ON -DCURL_USE_LIBPSL=OFF -DCURL_USE_LIBSSH2=OFF -DCURL_USE_LIBSSH=OFF -DCURL_USE_GSSAPI=OFF \
+        -DUSE_LIBIDN2=OFF -DUSE_NGHTTP2=OFF -DCURL_ZLIB=OFF -DCURL_BROTLI=OFF -DCURL_ZSTD=OFF -DCURL_ENABLE_NTLM=OFF \
+        -DCURL_CA_BUNDLE=none -DCURL_CA_PATH=none -DENABLE_THREADED_RESOLVER=ON -DCURL_USE_PKGCONFIG=OFF "${off[@]}" "$@"
 }
 
 # raylib and nanosvg sources into thirdparty/ ($1 = repo root)
