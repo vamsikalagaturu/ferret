@@ -87,11 +87,7 @@ static void draw_parent(Rectangle r)
     if (open >= 0 && open != at) {
         const fr_entry *e = &parent.es.v[open];
         char *uri = fr_uri_join(up, e->name);
-        if (e->is_dir) browser_open(uri, 1);
-        else {
-            const char *path = fr_uri_local(uri);
-            if (!path || plat_open(path)) ui_toast("No app can open %s", e->name);
-        }
+        ops_open_entry(uri, e);
         free(uri);
     }
     free(up);

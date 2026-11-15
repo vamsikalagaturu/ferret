@@ -4,6 +4,7 @@
 #include "platform.h"
 #include "ui.h"
 #include "vfs/vfs.h"
+#include "vfs/vfs_archive.h"
 
 /* ---- file kinds (filetypes.c) ---- */
 typedef enum { KIND_FOLDER, KIND_IMAGE, KIND_VIDEO, KIND_AUDIO, KIND_ARCHIVE, KIND_DOCUMENT, KIND_SHEET, KIND_SLIDES, KIND_CODE, KIND_TEXT, KIND_OTHER } fr_kind;
@@ -149,6 +150,12 @@ typedef struct {
 extern fr_clip clip;
 
 void ops_open_item(fr_item *it);
+void ops_open_entry(const char *uri, const fr_entry *e); /* a folder or an archive is browsed, a file handed on */
+int ops_rename(const char *from, const char *to);       /* inside an archive as a job (0 once it is asked for) */
+int ops_archive_targets(void);  /* how many targets there are when all are archives to extract, else 0 */
+void ops_extract(int into_folder); /* the targets here, or each into a folder of its own named after it */
+char *ops_compress_name(void);  /* "<name>.zip" for the targets, NULL without any */
+void ops_compress(void);        /* the targets into a new zip here */
 void ops_copy(int cut);
 void ops_paste(void);
 void ops_clip_clear(void);

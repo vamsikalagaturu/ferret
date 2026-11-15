@@ -1,10 +1,11 @@
 #include "vfs.h"
+#include "vfs_archive.h"
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-static const fr_backend *backends[] = {&fr_backend_file};
+static const fr_backend *backends[] = {&fr_backend_file, &fr_backend_archive};
 
 static size_t scheme_len(const char *uri)
 {
@@ -100,6 +101,7 @@ const char *fr_vfs_error(int err)
     switch (-err) {
     case EPROTONOSUPPORT: return "This kind of location is not supported";
     case ENOTSUP: return "Not supported here";
+    case EBADMSG: return "Not an archive ferret can read, or a damaged one";
     default: return strerror(-err);
     }
 }
@@ -121,9 +123,11 @@ void fr_entries_free(fr_entries *e)
 
 char *fr_uri_from_path(const char *path) { return fr_format("file://%s", *path == '/' ? path : "/"); }
 
-/* where the path starts: after scheme://authority */
+/* where the path starts: after scheme://authority, or after an archive's "!" */
 static const char *path_start(const char *uri)
 {
+    const char *sep = fr_archive_sep(uri);
+    if (sep) return sep + 1;
     size_t n = scheme_len(uri);
     if (!n) return uri;
     const char *p = strchr(uri + n + 3, '/');
@@ -144,8 +148,24 @@ char *fr_uri_join(const char *dir, const char *name)
     return fr_format("%s%s%s", dir, n && dir[n - 1] == '/' ? "" : "/", name);
 }
 
+/* archive://<outer>!/ itself: its outer URI, else NULL */
+static char *archive_root_outer(const char *uri)
+{
+    const char *sep = fr_archive_sep(uri);
+    if (!sep) return NULL;
+    for (const char *s = sep + 1; *s; s++)
+        if (*s != '/') return NULL;
+    return fr_archive_outer(uri);
+}
+
 char *fr_uri_parent(const char *uri)
 {
+    char *outer = archive_root_outer(uri);
+    if (outer) {
+        char *parent = fr_uri_parent(outer);
+        free(outer);
+        return parent;
+    }
     const char *p = path_start(uri);
     size_t n = strlen(uri);
     while (n > (size_t)(p - uri) + 1 && uri[n - 1] == '/') n--;
@@ -157,6 +177,12 @@ char *fr_uri_parent(const char *uri)
 
 char *fr_uri_name(const char *uri)
 {
+    char *outer = archive_root_outer(uri);
+    if (outer) {
+        char *name = fr_uri_name(outer);
+        free(outer);
+        return name;
+    }
     const char *p = path_start(uri);
     size_t n = strlen(uri);
     while (n > (size_t)(p - uri) && uri[n - 1] == '/') n--;

@@ -14,7 +14,8 @@ platform/android/build.sh check    # only compiles libferret.so for both ABIs
 ```
 
 Everything goes under `~/.cache/ferret/android` (`FR_ANDROID_OUT` overrides), including the debug signing key;
-nothing is written into the repo. `deps.sh` fetches raylib and nanosvg into `thirdparty/` first. No Gradle:
+nothing is written into the repo. `deps.sh` fetches raylib and nanosvg into `thirdparty/` first, and builds
+libarchive with zstd, xz and bzip2 (zlib is the NDK's) static for each ABI. No Gradle:
 `javac`, `d8`, `aapt2`, `zipalign` and `apksigner`. versionName is the build's `FR_VERSION` (root
 `CMakeLists.txt`), versionCode the numeric version (1.2.3 -> 10203). targetSdk is 34 because 35+ forces
 edge-to-edge drawing.

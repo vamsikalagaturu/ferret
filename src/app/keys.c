@@ -142,7 +142,7 @@ static void insert_commit(void)
         return;
     }
     char *parent = fr_uri_parent(insert.uri), *to = fr_uri_join(parent, insert.text.buf);
-    int rc = fr_vfs_rename(insert.uri, to);
+    int rc = ops_rename(insert.uri, to);
     free(parent), free(to);
     if (rc == -EEXIST) ui_toast("\"%s\" already exists here", insert.text.buf);
     else if (rc) ui_toast("Could not rename: %s", fr_vfs_error(rc));
@@ -297,7 +297,7 @@ static void command(int c)
 {
     int p = pending[0];
     if (c < ' ') return;
-    if (!p && strchr("gsyd", c)) {
+    if (!p && strchr("gsydz", c)) {
         set_pending(c);
         return;
     }
@@ -345,6 +345,9 @@ static void command(int c)
     case K('s', 's'): sort_by(SORT_SIZE); break;
     case K('s', 'm'): sort_by(SORT_DATE); break;
     case K('s', 'e'): sort_by(SORT_EXT); break;
+    case K('z', 'e'): ops_extract(0); break;
+    case K('z', 'f'): ops_extract(1); break;
+    case K('z', 'c'): ops_compress(); break;
     case K(0, 'S'):
         br.desc = !br.desc;
         browser_rebuild_view();
