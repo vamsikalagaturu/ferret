@@ -247,6 +247,9 @@ static void load(const char *uri)
 
 static void restat_results(void)
 {
+    /* taken before the items move: the view's indices point into them until the rebuild */
+    fr_item *cur = browser_item(br.cursor);
+    char *cursor_name = cur && !cur->placeholder ? fr_strdup(cur->e.name) : NULL;
     int kept = 0;
     br.nselected = 0;
     for (int i = 0; i < br.items.n; i++) {
@@ -286,7 +289,9 @@ static void restat_results(void)
         free(members);
     }
     sizes_apply();
-    rebuild_now(NULL, 0);
+    br.view.n = 0;
+    rebuild(cursor_name);
+    free(cursor_name);
 }
 
 void browser_results_begin(void)
