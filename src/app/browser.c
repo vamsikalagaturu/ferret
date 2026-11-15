@@ -19,7 +19,7 @@ static unsigned next_id;
 fr_browser *browser_new(const fr_browser *like)
 {
     fr_browser *b = fr_realloc(NULL, sizeof *b);
-    *b = (fr_browser){.id = ++next_id, .watch = -1};
+    *b = (fr_browser){.id = ++next_id, .watch = -1, .sort = SORT_DATE, .desc = 1};
     if (like) b->sort = like->sort, b->desc = like->desc, b->show_hidden = like->show_hidden, b->layout = like->layout;
     return b;
 }
@@ -82,8 +82,8 @@ static int cmp_items(const void *pa, const void *pb)
 {
     const fr_item *a = &br.items.v[*(const int *)pa], *b = &br.items.v[*(const int *)pb];
     if (br.dupes && a->group != b->group) return a->group - b->group;
-    /* name search results sorted by name: the closest match first, scored on the name, not the folders above it */
-    if (br.results && !br.dupes && !br.search_content && br.search_term && br.sort == SORT_NAME && !strpbrk(br.search_term, "*?")) {
+    /* fuzzy name search results: the closest match first whatever the sort, scored on the name, not the folders above it */
+    if (br.results && !br.dupes && !br.search_content && br.search_term && !strpbrk(br.search_term, "*?")) {
         const char *na = strrchr(a->e.name, '/'), *nb = strrchr(b->e.name, '/');
         int x = fr_fuzzy_score(br.search_term, na ? na + 1 : a->e.name), y = fr_fuzzy_score(br.search_term, nb ? nb + 1 : b->e.name);
         if (x != y) return y - x;

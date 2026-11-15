@@ -47,7 +47,9 @@ for script in "${SCRIPTS[@]}"; do
         failed+=("$name")
         continue
     fi
-    mkdir -p "$dir/home" "$dir/config" "$dir/data/Trash/files" "$dir/data/Trash/info" "$dir/shots"
+    mkdir -p "$dir/home" "$dir/config/ferret" "$dir/data/Trash/files" "$dir/data/Trash/info" "$dir/shots"
+    # the scripts expect the fixture by name, A to Z (the app's default is newest first)
+    printf 'sort = "name"\nreverse = false\n' >"$dir/config/ferret/settings.toml"
     fixture "$dir/tree"
     log=$dir/stderr.log
     (cd "$dir/shots" && HOME=$dir/home XDG_CONFIG_HOME=$dir/config XDG_DATA_HOME=$dir/data \
