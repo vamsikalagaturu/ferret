@@ -96,12 +96,13 @@ static int cmp_items(const void *pa, const void *pb)
     return br.desc ? -c : c;
 }
 
-static void rebuild_now(const char *s, int n)
+/* the cursor stays on focus_name, else on kept, else on the name it is on */
+static void rebuild(const char *kept)
 {
     const char *keep = NULL;
-    fr_item *cur = browser_item(br.cursor);
+    fr_item *cur = kept ? NULL : browser_item(br.cursor);
     char *keep_name = cur ? fr_strdup(cur->e.name) : NULL;
-    keep = br.focus_name ? br.focus_name : keep_name;
+    keep = br.focus_name ? br.focus_name : kept ? kept : keep_name;
     br.view.n = 0;
     int placeholder = -1;
     for (int i = 0; i < br.items.n; i++) {
@@ -130,6 +131,8 @@ static void rebuild_now(const char *s, int n)
     ui.dirty = 1;
 }
 
+static void rebuild_now(const char *s, int n) { rebuild(NULL); }
+
 void browser_rebuild_view(void) { app_defer(rebuild_now, NULL, 0); }
 
 static void push_placeholder(void)
@@ -149,6 +152,8 @@ static void apply(const char *uri, fr_entries *es, int rc)
         naming |= br.items.v[i].placeholder;
     }
     int same = br.uri && !strcmp(br.uri, uri);
+    fr_item *cur = same ? browser_item(br.cursor) : NULL;
+    char *kept = cur && !cur->placeholder ? fr_strdup(cur->e.name) : NULL;
     items_free();
     free(br.error);
     br.error = NULL;
@@ -173,7 +178,8 @@ static void apply(const char *uri, fr_entries *es, int rc)
     if (br.recent_pending && !rc) recent_visit(uri);
     br.recent_pending = 0;
     sizes_apply();
-    rebuild_now(NULL, 0);
+    rebuild(kept);
+    free(kept);
 }
 
 static unsigned serial; /* of the last listing asked for, by any browser */
