@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "jobs.h"
+#include "core/opencache.h"
 #include "vfs/vfs.h"
 #include "vfs/vfs_archive.h"
 #include <errno.h>
@@ -627,6 +628,34 @@ static void run_create(job *j)
     }
 }
 
+static void run_fetch(job *j)
+{
+    const char *src = j->sources.v[0], *path = fr_uri_local(j->dest);
+    set_current(j, src);
+    fr_entry e = {0};
+    int rc = path ? fr_vfs_stat(src, &e) : -EINVAL;
+    if (!rc && e.is_dir) rc = -EISDIR;
+    if (!rc && fr_opencache_fresh(path, e.size, e.mtime)) {
+        fr_opencache_touch(path);
+        add_progress(j, e.size, 1);
+    } else if (!rc) {
+        pthread_mutex_lock(&lock);
+        j->st.bytes_total = e.size, j->st.files_total = 1;
+        pthread_mutex_unlock(&lock);
+        char *dir = fr_strndup(path, (size_t)(strrchr(path, '/') - path));
+        rc = fr_mkdirs(dir);
+        free(dir);
+        /* the last copy is read-only, so it is taken away rather than written over */
+        if (!rc) fr_vfs_remove(j->dest);
+        if (!rc) rc = copy_file(j, src, &e, j->dest, 0);
+        /* the owner's alone: the source may be a server's private file */
+        if (!rc) rc = fr_vfs_set_mode(j->dest, 0400);
+        if (!rc) add_progress(j, 0, 1);
+    }
+    if (rc && rc != -ECANCELED) fail(j, src, rc, NULL);
+    fr_entry_free(&e);
+}
+
 /* ---- the job kinds ---- */
 
 static void run_copy(job *j)
@@ -1112,6 +1141,7 @@ static void *work(void *arg)
         case JOB_RENAME: run_rename(j); break;
         case JOB_CREATE: run_create(j); break;
         case JOB_STEPS: run_steps(j); break;
+        case JOB_FETCH: run_fetch(j); break;
         case JOB_SYNC: run_sync(j); break;
         case JOB_LINK: run_link(j); break;
         }
@@ -1267,6 +1297,16 @@ int fr_job_submit_create(const char *uri, int folder)
     fr_strs one = {(char *[]){(char *)uri}, 1, 1};
     job *j = job_new(JOB_CREATE, &one, uri);
     j->flag = folder;
+    return job_queue(j);
+}
+
+int fr_job_submit_fetch(const char *uri, const char *copy)
+{
+    fr_strs one = {(char *[]){(char *)uri}, 1, 1};
+    job *j = job_new(JOB_FETCH, &one, copy);
+    char *name = fr_uri_name(uri);
+    snprintf(j->st.dest_name, sizeof j->st.dest_name, "%s", name);
+    free(name);
     return job_queue(j);
 }
 

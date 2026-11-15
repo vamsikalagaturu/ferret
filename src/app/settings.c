@@ -23,6 +23,7 @@ typedef struct {
     fr_strs favorites, servers;
     char *folder;
     fr_strs tabs; /* owned, unlike the others in live()'s */
+    fr_bookmarks bookmarks;
     int git_status, relative_links;
 } state;
 
@@ -47,7 +48,7 @@ static fr_strs tab_folders(void)
 static state live(void)
 {
     return (state){br.sort, br.desc, br.show_hidden, br.layout, ui.user_scale, ui.text_scale, settings.favorites, settings.servers, br.uri,
-                   tab_folders(), settings.git_status, settings.relative_links};
+                   tab_folders(), settings.bookmarks, settings.git_status, settings.relative_links};
 }
 
 static int strs_differ(const fr_strs *a, const fr_strs *b)
@@ -63,8 +64,8 @@ static int differs(const state *a, const state *b)
     if (!a->folder != !b->folder || (a->folder && strcmp(a->folder, b->folder))) return 1;
     return a->sort != b->sort || a->desc != b->desc || a->hidden != b->hidden || a->layout != b->layout ||
            a->ui_scale != b->ui_scale || a->font_scale != b->font_scale || strs_differ(&a->favorites, &b->favorites) ||
-           strs_differ(&a->servers, &b->servers) || strs_differ(&a->tabs, &b->tabs) || a->git_status != b->git_status ||
-           a->relative_links != b->relative_links;
+           strs_differ(&a->servers, &b->servers) || strs_differ(&a->tabs, &b->tabs) || !fr_bookmarks_equal(&a->bookmarks, &b->bookmarks) ||
+           a->git_status != b->git_status || a->relative_links != b->relative_links;
 }
 
 static void snapshot(state *s)
@@ -72,8 +73,10 @@ static void snapshot(state *s)
     fr_strs_free(&s->favorites);
     fr_strs_free(&s->servers);
     fr_strs_free(&s->tabs);
+    fr_bookmarks_free(&s->bookmarks);
     free(s->folder);
     *s = live();
+    s->bookmarks = fr_bookmarks_copy(&settings.bookmarks);
     s->favorites = fr_strs_copy(&settings.favorites);
     s->servers = fr_strs_copy(&settings.servers);
     s->folder = s->folder ? fr_strdup(s->folder) : NULL;
@@ -195,6 +198,7 @@ static void apply(const fr_toml *t)
             else free(uri);
         }
     }
+    fr_bookmarks_parse(&settings.bookmarks, t, folder_uri);
     for (i = 0; i < THEME_ROLES; i++) {
         free(settings.theme[i]);
         v = fr_toml_get(t, "theme", theme_roles[i], TOML_STRING);
@@ -271,9 +275,13 @@ static char *settings_text(void)
     fr_toml_comment(&o, "Start in this folder every time instead (a path, \"~\" for home, or a URI), for example:");
     if (start_written) fr_toml_string(&o, "start_folder", start_written);
     else fr_toml_comment(&o, "start_folder = \"~/Downloads\"");
-    fr_toml_comment(&o, "Servers in the sidebar's Network section: smb://[user@]host/share, sftp://[user@]host[:port]/path.");
+    fr_toml_comment(&o, "Servers in the sidebar's Network section: smb://[user@]host/share, sftp://[user@]host[:port]/path,");
+    fr_toml_comment(&o, "ftp:// and ftps:// (TLS), dav:// and davs:// (WebDAV over http and https), nfs://host/export.");
     fr_toml_comment(&o, "Passwords are not kept here: the system's keystore has them when you ask ferret to remember one.");
     fr_toml_strings(&o, "servers", &settings.servers);
+    fr_toml_comment(&o, "");
+    fr_toml_comment(&o, "Bookmarks: m and a letter or digit marks a folder, ' and the key goes there; key = \"path or URI\".");
+    fr_bookmarks_write(&o, &settings.bookmarks, fr_uri_local);
     fr_toml_comment(&o, "");
     fr_toml_table(&o, "theme");
     fr_toml_comment(&o, "Colours as \"#rrggbb\", over the desktop's and the Nord defaults, for any of: accent,");

@@ -1,16 +1,20 @@
-/* The SMB and SFTP backends against real servers, when the environment names them; skipped (77) otherwise:
+/* The network backends against real servers, when the environment names them; skipped (77) otherwise:
  *   FR_TEST_SFTP=sftp://user@host:port/writable/folder  FR_TEST_SMB=smb://user@host:port/share  FR_TEST_PASSWORD=...
+ *   FR_TEST_FTP, FR_TEST_FTPS, FR_TEST_DAV, FR_TEST_DAVS (a writable folder; TLS with a certificate no CA signed)
+ *   and FR_TEST_NFS (an export ferret's uid can write to, no sign-in).
  * The servers must refuse a guest and the user's own SSH keys. HOME and XDG_CONFIG_HOME point at a scratch folder
  * for the run, so the user's ~/.ssh and ferret's known_hosts stay out of it. FR_TEST_RESTART, a command that
  * restarts both servers, checks that broken connections reconnect. tests/net/server.sh starts a container with
  * both and prints these. */
 #define _GNU_SOURCE
 #include "check.h"
+#include "core/opencache.h"
 #include "jobs/jobs.h"
 #include "net/net.h"
 #include "vfs/vfs.h"
 #include <errno.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 static const char *password;
@@ -58,38 +62,49 @@ static int jobs_ok(void)
     return !failed;
 }
 
-/* signs in as the servers want: identity first (SFTP), then refused, wrong and right passwords */
-static void sign_in(const char *base, int ssh)
+enum { PASSWORD, IDENTITY, NO_SIGN_IN };
+
+/* a list of base, trusting the server's identity (an SSH host key, a TLS certificate) when it asks, once */
+static int list_trusting(const char *base, const char *key, int *asked)
+{
+    fr_entries es = {0};
+    int rc = fr_vfs_list(base, &es);
+    if (rc == -FR_EUNTRUSTED) {
+        char *q = fr_trust_question(key);
+        CHECK(q && strstr(q, "SHA"));
+        free(q);
+        CHECK(fr_trust_answer(key, 1));
+        (*asked)++;
+        rc = fr_vfs_list(base, &es);
+    }
+    fr_entries_free(&es);
+    return rc;
+}
+
+/* signs in as the servers want: the identity trusted where it asks (SFTP first, TLS whenever it first connects),
+ * then refused, wrong and right passwords */
+static void sign_in(const char *base, int how)
 {
     char *key = fr_net_key_of(base);
     fr_net_uri u;
     CHECK(fr_net_parse(base, &u) == 0);
-    fr_entries es = {0};
-    int rc = fr_vfs_list(base, &es);
-    if (ssh) {
-        CHECK(rc == -FR_EUNTRUSTED);
-        char *q = fr_trust_question(key);
-        CHECK(q && strstr(q, "SHA256:"));
-        free(q);
-        CHECK(fr_trust_answer(key, 1));
-        rc = fr_vfs_list(base, &es);
-    }
-    CHECK(rc == -FR_EAUTH); /* no guest, no keys */
+    int asked = 0;
+    CHECK(list_trusting(base, key, &asked) == -FR_EAUTH); /* no guest, no keys */
     CHECK(!fr_creds_refused(key));
     fr_creds_put(key, u.user, "wrong", 0);
-    CHECK(fr_vfs_list(base, &es) == -FR_EAUTH);
+    CHECK(list_trusting(base, key, &asked) == -FR_EAUTH);
     CHECK(fr_creds_refused(key));
     fr_creds_put(key, u.user, password, 0);
-    CHECK(fr_vfs_list(base, &es) == 0);
-    fr_entries_free(&es);
+    CHECK(list_trusting(base, key, &asked) == 0);
+    CHECK(asked == (how == IDENTITY));
     fr_net_uri_free(&u);
     free(key);
 }
 
-static void exercise(const char *base, int ssh)
+static void exercise(const char *base, int how)
 {
     fprintf(stderr, "-- %s\n", base);
-    sign_in(base, ssh);
+    if (how != NO_SIGN_IN) sign_in(base, how);
     char *dir = fr_uri_join(base, "ferret-test");
     if (fr_vfs_exists(dir)) {
         fr_strs one = {0};
@@ -120,15 +135,23 @@ static void exercise(const char *base, int ssh)
     free(text);
     const fr_backend *be = fr_vfs_backend(base);
     if (be->set_mtime) {
-        CHECK(be->set_mtime(b, 1000000000) == 0);
-        CHECK(fr_vfs_stat(b, &e) == 0 && e.mtime == 1000000000);
+        int rc = be->set_mtime(b, 1000000000);
+        CHECK(rc == 0 || rc == -ENOTSUP);
+        CHECK(fr_vfs_stat(b, &e) == 0 && (rc || e.mtime == 1000000000));
         fr_entry_free(&e);
     }
     uint64_t fb = 0, tb = 0;
-    if (be->free_space) CHECK(be->free_space(dir, &fb, &tb) == 0 && tb > 0);
+    if (be->free_space) {
+        int rc = be->free_space(dir, &fb, &tb);
+        if (rc && rc != -ENOTSUP) fprintf(stderr, "free_space: %s\n", fr_vfs_error(rc));
+        CHECK(rc == -ENOTSUP || (rc == 0 && tb > 0));
+    }
     fr_entries es = {0};
     CHECK(fr_vfs_list(dir, &es) == 0 && es.n == 2);
     fr_entries_free(&es);
+    /* remove() takes an empty folder only, whatever the protocol would do with a full one (WebDAV's DELETE, SMB's
+     * delete-on-close rmdir) */
+    CHECK(fr_vfs_remove(dir) != 0 && fr_vfs_exists(b));
 
     /* a folder there and back through the jobs, with a file bigger than one read or write */
     char tmpl[] = "/tmp/ferret-remote-XXXXXX";
@@ -153,6 +176,23 @@ static void exercise(const char *base, int ssh)
     char *got = get(round, &n);
     CHECK(got && n == bn && !memcmp(got, data, bn));
     free(got);
+
+    /* opened from there: a read-only copy here, kept while the source stays the same */
+    char *remote_big = fr_format("%s/sub/big.bin", remote_tree), *cache = fr_format("%s/cache", tmpl);
+    char *copy = fr_opencache_path(cache, remote_big, "big.bin"), *copy_uri = fr_uri_from_path(copy);
+    fr_job_submit_fetch(remote_big, copy_uri);
+    CHECK(jobs_ok());
+    got = get(copy_uri, &n);
+    CHECK(got && n == bn && !memcmp(got, data, bn));
+    free(got);
+    struct stat sb;
+    CHECK(stat(copy, &sb) == 0 && (sb.st_mode & 07777) == 0400);
+    ino_t inode = sb.st_ino;
+    fr_job_submit_fetch(remote_big, copy_uri);
+    CHECK(jobs_ok());
+    CHECK(stat(copy, &sb) == 0 && (!be->set_mtime || sb.st_ino == inode));
+    free(remote_big), free(cache), free(copy), free(copy_uri);
+
     char *moved = fr_uri_join(dir, "moved");
     CHECK(fr_vfs_rename(remote_tree, moved) == 0);
     fr_strs_free(&src);
@@ -173,9 +213,23 @@ static void exercise(const char *base, int ssh)
 int main(void)
 {
     const char *sftp = getenv("FR_TEST_SFTP"), *smb = getenv("FR_TEST_SMB");
+    static const struct {
+        const char *var;
+        int how;
+    } more[] = {{"FR_TEST_FTP", PASSWORD}, {"FR_TEST_FTPS", IDENTITY}, {"FR_TEST_DAV", PASSWORD},
+                {"FR_TEST_DAVS", IDENTITY}, {"FR_TEST_NFS", NO_SIGN_IN}};
+    enum { NMORE = sizeof more / sizeof *more };
+    const char *bases[NMORE];
+    int any = sftp || smb, tls = 0;
+    for (int i = 0; i < NMORE; i++) {
+        bases[i] = getenv(more[i].var);
+        any |= bases[i] != NULL;
+        tls |= bases[i] && more[i].how == IDENTITY;
+    }
     password = getenv("FR_TEST_PASSWORD");
-    if ((!sftp && !smb) || !password) {
-        fprintf(stderr, "skipped: FR_TEST_SFTP / FR_TEST_SMB and FR_TEST_PASSWORD are not set\n");
+    if (!any || !password) {
+        fprintf(stderr, "skipped: no FR_TEST_SFTP, FR_TEST_SMB, FR_TEST_FTP(S), FR_TEST_DAV(S), FR_TEST_NFS or "
+                        "FR_TEST_PASSWORD\n");
         return 77;
     }
     char home[] = "/tmp/ferret-home-XXXXXX";
@@ -185,9 +239,11 @@ int main(void)
     setenv("XDG_CONFIG_HOME", config, 1);
     unsetenv("SSH_AUTH_SOCK");
     fr_jobs_start(NULL);
-    if (sftp) exercise(sftp, 1);
+    if (sftp) exercise(sftp, IDENTITY);
+    for (int i = 0; i < NMORE; i++)
+        if (bases[i]) exercise(bases[i], more[i].how);
     if (smb) {
-        exercise(smb, 0);
+        exercise(smb, PASSWORD);
         char *root = fr_uri_parent(smb);
         fr_entries es = {0};
         CHECK(root && fr_vfs_list(root, &es) == 0);
@@ -209,13 +265,20 @@ int main(void)
         if (rc) fprintf(stderr, "after the restart: %s: %s\n", smb, fr_vfs_error(rc));
         CHECK(rc == 0);
         fr_entries_free(&es);
+        for (int i = 0; i < NMORE; i++) {
+            rc = bases[i] ? fr_vfs_list(bases[i], &es) : 0;
+            if (rc) fprintf(stderr, "after the restart: %s: %s\n", bases[i], fr_vfs_error(rc));
+            CHECK(rc == 0);
+            fr_entries_free(&es);
+        }
     }
     fr_jobs_stop();
     fr_conn_close_all();
-    char *known = fr_format("%s/ferret/known_hosts", config);
+    char *known = fr_format("%s/ferret/known_hosts", config), *certs = fr_format("%s/ferret/known_certs", config);
     if (sftp) CHECK(access(known, R_OK) == 0);
-    unlink(known);
-    free(known);
+    if (tls) CHECK(access(certs, R_OK) == 0);
+    unlink(known), unlink(certs);
+    free(known), free(certs);
     char *d = fr_format("%s/ferret", config);
     rmdir(d), rmdir(config), rmdir(home);
     free(d), free(config);

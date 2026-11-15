@@ -130,7 +130,14 @@ static void draw_file_info(Rectangle r, const fr_item *it)
     float pad = DP(20), w = r.width - 2 * pad, x = r.x + pad, y = r.y + DP(32), lh = ui_line_height(15);
     /* the image's box stays while its thumbnail is on the way, so the text below does not jump */
     Rectangle image = {x, y, w, fminf(w, r.height * 0.45f)};
-    int shown = thumb_draw(it, image);
+    char *uri = fr_uri_join(br.uri, it->e.name);
+    int shown = preview_image_draw(uri, &it->e, image);
+    free(uri);
+    /* the thumbnail while the picture is on its way, or where there is none at this size */
+    if (shown <= 0) {
+        int thumb = thumb_draw(it, image);
+        if (thumb > 0 || shown < 0) shown = thumb;
+    }
     if (shown < 0) {
         ui_icon(kind_icon(it->kind), (Rectangle){r.x, y, r.width, DP(64)}, 48, kind_color(it->kind));
         y += DP(76);

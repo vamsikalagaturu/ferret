@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 #include "app.h"
 #include "core/hash.h"
+#include "jobs/async.h"
 #include "vfs/local_info.h"
 #include <errno.h>
 #include <strings.h>
@@ -63,6 +64,7 @@ static struct {
     int compared; /* 0 not yet, 1 + the matching hash, -1 none matched, -2 the clipboard was empty */
     fr_scroll scroll;
     float content_h;
+    int loading;  /* the items' details are on their way from off this device */
 } P;
 
 static uint32_t bit_mask(int i) { return 1u << (8 - i); }
@@ -232,35 +234,121 @@ static void load_modes(void)
     text_set(&P.group, P.group_was);
 }
 
-static void load(void)
+/* What the storage says of the items: on the window's thread for this device's files, else on a thread of its own
+ * (jobs/async.h), since a server may take its time. */
+typedef struct {
+    unsigned serial; /* the panel's load it is for */
+    fr_strs uris;
+    char *where;     /* the item, or the folder holding several */
+    fr_entry *ents;
+    int first_err;   /* of the first stat that failed */
+    int has_space;
+    uint64_t space_free, space_total;
+} gathered;
+
+static unsigned load_serial;
+
+static void gather(gathered *g)
+{
+    g->ents = fr_realloc(NULL, sizeof *g->ents * (size_t)g->uris.n);
+    for (int i = 0; i < g->uris.n; i++) {
+        g->ents[i] = (fr_entry){0};
+        int rc = fr_vfs_stat(g->uris.v[i], &g->ents[i]);
+        if (rc) {
+            fr_entry_free(&g->ents[i]);
+            g->ents[i] = (fr_entry){0};
+            if (!g->first_err) g->first_err = rc;
+        }
+    }
+    const fr_backend *b = fr_vfs_backend(g->where);
+    g->has_space = b && b->free_space && !b->free_space(g->where, &g->space_free, &g->space_total);
+}
+
+static void gathered_free(gathered *g)
+{
+    for (int i = 0; g->ents && i < g->uris.n; i++) fr_entry_free(&g->ents[i]);
+    free(g->ents);
+    fr_strs_free(&g->uris);
+    free(g->where);
+    free(g);
+}
+
+static gathered *gathered_new(void)
+{
+    gathered *g = fr_realloc(NULL, sizeof *g);
+    char *parent = fr_uri_parent(P.uris.v[0]);
+    *g = (gathered){.serial = load_serial, .uris = fr_strs_copy(&P.uris)};
+    g->where = fr_strdup(P.uris.n == 1 || !parent ? P.uris.v[0] : parent);
+    free(parent);
+    return g;
+}
+
+/* takes g's entries */
+static void install(gathered *g)
 {
     for (int i = 0; P.ents && i < P.uris.n; i++) fr_entry_free(&P.ents[i]);
-    P.ents = fr_realloc(P.ents, sizeof *P.ents * (size_t)P.uris.n);
+    free(P.ents);
+    P.ents = g->ents;
+    g->ents = NULL;
     P.folders = P.files = P.links = P.missing = 0;
     for (int i = 0; i < P.uris.n; i++) {
         fr_entry *e = &P.ents[i];
-        *e = (fr_entry){0};
-        if (fr_vfs_stat(P.uris.v[i], e)) {
-            fr_entry_free(e);
-            P.missing++;
-        } else if (e->is_link) P.links++;
+        if (!e->name) P.missing++;
+        else if (e->is_link) P.links++;
         else if (e->is_dir) P.folders++;
         else P.files++;
     }
     load_modes();
     const fr_backend *b = fr_vfs_backend(P.uris.v[0]);
     P.can_set = b && b->set_mode;
-    const char *local = fr_uri_local(P.uris.v[0]);
-    char *parent = fr_uri_parent(P.uris.v[0]);
-    const char *where = P.uris.n == 1 ? P.uris.v[0] : parent ? parent : P.uris.v[0];
-    const char *where_local = fr_uri_local(where);
-    snprintf(P.path, sizeof P.path, "%s", where_local ? where_local : where);
+    const char *local = fr_uri_local(P.uris.v[0]), *where_local = fr_uri_local(g->where);
+    snprintf(P.path, sizeof P.path, "%s", where_local ? where_local : g->where);
     P.local = P.uris.n == 1 && local && !fr_local_info_get(local, &P.info);
     P.has_mount = 0;
     if (P.local) P.has_mount = P.info.has_mount;
     else if (where_local && !fr_local_info_get(where_local, &P.folder_info)) P.has_mount = P.folder_info.has_mount;
-    P.has_space = b && b->free_space && !b->free_space(where, &P.space_free, &P.space_total);
-    free(parent);
+    P.has_space = g->has_space, P.space_free = g->space_free, P.space_total = g->space_total;
+    P.loading = 0;
+    ui.dirty = 1;
+}
+
+static void gather_work(void *arg) { gather(arg); }
+
+static void props_retry(void);
+
+static void gather_done(void *arg)
+{
+    gathered *g = arg;
+    if (P.open && g->serial == load_serial) {
+        int first = !P.ents;
+        if (g->first_err && !P.ents && net_ask(g->uris.v[0], g->first_err, props_retry)) {
+            gathered_free(g);
+            return;
+        }
+        install(g);
+        if (first && (P.uris.n > 1 || P.folders)) count_start();
+    }
+    gathered_free(g);
+}
+
+static void load(void)
+{
+    load_serial++;
+    gathered *g = gathered_new();
+    if (fr_uri_local(P.uris.v[0])) {
+        gather(g);
+        install(g);
+        gathered_free(g);
+        return;
+    }
+    P.loading = 1;
+    net_prepare(P.uris.v[0]);
+    fr_async_run(gather_work, gather_done, g);
+}
+
+static void props_retry(void)
+{
+    if (P.open && P.loading) load();
 }
 
 void props_open(fr_strs *uris)
@@ -270,7 +358,7 @@ void props_open(fr_strs *uris)
     *uris = (fr_strs){0};
     P.open = 1;
     load();
-    if (P.uris.n > 1 || P.folders) count_start();
+    if (!P.loading && (P.uris.n > 1 || P.folders)) count_start();
 }
 
 void props_close(void)
@@ -811,7 +899,7 @@ static void apply(void)
     fr_strs targets = {0};
     for (int i = 0; i < P.uris.n; i++)
         if (P.ents[i].name && !P.ents[i].is_link) FR_PUSH(targets, fr_strdup(P.uris.v[i]));
-    /* as a job, so it shows its progress, says what failed and can be undone */
+    /* as a job, off the window thread for any storage: it shows its progress, says what failed and can be undone */
     if (targets.n) fr_job_submit_perms(&targets, &c);
     fr_strs_free(&targets);
     props_close();
@@ -843,11 +931,13 @@ int props_draw(void)
     ui_round_line(card, 14, theme.border);
 
     float x = card.x + pad, inner = w - 2 * pad;
-    const char *icon = P.uris.n > 1 ? "file-stack" : P.ents[0].name ? kind_icon(kind_of(P.ents[0].name, P.ents[0].is_dir)) : "file";
-    Color ic = P.uris.n > 1 || !P.ents[0].name ? theme.text_dim : kind_color(kind_of(P.ents[0].name, P.ents[0].is_dir));
+    const fr_entry *e0 = P.ents && P.ents[0].name ? &P.ents[0] : NULL;
+    const char *icon = P.uris.n > 1 ? "file-stack" : e0 ? kind_icon(kind_of(e0->name, e0->is_dir)) : "file";
+    Color ic = P.uris.n > 1 || !e0 ? theme.text_dim : kind_color(kind_of(e0->name, e0->is_dir));
     Rectangle ib = {x, card.y + pad, head, head};
     ui_round(ib, 12, ui_alpha(ic, 0.14f));
-    ui_icon(P.uris.n == 1 && P.ents[0].is_link ? "link" : icon, ib, 28, ic);
+    if (!(P.uris.n == 1 && e0 && e0->name && !e0->is_link && preview_image_draw(P.uris.v[0], e0, ib) == 1))
+        ui_icon(P.uris.n == 1 && e0 && e0->is_link ? "link" : icon, ib, 28, ic);
     char title[300];
     if (P.uris.n == 1) {
         char *name = fr_uri_name(P.uris.v[0]);
@@ -866,23 +956,30 @@ int props_draw(void)
     L.lw = fminf(DP(124), L.w * 0.34f);
     L.top = L.y = body.y + DP(8) - P.scroll.offset;
     ui_clip_begin(body);
-    general();
-    checksums();
-    if (P.local) dates();
     submitted = 0;
-    ownership();
-    permissions();
-    filesystem();
+    if (!P.ents) {
+        ui_icon("loader-circle", (Rectangle){L.x, L.y, DP(24), row_h()}, 16, theme.text_dim);
+        ui_text_box("Loading...", (Rectangle){L.x + DP(32), L.y, L.w - DP(32), row_h()}, 14, FONT_REGULAR, theme.text_dim, ALIGN_LEFT, 0);
+        L.y += row_h();
+    } else {
+        general();
+        checksums();
+        if (P.local) dates();
+        ownership();
+        permissions();
+        filesystem();
+    }
     ui_clip_end();
     float content = L.y + DP(12) - L.top;
     if (fabsf(content - P.content_h) > 0.5f) P.content_h = content, ui.dirty = 1;
 
     int open = 1, changed = dirty();
     float by = card.y + h - DP(16) - bh, aw = ui_button_width("Apply"), cw = ui_button_width("Close");
-    if (P.editable) apply_button((Rectangle){card.x + w - pad - aw, by, aw, bh}, changed && P.can_set);
+    int can_apply = changed && P.can_set;
+    if (P.editable) apply_button((Rectangle){card.x + w - pad - aw, by, aw, bh}, can_apply);
     float cx = card.x + w - pad - (P.editable ? aw + DP(8) : 0) - cw;
     if (ui_button(ui_id("props-close", 0), (Rectangle){cx, by, cw, bh}, "Close", 0)) open = 0;
-    if (P.open && changed && P.can_set && (submitted || ui_key(KEY_ENTER, 0) || ui_key(KEY_KP_ENTER, 0))) apply();
+    if (P.open && can_apply && (submitted || ui_key(KEY_ENTER, 0) || ui_key(KEY_KP_ENTER, 0))) apply();
     if (ui_key(KEY_ESCAPE, 0) || ui_key(KEY_BACK, 0)) open = 0;
     if (ui_live() && ui.pressed && !changed && !CheckCollisionPointRec(ui.mouse, card)) open = 0;
     ui_layer(0);

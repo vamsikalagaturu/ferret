@@ -32,6 +32,6 @@ target_include_directories(ferret PRIVATE ${FR_ROOT}/src/ui ${FR_ROOT}/src/app $
 target_compile_options(ferret PRIVATE -Wall -Wextra -Wno-unused-parameter)
 # -u keeps the glue's entry point, which nothing in the library references
 target_link_options(ferret PRIVATE -u ANativeActivity_onCreate -Wl,--no-undefined -Wl,--gc-sections)
-# libarchive and its codecs (fercore's, static) stay internal to the library
-target_link_options(ferret PRIVATE -Wl,--exclude-libs,libarchive.a:libzstd.a:liblzma.a:libbz2.a)
+# libarchive and its codecs, curl, expat and libnfs (fercore's, static) stay internal to the library
+target_link_options(ferret PRIVATE -Wl,--exclude-libs,libarchive.a:libzstd.a:liblzma.a:libbz2.a:libcurl.a:libexpat.a:libnfs.a)
 target_link_libraries(ferret PRIVATE fercore raylib android log m)

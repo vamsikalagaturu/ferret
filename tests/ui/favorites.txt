@@ -1,4 +1,4 @@
-# m adds or removes the folder shown as a favorite; g1..g9 open them; they are sidebar rows and are saved.
+# M adds or removes the folder shown as a favorite; g1..g9 open them; they are sidebar rows and are saved.
 key ctrl+-
 key ctrl+-
 key ctrl+-
@@ -7,10 +7,10 @@ key 1
 expect toast No favorite 1
 expect folder .
 dclick row alpha
-key m
+key M
 key h
 dclick row beta
-key m
+key M
 key h
 expect folder .
 key g
@@ -35,8 +35,8 @@ expect folder beta
 wait 120
 expect exists ../config/ferret/settings.toml
 
-# m again removes it; the next one moves up to g1
-key m
+# M again removes it; the next one moves up to g1
+key M
 key g
 key 1
 expect folder alpha

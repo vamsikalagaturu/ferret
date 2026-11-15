@@ -30,7 +30,7 @@ void browser_free(fr_browser *b)
     free(b->view.v);
     fr_strs_free(&b->back);
     fr_strs_free(&b->forward);
-    free(b->uri), free(b->error), free(b->focus_name), free(b->search_term), free(b->shown_uri);
+    free(b->uri), free(b->error), free(b->focus_name), free(b->search_term), free(b->shown_uri), free(b->prev_uri);
     free(b);
 }
 
@@ -77,12 +77,12 @@ static int64_t dir_mtime(const char *uri)
 static int cmp_items(const void *pa, const void *pb)
 {
     const fr_item *a = &br.items.v[*(const int *)pa], *b = &br.items.v[*(const int *)pb];
+    if (br.dupes && a->group != b->group) return a->group - b->group;
     if (a->e.is_dir != b->e.is_dir) return a->e.is_dir ? -1 : 1;
     int c = 0;
+    uint64_t sa = a->e.is_dir ? a->tree_size : a->e.size, sb = b->e.is_dir ? b->tree_size : b->e.size;
     switch (br.sort) {
-    case SORT_SIZE:
-        if (!a->e.is_dir) c = a->e.size < b->e.size ? -1 : a->e.size > b->e.size;
-        break;
+    case SORT_SIZE: c = sa < sb ? -1 : sa > sb; break;
     case SORT_DATE: c = a->e.mtime < b->e.mtime ? -1 : a->e.mtime > b->e.mtime; break;
     case SORT_KIND: c = (int)a->kind - (int)b->kind; break;
     case SORT_EXT: c = fr_natcmp(a->e.is_dir ? "" : fr_ext(a->e.name), b->e.is_dir ? "" : fr_ext(b->e.name)); break;
@@ -166,6 +166,7 @@ static void apply(const char *uri, fr_entries *es, int rc)
         free(br.uri);
         br.uri = fr_strdup(uri);
     }
+    sizes_apply();
     rebuild_now(NULL, 0);
 }
 
@@ -207,7 +208,7 @@ static void load(const char *uri)
         restat_results();
         return;
     }
-    br.results = 0;
+    br.results = br.dupes = 0;
     br.listing = 0;
     br.loading = 0;
     if (fr_uri_local(uri) || !fr_vfs_backend(uri)) {
@@ -254,6 +255,25 @@ static void restat_results(void)
         br.items.v[kept++] = *it;
     }
     br.items.n = kept;
+    if (br.dupes) {
+        /* a group down to one file has no duplicates left */
+        int top = 0;
+        for (int i = 0; i < kept; i++) top = br.items.v[i].group > top ? br.items.v[i].group : top;
+        int *members = calloc((size_t)top + 1, sizeof *members);
+        for (int i = 0; i < kept; i++) members[br.items.v[i].group]++;
+        br.items.n = br.nselected = 0;
+        for (int i = 0; i < kept; i++) {
+            fr_item *it = &br.items.v[i];
+            if (members[it->group] < 2) {
+                fr_entry_free(&it->e);
+                continue;
+            }
+            br.nselected += it->selected;
+            br.items.v[br.items.n++] = *it;
+        }
+        free(members);
+    }
+    sizes_apply();
     rebuild_now(NULL, 0);
 }
 
@@ -265,6 +285,7 @@ void browser_results_begin(void)
     br.loading = 0;
     br.listing = 0;
     br.results = 1;
+    br.dupes = 0;
     br.filtering = 0;
     br.scroll = (fr_scroll){0};
     br.anchor = 0;
@@ -288,7 +309,7 @@ static void load(const char *uri);
 void browser_results_leave(void)
 {
     if (!br.results) return;
-    br.results = 0;
+    br.results = br.dupes = 0;
     if (br.uri) load(br.uri);
 }
 
@@ -331,6 +352,10 @@ static void open_now(const char *uri, int push_history)
         return;
     }
     char *previous = br.uri ? fr_strdup(br.uri) : NULL;
+    if (previous) {
+        free(br.prev_uri);
+        br.prev_uri = fr_strdup(previous);
+    }
     if (push_history && previous) {
         FR_PUSH(br.back, fr_strdup(previous));
         fr_strs_free(&br.forward);
@@ -455,6 +480,25 @@ static void drop_placeholder_now(const char *s, int n)
 
 void browser_drop_placeholder(void) { app_defer(drop_placeholder_now, NULL, 0); }
 
+void browser_name_row(const char *from, const char *to, int is_dir)
+{
+    char *parent = fr_uri_parent(to), *name = fr_uri_name(to);
+    for (int i = 0; parent && br.uri && !strcmp(parent, br.uri) && i < br.items.n; i++) {
+        fr_item *it = &br.items.v[i];
+        char *uri = from ? fr_uri_join(br.uri, it->e.name) : NULL;
+        int match = from ? !strcmp(uri, from) : it->placeholder;
+        free(uri);
+        if (!match) continue;
+        free(it->e.name);
+        it->e.name = fr_strdup(name);
+        if (!from) it->placeholder = 0, it->e.is_dir = is_dir;
+        it->kind = kind_of(name, it->e.is_dir);
+        rebuild_now(NULL, 0);
+        break;
+    }
+    free(parent), free(name);
+}
+
 void browser_reload_shown(void)
 {
     fr_browser *other = tabs_other(&tabs), *was = br_cur;
@@ -502,6 +546,17 @@ void browser_poll(void)
 fr_item *browser_item(int view_index)
 {
     return view_index >= 0 && view_index < br.view.n ? &br.items.v[br.view.v[view_index]] : NULL;
+}
+
+fr_item *browser_item_of(const char *uri)
+{
+    for (int i = 0; br.uri && i < br.items.n; i++) {
+        char *u = fr_uri_join(br.uri, br.items.v[i].e.name);
+        int same = !strcmp(u, uri);
+        free(u);
+        if (same) return &br.items.v[i];
+    }
+    return NULL;
 }
 
 void browser_set_selected(int item, int on)

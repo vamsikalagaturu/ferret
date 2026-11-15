@@ -1,5 +1,6 @@
 #ifndef FR_APP_H
 #define FR_APP_H
+#include "core/bookmarks.h"
 #include "core/tabs.h"
 #include "jobs/jobs.h"
 #include "platform.h"
@@ -26,6 +27,9 @@ typedef struct {
     int selected;
     int placeholder; /* the row of a file or folder being named, not on disk yet */
     double flash_at; /* yanked (copied, cut, path copied) then: the row flashes */
+    int group;       /* duplicate results (dupes.c): its group, from 1; 0 none */
+    int sized;       /* folders: tree_size is known (sizes.c) */
+    uint64_t tree_size; /* the bytes of the files below */
 } fr_item;
 
 /* one per pane of each tab (core/tabs.h) */
@@ -62,6 +66,8 @@ typedef struct fr_browser {
     float shown_w;      /* views.c: the width view_draw last had, which the layout in effect and the grid follow */
     char *shown_uri;    /* and the folder it drew */
     int reveal_pending;
+    int dupes;          /* the results are groups of duplicate files (dupes.c) */
+    char *prev_uri;     /* the folder shown before this one, which '' goes back to */
 } fr_browser;
 
 /* The tabs, and the browser the code works on as br: between frames the pane with the keys; while a pane is drawn,
@@ -89,6 +95,9 @@ void browser_set_selected(int item, int on);
 fr_strs browser_selected_uris(void);
 fr_strs browser_target_uris(void); /* the selection if the focused row is in it, else the focused row */
 fr_item *browser_item(int view_index);
+fr_item *browser_item_of(const char *uri); /* the row of uri, NULL when the folder shown has none */
+/* between frames: the row of from (NULL: the new row being named) shows to's name until the next listing does */
+void browser_name_row(const char *from, const char *to, int is_dir);
 void browser_count_some(int first, int last); /* folder item counts for the rows shown */
 void browser_add_placeholder(void);           /* an empty row at the top, under the cursor */
 void browser_drop_placeholder(void);
@@ -188,6 +197,7 @@ typedef struct {
     char *theme[THEME_ROLES]; /* [theme] values as written, NULL for roles not set */
     char *last_folder, *start_folder; /* URIs, NULL when not set */
     fr_strs last_tabs; /* URIs: the tabs' folders when ferret last ran with more than one */
+    fr_bookmarks bookmarks; /* [bookmarks]: URIs by key */
     int git_status;     /* git's marks in folders inside a work tree (desktop) */
     int relative_links; /* links made relative to their folder, else absolute */
 } fr_settings;
@@ -241,9 +251,29 @@ typedef struct {
 } fr_clip;
 extern fr_clip clip;
 
+/* ---- renaming and making files off this device, on a thread of their own (remote.c) ---- */
+/* a call on uri may wait on a server or a device: not on this device, and not inside an archive (a job does those) */
+int remote_slow(const char *uri);
+/* After the call, between frames: the undo record, the pane that asked (br then) reloaded on the new name, or the
+ * error toasted; then done. A sign-in or trust question goes through net_ask, and once answered the call runs
+ * again, and done with it. */
+typedef void (*remote_done)(int rc, unsigned ctx);
+void remote_rename(const char *from, const char *to, remote_done done, unsigned ctx);
+void remote_create(const char *uri, int folder, remote_done done, unsigned ctx);
+/* fr_uri_free_name() on a thread: named(uri, ctx) between frames */
+void remote_free_name(const char *dir, const char *name, int is_dir, void (*named)(const char *uri, unsigned ctx), unsigned ctx);
+
+/* ---- files not on this device opened through a local copy (fetch.c) ---- */
+void fetch_start(void); /* clears the copies older than a day, on a thread */
+/* the files among uris that are not on this device copied by jobs, then all opened in their default apps, or with
+ * Open with (with) */
+void fetch_open(const fr_strs *uris, int with);
+int fetch_job_done(const fr_job_status *st); /* a finished job: 1 when it was a fetch's, and taken care of */
+
 void ops_open_item(fr_item *it);
 void ops_open_entry(const char *uri, const fr_entry *e); /* a folder or an archive is browsed, a file handed on */
-int ops_rename(const char *from, const char *to);       /* inside an archive as a job (0 once it is asked for) */
+/* inside an archive as a job (0 once it is asked for); off this device (remote_slow) 1, and done(rc, ctx) later */
+int ops_rename(const char *from, const char *to, remote_done done, unsigned ctx);
 int ops_archive_targets(void);  /* how many targets there are when all are archives to extract, else 0 */
 void ops_extract(int into_folder); /* the targets here, or each into a folder of its own named after it */
 char *ops_compress_name(void);  /* "<name>.zip" for the targets, NULL without any */
@@ -257,7 +287,8 @@ void ops_delete(int permanently);
 void ops_rename_start(void);
 void ops_new_folder_start(void);
 void ops_new_start(void); /* a file, or a folder when the name ends in "/" */
-int ops_create(const char *typed); /* makes it in the current folder; 0, or an error already shown */
+/* makes it in the current folder; 0, an error already shown, or 1 off this device (done(rc, ctx) later) */
+int ops_create(const char *typed, remote_done done, unsigned ctx);
 void ops_properties(void);
 void ops_share(void); /* the targets to the system's share sheet (Android) */
 void ops_draw_dialogs(void);
@@ -300,6 +331,8 @@ void props_close(void);
 
 /* ---- open with (openwith.c), one of ops.c's dialogs ---- */
 int openwith_open(void); /* the targets' apps; 0 when no dialog is needed (handed to the system, or said why) */
+int openwith_open_paths(fr_strs *paths); /* the same for files on this device (taken) */
+void ops_open_with_paths(fr_strs *paths); /* openwith_open_paths as ops.c's dialog, unless another one is open */
 int openwith_draw(void); /* 0 once it closed itself */
 void openwith_close(void);
 void ops_open_with(void);
@@ -341,4 +374,30 @@ int marks_dimmed(const fr_item *it);                           /* git ignores it
 void links_yank(void);          /* yl: the targets, to link to */
 void links_paste(int relative); /* links here to them (else to the clipboard's); 1, 0, or -1 as the settings say */
 int links_ready(void);
+
+/* ---- bookmarks (bookmarks.c): m<key> marks the folder, '<key> goes there ('' to the last folder), "<key> unmarks ---- */
+void bookmark_key(int prefix, int key); /* the chord prefix (m ' ") and the key after it */
+void bookmarks_draw(Rectangle list);    /* the marks while a chord waits for its key, over list; the panel */
+void bookmarks_panel_open(void);        /* the list to tap, for touch (the overflow menu's Bookmarks) */
+int bookmarks_panel_is_open(void);
+
+/* ---- folder sizes, everything below each added up, on demand (sizes.c); kept until the window closes ---- */
+void sizes_measure(int all); /* the target folders (all, or no folder targeted: every folder shown); again: stops */
+int sizes_running(void);     /* for br */
+/* a folder being measured (1, *bytes so far) or waiting its turn (2); 0 neither */
+int sizes_progress(const fr_item *it, uint64_t *bytes);
+void sizes_apply(void); /* br's folders take the sizes known: after a listing */
+void sizes_poll(void);  /* between frames, after the jobs: a finished job forgets what it may have changed */
+
+/* ---- duplicate files below the folder (dupes.c), shown as results grouped ---- */
+void dupes_start(void);
+void dupes_select_copies(void); /* every file of each group but the first shown */
+int dupes_running(void);        /* for br */
+int dupes_header(Rectangle r);  /* the results' bar */
+void dupes_poll(void);
+
+/* ---- a picture at the size it is shown, local or not (preview.c) ---- */
+/* uri (e its entry) fitted in box: 1 drawn, 0 on its way, -1 none (not an image, too big, or it failed) */
+int preview_image_draw(const char *uri, const fr_entry *e, Rectangle box);
+void preview_poll(void); /* between frames: starts what the frame asked for */
 #endif

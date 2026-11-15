@@ -227,6 +227,7 @@ static void draw_row(int v, Rectangle row, Rectangle area)
     int right = ui_hover(hit) && ui.rpressed;
     if (it->selected) ui_rect(row, theme.selection);
     else if (state) ui_rect(row, state == 2 ? theme.pressed : theme.hover);
+    else if (br.dupes && !(it->group & 1)) ui_rect(row, theme.surface); /* every other group tinted, to tell them apart */
     marks_tint(it, row, 0);
     view_flash(it, row);
     if (!ui.touch && br.keyboard && v == br.cursor && !it->selected)
@@ -243,7 +244,14 @@ static void draw_row(int v, Rectangle row, Rectangle area)
 
     char size[32] = "", date[32];
     if (it->e.is_dir) {
-        if (it->count >= 0) snprintf(size, sizeof size, it->count == 1 ? "1 item" : "%d items", it->count);
+        uint64_t sofar = 0;
+        int measuring = sizes_progress(it, &sofar);
+        if (measuring == 1) {
+            fr_format_size(sofar, size, sizeof size - 4);
+            strcat(size, "…");
+        } else if (measuring == 2) snprintf(size, sizeof size, "…");
+        else if (it->sized) fr_format_size(it->tree_size, size, sizeof size);
+        else if (it->count >= 0) snprintf(size, sizeof size, it->count == 1 ? "1 item" : "%d items", it->count);
     } else fr_format_size(it->e.size, size, sizeof size);
     fr_format_time(it->e.mtime, (int64_t)time(NULL), date, sizeof date);
     if (it->placeholder) size[0] = date[0] = 0;
@@ -290,6 +298,7 @@ int view_draw_folder_state(Rectangle r)
     if (br.loading && !br.items.n) view_draw_empty(r, "loader-circle", "Loading...", NULL, 0);
     else if (br.error) view_draw_empty(r, "triangle-alert", "This folder cannot be shown", br.error, 1);
     else if (!br.view.n && br.filtering && br.filter.len) view_draw_empty(r, "search", "Nothing matches", NULL, 0);
+    else if (!br.view.n && br.dupes) view_draw_empty(r, "file-stack", dupes_running() ? "Looking for duplicates..." : "No duplicates found", NULL, 0);
     else if (!br.view.n && br.results) view_draw_empty(r, "search", search_running() ? "Searching..." : "Nothing found", NULL, 0);
     else if (!br.view.n) view_draw_empty(r, "folder-open", "Empty folder", br.items.n ? "Only hidden items are here" : NULL, 0);
     else return 0;
