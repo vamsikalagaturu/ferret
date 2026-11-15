@@ -33,8 +33,9 @@ key enter
 expect folder alpha
 key h
 
-# Copy from a row's menu, Paste from the empty space's menu
+# Copy from a row's menu (Open, Open with..., Copy), Paste from the empty space's menu
 rclick row a.txt
+key down
 key down
 key down
 key enter
@@ -76,8 +77,12 @@ type from-menu
 key enter
 expect exists from-menu
 
-# Rename from a row's menu opens the rename dialog
+# Rename from a folder's menu (Open, Copy, Cut, Copy as link, Open in a new tab, Measure the size, Rename) opens the
+# rename dialog
 rclick row from-menu
+key down
+key down
+key down
 key down
 key down
 key down
