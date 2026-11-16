@@ -26,6 +26,7 @@ int fr_release_latest(fr_release *out);
 int fr_release_parse(const char *json, fr_release *out);
 void fr_release_free(fr_release *r);
 
-/* "v1.2.3" or "1.2.3-dev+abc" against another: <0, 0, >0 by major, minor and patch only */
+/* "v1.2.3" or "1.2.3-dev+abc" against another: <0, 0, >0 by major, minor and patch, a pre-release before its
+ * release */
 int fr_version_cmp(const char *a, const char *b);
 #endif
