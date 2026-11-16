@@ -178,6 +178,7 @@ static void draw_menus(void)
             default: ops_paste(); break;
             }
         }
+        if (ui_menu_item("About ferret", "info", -1)) update_about_open();
         ui_menu_separator();
         view_items();
         if (!ui.touch) {
@@ -214,6 +215,7 @@ static void draw_menus(void)
         ui_menu_end();
     }
     place_menu_draw();
+    update_about_draw();
     if (ui_menu_begin(app.menu_row)) {
         fr_item *it = browser_item(br.cursor);
         if (br.nselected == 1 && it && ui_menu_item("Open", "external-link", -1)) ops_open_item(it);

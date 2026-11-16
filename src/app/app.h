@@ -404,6 +404,8 @@ float compare_bar_draw(Rectangle area); /* the bar at the bottom of area while c
 /* ---- updates from GitHub releases (update.c) ---- */
 void update_check(int manual); /* in the background; manual says the outcome even when there is no update */
 float update_bar_draw(Rectangle area); /* the bar offering a newer release at the bottom of area; its height */
+void update_about_open(void);          /* the About dialog: version, check for updates, releases */
+void update_about_draw(void);
 int compare_dialog_open(void);
 void compare_draw_dialog(void);
 void compare_menu_items(void);
