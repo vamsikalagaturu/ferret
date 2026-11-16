@@ -47,7 +47,7 @@ int fr_release_parse(const char *json, fr_release *out)
 int fr_release_latest(fr_release *out)
 {
     fr_curl_buf body = {0};
-    int rc = fr_curl_fetch("https://api.github.com/repos/" FR_RELEASE_REPO "/releases/latest", &body, NULL);
+    int rc = fr_curl_fetch("https://api.github.com/repos/" FR_RELEASE_REPO "/releases/latest", &body, NULL, NULL);
     if (!rc) rc = body.n ? fr_release_parse(body.v, out) : -EINVAL;
     free(body.v);
     return rc;

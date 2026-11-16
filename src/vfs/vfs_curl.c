@@ -683,7 +683,14 @@ static size_t buf_cb(char *p, size_t size, size_t n, void *ud)
     return size * n;
 }
 
-int fr_curl_fetch(const char *url, fr_curl_buf *body, const char *path)
+static int fetch_progress(void *p, curl_off_t total, curl_off_t now, curl_off_t up_total, curl_off_t up_now)
+{
+    (void)up_total, (void)up_now;
+    if (total > 0) *(volatile float *)p = (float)((double)now / (double)total);
+    return 0;
+}
+
+int fr_curl_fetch(const char *url, fr_curl_buf *body, const char *path, volatile float *progress)
 {
     pthread_once(&once, global_init);
     CURL *e = curl_easy_init();
@@ -708,6 +715,11 @@ int fr_curl_fetch(const char *url, fr_curl_buf *body, const char *path)
     if (!path) curl_easy_setopt(e, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(e, CURLOPT_WRITEFUNCTION, f ? file_cb : buf_cb);
     curl_easy_setopt(e, CURLOPT_WRITEDATA, f ? (void *)f : (void *)body);
+    if (progress) {
+        curl_easy_setopt(e, CURLOPT_XFERINFOFUNCTION, fetch_progress);
+        curl_easy_setopt(e, CURLOPT_XFERINFODATA, (void *)progress);
+        curl_easy_setopt(e, CURLOPT_NOPROGRESS, 0L);
+    }
     curl_easy_setopt(e, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(e, CURLOPT_SSL_VERIFYHOST, 2L);
     if (ca_blob.n) {

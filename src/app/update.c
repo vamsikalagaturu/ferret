@@ -20,6 +20,7 @@ static struct {
     int checking, downloading, dismissed;
     int installed; /* the Linux program was replaced; a restart runs the new one */
     fr_release rel; /* a newer release than this build, tag NULL when none */
+    volatile float progress; /* of the download, 0..1, written by its worker thread */
 } U;
 
 typedef struct {
@@ -107,7 +108,7 @@ static void download_work(void *arg)
 {
     task *t = arg;
     const char *url = t->rel.apk ? t->rel.apk : t->rel.linux_bin;
-    t->rc = fr_curl_fetch(url, NULL, t->path);
+    t->rc = fr_curl_fetch(url, NULL, t->path, &U.progress);
 #ifndef __ANDROID__
     /* next to the program, then renamed over it: the running one keeps its inode until it exits */
     if (!t->rc && t->rel.linux_bin) {
@@ -160,7 +161,28 @@ static void update_now(void)
     else t->rel.linux_bin = fr_strdup(U.rel.linux_bin);
     free(dir), free(prog);
     U.downloading = 1;
+    U.progress = 0;
     fr_async_run(download_work, download_done, t);
+}
+
+static int about_open;
+
+void update_about_open(void) { about_open = 1; }
+
+/* ferret's version, and the way to the updates: the check (whose outcome is the bar or a toast) and the releases */
+void update_about_draw(void)
+{
+    if (!about_open) return;
+    char message[160];
+    snprintf(message, sizeof message, "Version %s\nA file explorer for Linux and Android.", FR_VERSION);
+    fr_dialog d = {.title = "About ferret", .message = message,
+                   .buttons = {"Releases", "Close", U.checking ? "Checking..." : "Check for updates"}, .nbuttons = 3,
+                   .cancel = 1};
+    int b = ui_dialog(&d);
+    if (b == 0 && plat_open("https://github.com/" FR_RELEASE_REPO "/releases"))
+        ui_toast("Could not open the releases page");
+    if (b == 2 && !U.checking) update_check(1);
+    if (b >= 0) about_open = 0;
 }
 
 float update_bar_draw(Rectangle area)
@@ -173,7 +195,15 @@ float update_bar_draw(Rectangle area)
     ui_icon("download", (Rectangle){r.x + pad, r.y, DP(32), h}, 20, theme.accent);
     char label[96];
     const char *v = U.rel.tag[0] == 'v' ? U.rel.tag + 1 : U.rel.tag;
-    snprintf(label, sizeof label, U.installed ? "ferret %s is installed" : U.downloading ? "Downloading ferret %s..." : "ferret %s is available", v);
+    if (U.installed) snprintf(label, sizeof label, "ferret %s is installed", v);
+    else if (U.downloading) snprintf(label, sizeof label, "Downloading ferret %s... %d%%", v, (int)(U.progress * 100));
+    else snprintf(label, sizeof label, "ferret %s is available", v);
+    if (U.downloading) {
+        /* a thin track along the bar's foot, filled as the worker reports; the frame loop idles, so ask again */
+        ui_progress((Rectangle){r.x + pad + DP(40), r.y + h - DP(10), r.width - 2 * pad - DP(40), DP(4)}, U.progress,
+                    theme.accent);
+        ui_redraw_in(0.1);
+    }
     char *prog = installed_program();
     const char *go = U.installed ? "Restart" : (ui.touch && U.rel.apk) || (prog && U.rel.linux_bin) ? "Update" : "Open";
     free(prog);

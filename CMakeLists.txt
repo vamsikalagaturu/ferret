@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(ferret VERSION 0.1.1 DESCRIPTION "File explorer for Linux and Android" LANGUAGES C)
+project(ferret VERSION 0.1.2 DESCRIPTION "File explorer for Linux and Android" LANGUAGES C)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 option(FR_BUILD_PROGRAMS "Build the desktop program and the tests (off: only the core library, for Android)" ON)

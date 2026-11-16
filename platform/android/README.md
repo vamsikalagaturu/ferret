@@ -43,7 +43,7 @@ adb shell appops set --uid io.github.vamsikalagaturu.ferret MANAGE_EXTERNAL_STOR
 | `java/.../FerretActivity.java` | `NativeActivity` subclass: storage permission, opening files, soft keyboard text, clipboard, haptics, insets, remembered server passwords (`servers.sealed` in the app's files, AES-GCM under an Android Keystore key). |
 | `java/.../Saf.java` | Removable volumes, their granted folder trees and the `DocumentsContract` calls behind `saf.c`. |
 | `java/.../OpenProvider.java` | Serves a file read-only to the app it is opened in (`content://<package>.files/<path>`). |
-| `res/mipmap-*/ic_launcher.png` | Lucide `folder-search` in #88C0D0 on #2E3440. |
+| `res/mipmap-*/ic_launcher*` | Lucide `folder-search` in #88C0D0: an adaptive icon (`mipmap-anydpi-v26`, Android 8+) over #2E3440 (`values/colors.xml`), the square `ic_launcher.png` for older launchers and the Linux desktop entry. |
 
 ## SD cards and USB drives
 
