@@ -413,7 +413,11 @@ static void open_now(const char *uri, int push_history)
     free(previous);
 }
 
-void browser_open(const char *uri, int push_history) { app_defer(open_now, uri, push_history); }
+void browser_open(const char *uri, int push_history)
+{
+    page_open(PAGE_NONE); /* a phone's page (pages.c) gives way to the folder */
+    app_defer(open_now, uri, push_history);
+}
 
 static void back_now(const char *s, int n)
 {

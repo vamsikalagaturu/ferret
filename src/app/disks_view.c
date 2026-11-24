@@ -26,6 +26,7 @@ typedef struct {
 
 static struct {
     int open, loaded, available;
+    int from_storage_page; /* opened from a phone's Storage page: closing goes back there */
     unsigned serial;
     dk_plan plan;
     fr_strs formats;
@@ -877,8 +878,16 @@ void dview_open(void)
     ui.dirty = 1;
 }
 
+void dview_open_from_storage_page(void)
+{
+    dview_open();
+    V.from_storage_page = 1;
+}
+
 void dview_close(void)
 {
+    if (V.open && V.from_storage_page) app.drawer_open = 1;
+    V.from_storage_page = 0;
     V.open = 0;
     close_form();
     usage_close();
@@ -889,7 +898,7 @@ static void top_bar(Rectangle r)
 {
     ui_rect(r, theme.bg);
     float b = DP(ui.touch ? 48 : 36), x = r.x + DP(4), cy = r.y + (r.height - b) / 2;
-    if (!app_wide()) {
+    if (!app_wide() && !phone_layout()) {
         if (ui_icon_button(ui_id("dview-drawer", 0), (Rectangle){x, cy, b, b}, "menu", theme.text)) app.drawer_open = 1, places_refresh(1);
         x += b;
     }
@@ -899,7 +908,7 @@ static void top_bar(Rectangle r)
         else dview_close();
     }
     x += b + DP(8);
-    const char *title = inside ? usage_title() : plat_dm_supported() ? "Disks" : "Storage";
+    const char *title = inside ? usage_title() : plat_dm_supported() ? "Disks" : "Storage usage";
     ui_text_box(title, (Rectangle){x, r.y, fminf(ui_text_width(title, 17, FONT_SEMIBOLD) + DP(4), r.x + r.width - x - DP(16)), r.height}, 17,
                 FONT_SEMIBOLD, theme.text, ALIGN_LEFT, 0);
     if (plat_dm_supported() && V.available && !inside) {
@@ -916,6 +925,12 @@ void dview_draw(Rectangle r)
     top_bar((Rectangle){r.x, r.y, r.width, hh});
     Rectangle body = {r.x, r.y + hh, r.width, r.height - hh};
     if (!plat_dm_supported()) {
+        /* a phone's Storage page has the overview; out of look inside goes back there */
+        if (phone_layout() && !usage_is_open()) {
+            V.from_storage_page = 1;
+            dview_close();
+            return;
+        }
         if (usage_is_open()) usage_draw(body);
         else storage_draw(body);
         return;

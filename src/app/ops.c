@@ -53,10 +53,12 @@ void ops_open_entry(const char *uri, const fr_entry *e)
         free(root);
     } else if (!fr_uri_local(uri) && fr_vfs_backend(uri)) {
         fr_strs one = {(char *[]){(char *)uri}, 1, 1};
+        recent_file(uri);
         fetch_open(&one, 0);
     } else {
         const char *path = fr_uri_local(uri);
         if (!path || plat_open(path)) ui_toast("No app can open %s", e->name);
+        else recent_file(uri);
     }
 }
 

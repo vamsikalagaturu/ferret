@@ -161,6 +161,17 @@ static char *folder_uri(const char *s)
     return favorite_uri(s);
 }
 
+/* settings.recent: a folder's URI with a "/" at its end, a file's as it is */
+static void recent_add(const char *uri, int folder)
+{
+    size_t n = strlen(uri);
+    char *entry = folder && !(n && uri[n - 1] == '/') ? fr_format("%s/", uri) : fr_strdup(uri);
+    fr_recent_push(&settings.recent, entry, FR_RECENT_MAX);
+    free(entry);
+}
+
+void recent_file(const char *uri) { recent_add(uri, 0); }
+
 static void apply(const fr_toml *t)
 {
     const fr_toml_value *v;
@@ -211,11 +222,15 @@ static void apply(const fr_toml *t)
             else free(uri);
         }
     }
-    if ((v = fr_toml_get(t, "", "recent", TOML_STRINGS))) {
+    /* "recent" is what 0.1.3 and before wrote: folders only */
+    int folders_only = !fr_toml_get(t, "", "recents", TOML_STRINGS);
+    if ((v = fr_toml_get(t, "", folders_only ? "recent" : "recents", TOML_STRINGS))) {
         fr_strs_free(&settings.recent);
         for (i = v->strs.n - 1; i >= 0; i--) {
-            char *uri = folder_uri(v->strs.v[i]);
-            if (uri) fr_recent_push(&settings.recent, uri, FR_RECENT_MAX);
+            const char *s = v->strs.v[i];
+            size_t n = strlen(s);
+            char *uri = folder_uri(s);
+            if (uri) recent_add(uri, folders_only || (n && s[n - 1] == '/'));
             free(uri);
         }
     }
@@ -304,13 +319,18 @@ static char *settings_text(void)
     fr_toml_comment(&o, "ftp:// and ftps:// (TLS), dav:// and davs:// (WebDAV over http and https), nfs://host/export.");
     fr_toml_comment(&o, "Passwords are not kept here: the system's keystore has them when you ask ferret to remember one.");
     fr_toml_strings(&o, "servers", &settings.servers);
-    fr_toml_comment(&o, "The folders visited last, newest first (g- lists them): paths, or URIs without passwords.");
+    fr_toml_comment(&o, "The folders visited and files opened last, newest first: paths, or URIs without passwords; a");
+    fr_toml_comment(&o, "folder's ends in \"/\".");
     shown = (fr_strs){0};
     for (int i = 0; i < settings.recent.n; i++) {
-        const char *p = fr_uri_local(settings.recent.v[i]);
-        FR_PUSH(shown, fr_strdup(p ? p : settings.recent.v[i]));
+        const char *e = settings.recent.v[i];
+        char *uri = recent_uri(e);
+        const char *p = fr_uri_local(uri);
+        size_t n = p ? strlen(p) : 0;
+        FR_PUSH(shown, p ? fr_format("%s%s", p, recent_is_folder(e) && !(n && p[n - 1] == '/') ? "/" : "") : fr_strdup(e));
+        free(uri);
     }
-    fr_toml_strings(&o, "recent", &shown);
+    fr_toml_strings(&o, "recents", &shown);
     fr_strs_free(&shown);
     fr_toml_comment(&o, "");
     fr_toml_comment(&o, "Bookmarks: m and a letter or digit marks a folder, ' and the key goes there; key = \"path or URI\".");
@@ -414,6 +434,7 @@ void theme_apply(void)
 {
     shown_light = want_light();
     theme_load(settings.theme, shown_light);
+    plat_system_bars(shown_light);
     ui.dirty = 1;
 }
 
@@ -432,7 +453,22 @@ static void scheme_poll(void)
     if (want_light() != shown_light) theme_apply();
 }
 
-void recent_visit(const char *uri) { fr_recent_push(&settings.recent, uri, FR_RECENT_MAX); }
+void recent_visit(const char *uri) { recent_add(uri, 1); }
+
+int recent_is_folder(const char *entry)
+{
+    size_t n = strlen(entry);
+    return n && entry[n - 1] == '/';
+}
+
+char *recent_uri(const char *entry)
+{
+    const char *path = strstr(entry, "://");
+    size_t n = strlen(entry);
+    /* a root ("file:///", "smb://nas/") keeps its slash */
+    if (!recent_is_folder(entry) || !path || !strchr(path + 3, '/') || strchr(path + 3, '/') == entry + n - 1) return fr_strdup(entry);
+    return fr_strndup(entry, n - 1);
+}
 
 /* only local folders and the trash: a network share that is gone would hold up the start */
 static int usable_start(const char *uri)

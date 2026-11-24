@@ -64,6 +64,7 @@ void move_cursor(int to, int extend)
 int step_back(int quit_at_end)
 {
     if (app.drawer_open) return app.drawer_open = 0, 1;
+    if (page_shown()) return page_open(PAGE_NONE), 1;
     if (br.nselected) return browser_clear_selection(), 1;
     if (br.filtering) return filter_stop(), 1;
     if (br.kinds) return kinds_set(KF_ALL), 1;

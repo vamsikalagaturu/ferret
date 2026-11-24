@@ -42,12 +42,33 @@ adb shell appops set --uid io.github.vamsikalagaturu.ferret MANAGE_EXTERNAL_STOR
 | `saf.c` | The `saf://` VFS backend: SD cards and USB drives through the Storage Access Framework. |
 | `java/.../FerretActivity.java` | `NativeActivity` subclass: storage permission, opening files, soft keyboard text, clipboard, haptics, insets, remembered server passwords (`servers.sealed` in the app's files, AES-GCM under an Android Keystore key). |
 | `java/.../Saf.java` | Removable volumes, their granted folder trees and the `DocumentsContract` calls behind `saf.c`. |
-| `java/.../OpenProvider.java` | Serves a file read-only to the app it is opened in (`content://<package>.files/<path>`). |
-| `res/mipmap-*/ic_launcher*` | Lucide `folder-search` in #88C0D0: an adaptive icon (`mipmap-anydpi-v26`, Android 8+) over #2E3440 (`values/colors.xml`), the square `ic_launcher.png` for older launchers and the Linux desktop entry. |
+| `java/.../OpenProvider.java` | Serves a file read-only to the app it is opened in (`content://<package>.files/<path>`). || `res/mipmap-*/ic_launcher*` | Lucide `folder-search` in #88C0D0: an adaptive icon (`mipmap-anydpi-v26`, Android 8+) over #2E3440 (`values/colors.xml`), the square `ic_launcher.png` for older launchers and the Linux desktop entry. |
+
+## The files app
+
+Android has no default file manager setting; ferret takes the places there are. Its activity has the files app's
+category (`MAIN` + `CATEGORY_APP_FILES`, opened by Settings > Storage and by apps asking for "the file manager"),
+and opens folders other apps hand over (`ACTION_VIEW` of `vnd.android.document/directory`, `resource/folder`,
+`inode/directory`, `x-directory/normal`): `FerretActivity.takeOpenPath()` turns the URI into a path (a `file://`
+one, an external storage document or tree, a downloads `raw:` path; a file opens its folder), and the app, asking a
+few times a second through `plat_take_open_path()`, opens it. Choosing ferret with "Always" there makes it the one.
+
+Testing: `adb shell am start -a android.intent.action.VIEW -t vnd.android.document/directory -d
+content://com.android.externalstorage.documents/document/primary%3ADownload` opens Download.
+
+## The phone's layout
+
+A bottom bar (`main.c`): Files (the top of internal storage, history cleared), Recent (`pages.c`: the folders
+visited and files opened, settings.toml's `recents`), Search, Favorites (`pages.c`; a long press has the sidebar's
+menu), and Storage (the places as a page, each volume with its free space and Usage, the disks view's look
+inside). The pages' rows are drawn as `views.c` draws a file on a touchscreen. The folder's path is a row of its
+own under the bar, swiped sideways. raylib hides the status bar (`AWINDOW_FLAG_FULLSCREEN`); `plat_init_window()`
+shows it again over the window, which keeps clear of it through the insets, and `plat_system_bars()` gives it dark
+icons under the light theme.
 
 ## SD cards and USB drives
 
-All files access reads removable volumes at `/storage/XXXX-XXXX`, but writes there fail. The drawer lists each
+All files access reads removable volumes at `/storage/XXXX-XXXX`, but writes there fail. The Storage page lists each
 mounted removable volume (`StorageManager.getStorageVolumes()`, named by its description, "SD card") as
 `saf://<tree URI, percent-encoded>/`. Opening one without a grant opens the system's folder picker at that volume;
 the chosen tree's permission is persisted and remembered per volume UUID (shared preferences `saf`). Listing,

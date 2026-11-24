@@ -13,7 +13,7 @@
         android:hasCode="true"
         android:allowBackup="false"
         android:resizeableActivity="false"
-        android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
+        android:theme="@android:style/Theme.NoTitleBar">
         <activity
             android:name=".FerretActivity"
             android:exported="true"
@@ -25,6 +25,22 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- the files app (Settings > Storage, and apps that open "the file manager") -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.APP_FILES" />
+            </intent-filter>
+            <!-- a folder opened from another app (FerretActivity.takeOpenPath) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="vnd.android.document/directory" />
+                <data android:mimeType="vnd.android.document/root" />
+                <data android:mimeType="resource/folder" />
+                <data android:mimeType="inode/directory" />
+                <data android:mimeType="x-directory/normal" />
             </intent-filter>
         </activity>
         <provider

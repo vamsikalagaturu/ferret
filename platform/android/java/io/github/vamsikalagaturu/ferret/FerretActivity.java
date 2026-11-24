@@ -17,6 +17,7 @@ import android.view.HapticFeedbackConstants;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
+import android.view.WindowInsetsController;
 import android.view.WindowManager;
 import android.view.inputmethod.BaseInputConnection;
 import android.view.inputmethod.EditorInfo;
@@ -103,6 +104,44 @@ public class FerretActivity extends NativeActivity {
     protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
         if (request == Saf.REQUEST_TREE) saf.onResult(result, data);
+    }
+
+    /* ---- a folder handed to ferret ---- */
+
+    /* The folder an app asked ferret to open (ACTION_VIEW of a folder; a file opens its folder), as a path, taken
+     * once: null when there is none. A folder comes as a file:// URI, a document or tree of the external storage
+     * provider ("primary:Download" is /storage/emulated/0/Download, "XXXX-XXXX:dir" is /storage/XXXX-XXXX/dir), a
+     * downloads document with a "raw:" path. */
+    public String takeOpenPath() {
+        Intent i = getIntent();
+        if (i == null || !Intent.ACTION_VIEW.equals(i.getAction()) || i.getData() == null) return null;
+        Uri u = i.getData();
+        setIntent(new Intent());
+        String path = null;
+        if ("file".equals(u.getScheme())) path = u.getPath();
+        else if ("content".equals(u.getScheme())) {
+            String id = null;
+            try {
+                id = android.provider.DocumentsContract.isTreeUri(u)
+                    ? android.provider.DocumentsContract.getTreeDocumentId(u)
+                    : android.provider.DocumentsContract.getDocumentId(u);
+            } catch (IllegalArgumentException e) {
+                return null;
+            }
+            String auth = u.getAuthority();
+            if (id.startsWith("raw:")) path = id.substring(4);
+            else if ("com.android.externalstorage.documents".equals(auth)) {
+                int colon = id.indexOf(':');
+                String volume = colon < 0 ? id : id.substring(0, colon), rest = colon < 0 ? "" : id.substring(colon + 1);
+                path = ("primary".equals(volume) ? Environment.getExternalStorageDirectory().getPath() : "/storage/" + volume) +
+                       (rest.isEmpty() ? "" : "/" + rest);
+            } else if ("com.android.providers.downloads.documents".equals(auth))
+                path = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).getPath();
+        }
+        if (path == null) return null;
+        File f = new File(path);
+        if (f.isFile() && f.getParent() != null) path = f.getParent();
+        return path;
     }
 
     /* ---- opening files ---- */
@@ -279,6 +318,17 @@ public class FerretActivity extends NativeActivity {
         getWindow().setAttributes(lp);
         sink = new TextSink();
         addContentView(sink, new ViewGroup.LayoutParams(1, 1));
+    }
+
+    /* "1": dark icons on the status and navigation bars, for a light theme */
+    public String setLightBars(String light) {
+        runOnUiThread(() -> {
+            WindowInsetsController c = getWindow().getInsetsController();
+            if (c == null) return;
+            int both = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS | WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+            c.setSystemBarsAppearance("1".equals(light) ? both : 0, both);
+        });
+        return null;
     }
 
     public String showKeyboard() {

@@ -194,7 +194,16 @@ void place_menu_draw(void)
     ui_menu_end();
 }
 
-/* the disks view's row: "Manage disks" heading the disks, "Storage" after the places where there is no disk manager */
+/* place i is not inside another place: a volume, not a folder on one */
+static int outermost(int i)
+{
+    for (int k = 0; k < app.places.n; k++)
+        if (k != i && strcmp(app.places.v[k].uri, app.places.v[i].uri) && fr_uri_within(app.places.v[k].uri, app.places.v[i].uri)) return 0;
+    return 1;
+}
+
+/* the disks view's row: "Manage disks" heading the disks, "Storage usage" after the places where there is no disk
+   manager */
 
 static float manage_row(Rectangle r, float y, float ih)
 {
@@ -206,7 +215,7 @@ static float manage_row(Rectangle r, float y, float ih)
     }
     if (on) ui_round(row, 8, theme.selection);
     else if (state) ui_round(row, 8, state == 2 ? theme.pressed : theme.hover);
-    const char *label = plat_dm_supported() ? "Manage disks" : "Storage";
+    const char *label = plat_dm_supported() ? "Manage disks" : "Storage usage";
     ui_icon("hard-drive",(Rectangle){row.x + DP(8), y, DP(32), ih}, 20, on ? theme.accent : theme.text_dim);
     ui_text_box(label, (Rectangle){row.x + DP(52), y, row.width - DP(60), ih}, 15, on ? FONT_SEMIBOLD : FONT_REGULAR, on ? theme.text : theme.text_dim,
                 ALIGN_LEFT, 0);
@@ -216,6 +225,7 @@ static float manage_row(Rectangle r, float y, float ih)
 static float disks_draw(Rectangle r, float y, float ih, int current)
 {
     if (!plat_dm_supported()) {
+        if (phone_layout()) return y; /* the Storage page shows each volume's space on its row */
         ui_hline(r.x + DP(16), y + DP(6), r.width - DP(32), theme.border);
         return manage_row(r, y + DP(12), ih);
     }
@@ -272,27 +282,32 @@ void places_draw(Rectangle r)
 {
     static fr_scroll scroll;
     static float content_h;
-    ui_rect(r, theme.surface);
+    ui_rect(r, phone_layout() ? theme.bg : theme.surface);
     float ih = ui.touch ? fmaxf(DP(52), ui_line_height(15) + DP(20)) : app_row_height(), status_h = DP(36);
     float foot = ui.touch ? 0 : ih + DP(8) + DP(8) + status_h + DP(4);
     Rectangle view = {r.x, r.y, r.width, r.height - foot};
     ui_scroll(ui_id("places-scroll", 0), &scroll, view, content_h);
     ui_clip_begin(view);
     float y = r.y + DP(12) - scroll.offset;
-    ui_text_box("ferret", (Rectangle){r.x + DP(20), y, r.width - DP(40), DP(28)}, 20, FONT_SEMIBOLD, theme.accent, ALIGN_LEFT, 0);
-    ui_text_box(FR_VERSION, (Rectangle){r.x + DP(20), y + DP(28), r.width - DP(40), DP(16)}, 12, FONT_REGULAR, theme.text_faint, ALIGN_LEFT, 1);
-    y += DP(56);
+    /* a phone's Storage page (pages.c) has its own title, and Favorites a page of their own */
+    int page = phone_layout();
+    if (!page) {
+        ui_text_box("ferret", (Rectangle){r.x + DP(20), y, r.width - DP(40), DP(28)}, 20, FONT_SEMIBOLD, theme.accent, ALIGN_LEFT, 0);
+        ui_text_box(FR_VERSION, (Rectangle){r.x + DP(20), y + DP(28), r.width - DP(40), DP(16)}, 12, FONT_REGULAR, theme.text_faint, ALIGN_LEFT, 1);
+        y += DP(56);
+    }
     if (tabs_at() == TABS_LEFT) {
         y = tablist_draw(r, y, ih);
         ui_hline(r.x + DP(16), y + DP(6), r.width - DP(32), theme.border);
         y += DP(12);
     }
-    int fav_current = br.uri && !dview_is_open() ? favorite_index(br.uri) : -1;
-    if (settings.favorites.n) {
+    int nfav = page ? 0 : settings.favorites.n;
+    int fav_current = br.uri && !dview_is_open() && !page ? favorite_index(br.uri) : -1;
+    if (nfav) {
         ui_text_box("Favorites", (Rectangle){r.x + DP(20), y, r.width - DP(40), DP(24)}, 13, FONT_SEMIBOLD, theme.text_dim, ALIGN_LEFT, 0);
         y += DP(24);
     }
-    for (int i = 0; i < settings.favorites.n; i++) {
+    for (int i = 0; i < nfav; i++) {
         const char *uri = settings.favorites.v[i];
         Rectangle row = {r.x + DP(8), y, r.width - DP(16), ih};
         int state;
@@ -312,7 +327,7 @@ void places_draw(Rectangle r)
         free(name);
         y += ih;
     }
-    if (settings.favorites.n) {
+    if (nfav) {
         ui_hline(r.x + DP(16), y + DP(6), r.width - DP(32), theme.border);
         y += DP(12);
     }
@@ -324,10 +339,17 @@ void places_draw(Rectangle r)
             ui_hline(r.x + DP(16), y + DP(6), r.width - DP(32), theme.border);
             y += DP(12);
         }
-        Rectangle row = {r.x + DP(8), y, r.width - DP(16), ih};
+        /* on a phone's Storage page a volume (a place no other place holds) shows its space, and Usage looks inside */
+        char space[96];
+        float used = 0;
+        int volume = page && outermost(i) && storage_space(p->v[i].uri, space, sizeof space, &used);
+        float l1 = ui_line_height(15), l2 = ui_line_height(13), rh = volume ? fmaxf(ih, l1 + l2 + DP(40)) : ih;
+        float bw = volume ? ui_text_width("Usage", 14, FONT_REGULAR) + DP(28) : 0;
+        Rectangle row = {r.x + DP(8), y, r.width - DP(16), rh};
+        Rectangle tap = {row.x, row.y, row.width - (volume ? bw + DP(12) : 0), rh};
         int state;
         if (ui_hover(row) && ui.rpressed && ui_live()) place_menu_open(p->v[i].uri, PLACE_ROOT);
-        if (ui_clickable(ui_id("place", i), row, &state)) {
+        if (ui_clickable(ui_id("place", i), tap, &state)) {
             dview_close();
             browser_open(p->v[i].uri, 1);
             app.drawer_open = 0;
@@ -335,10 +357,23 @@ void places_draw(Rectangle r)
         if (i == current) ui_round(row, 8, theme.selection);
         else if (state) ui_round(row, 8, state == 2 ? theme.pressed : theme.hover);
         Color c = i == current ? theme.accent : theme.text_dim;
-        ui_icon(p->v[i].icon, (Rectangle){row.x + DP(8), y, DP(32), ih}, 20, c);
-        ui_text_box(p->v[i].label, (Rectangle){row.x + DP(52), y, row.width - DP(60), ih}, 15,
-                    i == current ? FONT_SEMIBOLD : FONT_REGULAR, i == current ? theme.text : theme.text_dim, ALIGN_LEFT, 0);
-        y += ih;
+        ui_icon(p->v[i].icon, (Rectangle){row.x + DP(8), y, DP(32), volume ? l1 + DP(24) : ih}, 20, c);
+        float tx = row.x + DP(52), tw = row.width - DP(60) - (volume ? bw + DP(12) : 0);
+        if (!volume) {
+            ui_text_box(p->v[i].label, (Rectangle){tx, y, tw, ih}, 15, i == current ? FONT_SEMIBOLD : FONT_REGULAR,
+                        i == current ? theme.text : theme.text_dim, ALIGN_LEFT, 0);
+        } else {
+            float ty = y + DP(12);
+            ui_text_box(p->v[i].label, (Rectangle){tx, ty, tw, l1}, 15, i == current ? FONT_SEMIBOLD : FONT_REGULAR,
+                        i == current ? theme.text : theme.text_dim, ALIGN_LEFT, 0);
+            ui_text_box(space, (Rectangle){tx, ty + l1 + DP(2), tw, l2}, 13, FONT_REGULAR, theme.text_faint, ALIGN_LEFT, 0);
+            Rectangle bar = {tx, ty + l1 + l2 + DP(10), tw, DP(6)};
+            ui_round(bar, 3, ui_alpha(theme.accent, 0.18f));
+            ui_round((Rectangle){bar.x, bar.y, fmaxf(DP(6), bar.width * used), bar.height}, 3, ui_alpha(theme.accent, 0.8f));
+            Rectangle btn = {row.x + row.width - bw - DP(8), y + (rh - DP(36)) / 2, bw, DP(36)};
+            if (ui_button(ui_id("place-usage", i), btn, "Usage", 0)) storage_look_inside(p->v[i].uri, p->v[i].label);
+        }
+        y += rh;
     }
     y = disks_draw(r, y, ih, disk_current);
     y = network_draw(r, y, ih);

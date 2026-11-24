@@ -48,13 +48,15 @@ static void test_push(void)
     CHECK_STR(l.v[0], "sftp://bob@h/x");
     CHECK_STR(l.v[1], "file:///d");
     fr_strs_free(&l);
-    for (int i = 0; i < 30; i++) {
+    for (int i = 0; i < FR_RECENT_MAX + 10; i++) {
         char *u = fr_format("file:///f%d", i);
         fr_recent_push(&l, u, FR_RECENT_MAX);
         free(u);
     }
     CHECK(l.n == FR_RECENT_MAX);
-    CHECK_STR(l.v[0], "file:///f29");
+    char newest[32];
+    snprintf(newest, sizeof newest, "file:///f%d", FR_RECENT_MAX + 9);
+    CHECK_STR(l.v[0], newest);
     CHECK_STR(l.v[FR_RECENT_MAX - 1], "file:///f10");
     fr_strs_free(&l);
 }

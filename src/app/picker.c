@@ -128,8 +128,13 @@ void recent_pick(void)
     const char *home = getenv("HOME");
     size_t hl = home ? strlen(home) : 0;
     for (int i = 0; i < settings.recent.n; i++) {
-        const char *uri = settings.recent.v[i], *path = fr_uri_local(uri);
-        if (br.uri && !strcmp(uri, br.uri)) continue;
+        if (!recent_is_folder(settings.recent.v[i])) continue;
+        char *owned = recent_uri(settings.recent.v[i]);
+        const char *uri = owned, *path = fr_uri_local(uri);
+        if (br.uri && !strcmp(uri, br.uri)) {
+            free(owned);
+            continue;
+        }
         fr_pick *r = &rows[n++];
         char *name = fr_uri_name(uri);
         if (path) {
@@ -144,7 +149,7 @@ void recent_pick(void)
             free(server);
         }
         r->value = fr_strdup(uri);
-        free(name);
+        free(name), free(owned);
     }
     if (!n) {
         free(rows);

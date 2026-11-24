@@ -156,6 +156,16 @@ void search_stop(void)
     fr_entries_free(&s.pending);
 }
 
+int search_shown(void) { return (s.prompting && s.prompting == br.id) || br.results; }
+
+void search_close(void)
+{
+    if (!search_shown()) return;
+    s.typed_at = 0;
+    if (s.prompting) prompt_stop();
+    app_defer(leave_now, NULL, 0);
+}
+
 int search_header(Rectangle r)
 {
     /* the keys went to another pane or tab: the field goes with them */

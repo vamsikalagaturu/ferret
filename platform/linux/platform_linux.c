@@ -178,6 +178,7 @@ Vector2 plat_mouse(void)
 int plat_touch(void) { return 0; }
 void plat_insets(float *l, float *t, float *r, float *b) { *l = *t = *r = *b = 0; }
 void plat_keyboard(int show) { (void)show; }
+void plat_system_bars(int light) { (void)light; }
 void plat_haptic(void) {}
 int plat_storage_granted(void) { return 1; }
 void plat_request_storage(void) {}
@@ -294,5 +295,7 @@ char *plat_home_uri(void)
     const char *home = getenv("HOME");
     return fr_uri_from_path(home ? home : "/");
 }
+
+char *plat_take_open_path(void) { return NULL; }
 
 int main(int argc, char **argv) { return fr_app_main(argc, argv); }

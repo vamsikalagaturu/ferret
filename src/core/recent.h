@@ -3,7 +3,7 @@
 /* The folders visited last, newest first. */
 #include "util.h"
 
-#define FR_RECENT_MAX 20
+#define FR_RECENT_MAX 50
 
 /* uri to the front of list (moved there when it is in it already), with any password taken out of it; the oldest
  * go past max */

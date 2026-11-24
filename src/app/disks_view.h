@@ -23,5 +23,6 @@ void usage_shutdown(void);
 
 /* where the platform has no disk manager: the places' volumes, look inside on a tap */
 void storage_draw(Rectangle r);
+void dview_open_from_storage_page(void); /* closing it opens the page again */
 void storage_keys(void);
 #endif
