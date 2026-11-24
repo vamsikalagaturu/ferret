@@ -24,6 +24,7 @@ int plat_touch(void);          /* a touchscreen is the pointer */
 /* screen pixels covered by system bars, the cutout or the soft keyboard */
 void plat_insets(float *left, float *top, float *right, float *bottom);
 void plat_keyboard(int show);
+void plat_system_bars(int light); /* the status and navigation bars' icons dark, for a light theme (Android) */
 int plat_open(const char *path); /* in the app the system picks for it; 0 when handed over */
 /* paths separated by '\n' to the system's share sheet (Android); 0 when handed over, -1 where there is none */
 int plat_share(const char *paths);
@@ -78,6 +79,9 @@ typedef struct {
 void plat_places(fr_places *out); /* the storages and standard folders, in order */
 void fr_places_free(fr_places *p);
 char *plat_home_uri(void);        /* where the window starts */
+/* a folder another app asked ferret to open (Android's ACTION_VIEW), as a path, malloc'd, each one once; NULL none.
+   Linux has none: a folder comes as the command line's argument. */
+char *plat_take_open_path(void);
 
 /* Filesystems to mount, mounted or not (platform/linux/disks_linux.c; none on Android). Requests run in the
  * background, and plat_wake() tells when one finished or the list changed. */

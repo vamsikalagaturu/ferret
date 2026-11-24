@@ -237,9 +237,10 @@ void tabstrip_draw(Rectangle r)
 
 static void draw_pane(Rectangle r)
 {
-    float hh = header_height();
-    view_draw((Rectangle){r.x, r.y + hh, r.width, r.height - hh});
+    float hh = header_height(), ch = crumbs_row_height();
+    view_draw((Rectangle){r.x, r.y + hh + ch, r.width, r.height - hh - ch});
     header_draw((Rectangle){r.x, r.y, r.width, hh});
+    if (ch) crumbs_row_draw((Rectangle){r.x, r.y + hh, r.width, ch});
 }
 
 void panes_draw(Rectangle r)

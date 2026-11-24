@@ -12,6 +12,7 @@
 #include <android/log.h>
 #include <android/looper.h>
 #include <android/native_activity.h>
+#include <android/window.h>
 #include <android_native_app_glue.h>
 #include <errno.h>
 #include <jni.h>
@@ -421,6 +422,10 @@ void plat_init_window(void)
 {
     SetTraceLogLevel(LOG_WARNING);
     InitWindow(0, 0, "ferret"); /* 0x0: the whole display */
+    /* raylib hides the status bar; it shows over the app, which keeps clear of it through the insets, and the window
+     * keeps its size */
+    ANativeActivity_setWindowFlags(GetAndroidApp()->activity, AWINDOW_FLAG_LAYOUT_IN_SCREEN | AWINDOW_FLAG_LAYOUT_NO_LIMITS,
+                                   AWINDOW_FLAG_FULLSCREEN);
     SetExitKey(KEY_NULL);
     SetTargetFPS(60);
     struct android_app *a = GetAndroidApp();
@@ -523,6 +528,8 @@ void plat_keyboard(int show)
     keyboard_shown = show;
     insets_until = fr_now() + 1;
 }
+
+void plat_system_bars(int light) { free(java("setLightBars", 1, light ? "1" : "0")); }
 
 int plat_open(const char *path)
 {
@@ -638,6 +645,8 @@ void plat_places(fr_places *out)
 }
 
 char *plat_home_uri(void) { return fr_uri_from_path(INTERNAL); }
+
+char *plat_take_open_path(void) { return java("takeOpenPath", 0); }
 
 unsigned plat_disks_serial(void) { return 0; }
 void plat_disks(fr_disks *out) {}

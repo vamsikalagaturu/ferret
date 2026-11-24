@@ -533,6 +533,48 @@ static void storage_open(int i)
     free(path);
 }
 
+int storage_space(const char *uri, char *text, size_t len, float *used)
+{
+    static struct {
+        char uri[512];
+        uint64_t free, total;
+        int known;
+        double at;
+    } cache[8];
+    int slot = 0;
+    for (int i = 0; i < 8; i++) {
+        if (!strcmp(cache[i].uri, uri)) {
+            slot = i;
+            break;
+        }
+        if (cache[i].at < cache[slot].at) slot = i;
+    }
+    if (strcmp(cache[slot].uri, uri) || ui.now - cache[slot].at > 2) {
+        snprintf(cache[slot].uri, sizeof cache[slot].uri, "%s", uri);
+        cache[slot].at = ui.now;
+        const fr_backend *b = fr_vfs_backend(uri);
+        cache[slot].known = b && b->free_space && !b->free_space(uri, &cache[slot].free, &cache[slot].total) && cache[slot].total;
+    }
+    if (!cache[slot].known) return 0;
+    char fr[32], tot[32];
+    dk_size_text(cache[slot].free, fr, sizeof fr), dk_size_text(cache[slot].total, tot, sizeof tot);
+    snprintf(text, len, "%s free of %s", fr, tot);
+    uint64_t f = cache[slot].free, t = cache[slot].total;
+    *used = (float)((double)(f < t ? t - f : 0) / (double)t);
+    return 1;
+}
+
+void storage_look_inside(const char *uri, const char *label)
+{
+    char *path = plat_volume_path(uri);
+    if (!path) ui_toast("ferret cannot look inside %s", label);
+    else {
+        dview_open_from_storage_page();
+        usage_open(uri, path, label);
+    }
+    free(path);
+}
+
 void storage_draw(Rectangle r)
 {
     ui_rect(r, theme.bg);

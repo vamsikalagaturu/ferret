@@ -8,7 +8,7 @@ keys (`?` lists them all), and the same app on the desktop and the phone.
 - Browse local storage, archives (zip, tar, 7z, rar, iso), the trash, and phones over MTP
 - Network storage: SMB, SFTP, FTP/FTPS, WebDAV, NFS
 - Fuzzy search over every file name (fzf's matcher), plus search inside files
-- Tabs, split view with folder compare and sync, bookmarks, recent folders
+- Tabs, split view with folder compare and sync, bookmarks, recent folders and files
 - Copy, move, rename (also in bulk), undo, links, permissions, duplicate finder, folder sizes
 - Disk manager on Linux (UDisks2): partitions, formats, bootable USB sticks
 - Updates itself from GitHub releases

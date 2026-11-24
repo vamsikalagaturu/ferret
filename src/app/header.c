@@ -7,6 +7,13 @@
 
 float header_height(void) { return fmaxf(DP(ui.touch ? 56 : 48), ui_line_height(15) + DP(26)); }
 
+/* A phone: the folder's name in the bar, its path a row of its own under it (crumbs_row_draw), and the places,
+   search and the drawer in a bar at the bottom (main.c) */
+int phone_layout(void) { return ui.touch && !app_wide(); }
+static int crumbs_count(void);
+/* not at a storage's top, where the path would only repeat the title */
+float crumbs_row_height(void) { return phone_layout() && crumbs_count() > 1 ? DP(40) : 0; }
+
 typedef struct {
     char *label, *uri;
     float width;
@@ -32,6 +39,9 @@ static void add_crumbs(const char *uri, segs_t *segs)
     } else {
         /* a phone's /storage/emulated/0 means nothing to its user: there the path starts at the place it is in */
         int p = ui.touch ? place_of(uri) : -1;
+        /* the phone's path row has the room to start at the storage, not at Download inside it */
+        for (int i = 0; phone_layout() && p >= 0 && i < app.places.n; i++)
+            if (strlen(app.places.v[i].uri) < strlen(app.places.v[p].uri) && fr_uri_within(app.places.v[i].uri, uri)) p = i;
         if (p >= 0) {
             FR_PUSH(*segs, ((seg){fr_strdup(app.places.v[p].label), fr_strdup(app.places.v[p].uri), 0}));
             rest = uri + strlen(app.places.v[p].uri);
@@ -90,6 +100,75 @@ static void draw_breadcrumb(Rectangle r)
     free(segs.v);
     Rectangle rest_r = {x, r.y, r.x + r.width - x, r.height};
     if (rest_r.width > 0 && ui_clickable(ui_id("crumb-rest", 0), rest_r, NULL)) path_edit_start();
+}
+
+/* A phone's path row: every step of the path, the room it needs, swiped sideways (the finger's sideways travel
+   comes as the wheel's x); a folder newly opened shows its end. */
+void crumbs_row_draw(Rectangle r)
+{
+    ui_rect(r, theme.bg);
+    ui_hline(r.x, r.y + r.height - DP(1), r.width, theme.border);
+    if (!br.uri) return;
+    segs_t segs = {0};
+    add_crumbs(br.uri, &segs);
+    int n = segs.n;
+    float sep = DP(20), pad = DP(10), total = 2 * pad;
+    for (int i = 0; i < n; i++) {
+        segs.v[i].width = ui_text_width(segs.v[i].label, 14, i == n - 1 ? FONT_SEMIBOLD : FONT_REGULAR) + DP(12);
+        total += segs.v[i].width + (i ? sep : 0);
+    }
+    static float offset;
+    static char *shown_for;
+    float most = fmaxf(0, total - r.width);
+    if (!shown_for || strcmp(shown_for, br.uri)) {
+        free(shown_for);
+        shown_for = fr_strdup(br.uri);
+        offset = most;
+    }
+    if (ui_hover(r) && ui.wheel.x) offset -= ui.wheel.x * DP(60), ui.dirty = 1;
+    offset = fminf(most, fmaxf(0, offset));
+    float x = r.x + pad - offset;
+    ui_clip_begin(r);
+    for (int i = 0; i < n; i++) {
+        if (i) {
+            ui_icon("chevron-right", (Rectangle){x, r.y, sep, r.height}, 14, theme.text_faint);
+            x += sep;
+        }
+        int last = i == n - 1;
+        Rectangle box = {x, r.y + DP(6), segs.v[i].width, r.height - DP(12)};
+        int state = 0;
+        if (box.x + box.width > r.x && box.x < r.x + r.width && ui_clickable(ui_id("path-step", i), box, &state) && !last)
+            browser_open(segs.v[i].uri, 1);
+        if (state && !last) ui_round(box, 6, state == 2 ? theme.pressed : theme.hover);
+        ui_text_box(segs.v[i].label, (Rectangle){x + DP(6), r.y, segs.v[i].width - DP(12), r.height}, 14,
+                    last ? FONT_SEMIBOLD : FONT_REGULAR, last ? theme.text : theme.text_dim, ALIGN_LEFT, 0);
+        x += segs.v[i].width;
+    }
+    ui_clip_end();
+    for (int i = 0; i < n; i++) free(segs.v[i].label), free(segs.v[i].uri);
+    free(segs.v);
+}
+
+static int crumbs_count(void)
+{
+    if (!br.uri) return 0;
+    segs_t segs = {0};
+    add_crumbs(br.uri, &segs);
+    int n = segs.n;
+    for (int i = 0; i < n; i++) free(segs.v[i].label), free(segs.v[i].uri);
+    free(segs.v);
+    return n;
+}
+
+/* the folder's own name, for a phone's bar */
+static void folder_title(Rectangle r)
+{
+    if (!br.uri) return;
+    segs_t segs = {0};
+    add_crumbs(br.uri, &segs);
+    if (segs.n) ui_text_box(segs.v[segs.n - 1].label, r, 17, FONT_SEMIBOLD, theme.text, ALIGN_LEFT, 0);
+    for (int i = 0; i < segs.n; i++) free(segs.v[i].label), free(segs.v[i].uri);
+    free(segs.v);
 }
 
 /* ---- typing a location ---- */
@@ -298,13 +377,16 @@ void header_draw(Rectangle r)
         return;
     }
     if (search_header(r)) return;
-    if (!app_wide()) {
+    int phone = phone_layout();
+    if (!app_wide() && !phone) {
         if (ui_icon_button(ui_id("drawer", 0), btn, "menu", theme.text)) app.drawer_open = 1, places_refresh(1);
         x += b;
     }
-    Color back_c = br.back.n ? theme.text : theme.text_faint;
-    if (ui_icon_button(ui_id("back", 0), (Rectangle){x, cy, b, b}, "arrow-left", back_c)) browser_back();
-    x += b;
+    if (!phone || br.back.n) {
+        Color back_c = br.back.n ? theme.text : theme.text_faint;
+        if (ui_icon_button(ui_id("back", 0), (Rectangle){x, cy, b, b}, "arrow-left", back_c)) browser_back();
+        x += b;
+    } else x += DP(12);
     if (!ui.touch) {
         Color fwd_c = br.forward.n ? theme.text : theme.text_faint;
         if (ui_icon_button(ui_id("forward", 0), (Rectangle){x, cy, b, b}, "arrow-right", fwd_c)) browser_forward();
@@ -315,10 +397,17 @@ void header_draw(Rectangle r)
     right -= b;
     if (ui_icon_button(ui_id("more", 0), (Rectangle){right, cy, b, b}, "ellipsis-vertical", theme.text))
         ui_menu_open(app.menu_more, (Rectangle){right, cy, b, b});
-    right -= b;
-    if (ui_icon_button(ui_id("search", 0), (Rectangle){right, cy, b, b}, "search", theme.text)) search_everywhere();
+    if (!phone) {
+        right -= b;
+        if (ui_icon_button(ui_id("search", 0), (Rectangle){right, cy, b, b}, "search", theme.text)) search_everywhere();
+    }
     right = kinds_chip(r, right - DP(4)) + DP(4);
     Rectangle crumbs = {x + DP(4), r.y, right - x - DP(8), r.height};
+    if (phone) {
+        folder_title((Rectangle){crumbs.x + DP(4), r.y, crumbs.width - DP(4), r.height});
+        ui_hline(r.x, r.y + r.height - DP(1), r.width, theme.border);
+        return;
+    }
     double flash = ui.now - app.path_flash_at;
     if (app.path_flash_at && flash < 0.6 && active) {
         ui_round((Rectangle){crumbs.x, r.y + DP(6), crumbs.width, r.height - DP(12)}, 6, ui_alpha(theme.accent, 0.4f * (float)(1 - flash / 0.6)));

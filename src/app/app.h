@@ -174,10 +174,17 @@ void dview_poll(void);        /* between frames: the disks, the queue's run, the
 int dview_modal(void);        /* a dialog of its own is open */
 int dview_disk_done(const fr_disk_done *d); /* 1 when the finished request was the view's own */
 void dview_shutdown(void);    /* before the window closes: stops the scan, gives back its read-only mount */
+/* a volume's "12 GB free of 64 GB" and the share used (0 to 1); 0 when not known. Asked again every 2 s at most. */
+int storage_space(const char *uri, char *text, size_t len, float *used);
+void storage_look_inside(const char *uri, const char *label); /* the disks view's look inside, on that volume */
 
 /* ---- the header (header.c) ---- */
 float header_height(void);
 void header_draw(Rectangle r);
+/* a phone (touch, narrow): the path in a row of its own under the bar, the places in a bar at the bottom */
+int phone_layout(void);
+float crumbs_row_height(void); /* 0 where the path stays in the bar */
+void crumbs_row_draw(Rectangle r);
 void path_edit_start(void); /* the breadcrumb becomes a field to type a location in */
 
 /* ---- the files in the current layout (views.c) ---- */
@@ -207,7 +214,8 @@ typedef struct {
     char *last_folder, *start_folder; /* URIs, NULL when not set */
     fr_strs last_tabs; /* URIs: the tabs' folders when ferret last ran with more than one */
     fr_bookmarks bookmarks; /* [bookmarks]: URIs by key */
-    fr_strs recent;     /* URIs of the folders visited last, newest first, no passwords (core/recent.h) */
+    fr_strs recent;     /* the folders visited and files opened last, newest first, no passwords (core/recent.h):
+                           entries, a folder's URI ending in "/" (recent_is_folder, recent_uri) */
     int scheme;         /* SCHEME_*, [theme] scheme */
     int git_status;     /* git's marks in folders inside a work tree (desktop) */
     int relative_links; /* links made relative to their folder, else absolute */
@@ -237,7 +245,17 @@ enum { PLACE_FAVORITE, PLACE_SERVER, PLACE_ROOT, PLACE_DISK };
 void place_menu_open(const char *key, int kind); /* the sidebar's right-click menu on a row: key is its URI, a disk's id */
 void place_menu_draw(void);
 void recent_visit(const char *uri); /* a folder listed after it was opened: to the front of the recent ones */
+void recent_file(const char *uri);  /* a file opened: the same */
+int recent_is_folder(const char *entry);
+char *recent_uri(const char *entry); /* the entry's URI, without a folder's "/" */
 void recent_pick(void);             /* the recent folders in a list to go to one */
+
+/* ---- a phone's pages in place of the files (pages.c): Recent, Favorites, and Storage (the places, the drawer's
+ * state) ---- */
+typedef enum { PAGE_NONE, PAGE_RECENT, PAGE_FAVORITES } fr_page;
+void page_open(fr_page p);
+fr_page page_shown(void);
+void pages_draw(Rectangle r); /* the page shown, or Storage while app.drawer_open */
 void theme_apply(void);             /* the scheme (the system's, for SCHEME_SYSTEM) and [theme] into the colours */
 void scheme_set(int scheme);
 
@@ -331,6 +349,8 @@ void search_everywhere(void);     /* the field for a name anywhere below the hom
 void search_index_refresh(void);  /* collects the names below home again, in the background */
 void search_prompt(int content); /* a field in the header for a name (content 0) or the text inside files */
 int search_header(Rectangle r);  /* draws the field or the results' bar; 0 when neither shows */
+int search_shown(void);          /* br shows the field or results */
+void search_close(void);         /* the field, or the results, closed: the folder again */
 void search_poll(void);          /* between frames: the results found meanwhile into the list */
 int search_running(void);
 void search_reveal(void);        /* the cursor row's result, shown in its folder */

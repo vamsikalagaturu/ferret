@@ -193,7 +193,8 @@ static void draw_menus(void)
         if (br.dupes && br.view.n && ui_menu_item("Select extra copies", "list-checks", -1)) dupes_select_copies();
         if (ui_menu_item(sizes_running() ? "Stop calculating sizes" : "Show folder sizes", "ruler", -1)) sizes_measure(1);
         if (ui_menu_item("Bookmarks", "bookmark", -1)) bookmarks_panel_open();
-        if (settings.recent.n > 1 && ui_menu_item("Recent folders", "history", -1)) recent_pick();
+        /* a phone has the Recent page */
+        if (!phone_layout() && settings.recent.n > 1 && ui_menu_item("Recent folders", "history", -1)) recent_pick();
         if (ops_clip_history_count() && ui_menu_item("Paste from history", "clipboard-paste", -1)) ops_clip_history();
         if (undo_can(0) && ui_menu_item("Undo", "undo-2", -1)) undo_run(0);
         if (undo_can(1) && ui_menu_item("Redo", "redo-2", -1)) undo_run(1);
@@ -455,6 +456,58 @@ static void draw_permission(Rectangle r)
     if (ui_button(ui_id("grant", 0), (Rectangle){x + (w - bw) / 2, y, bw, DP(44)}, "Allow access", 1)) plat_request_storage();
 }
 
+/* ---- a phone's bottom bar ---- */
+
+static void files_home_now(const char *s, int n)
+{
+    char *home = plat_home_uri();
+    if (!br.uri || strcmp(br.uri, home)) browser_open(home, 0);
+    fr_strs_free(&br.back);
+    fr_strs_free(&br.forward);
+    free(home);
+}
+
+/* Files, Recent, Search, Favorites and Storage (pages.c). The one in use has the accent behind its icon, as Material
+   3's navigation bar does. Files starts over: home, with no history to go back through. */
+static void bottom_bar(Rectangle r)
+{
+    static const struct {
+        const char *icon, *label;
+    } items[] = {{"house", "Files"}, {"history", "Recent"}, {"search", "Search"}, {"star", "Favorites"}, {"hard-drive", "Storage"}};
+    enum { N = sizeof items / sizeof *items };
+    ui_rect(r, theme.surface);
+    ui_hline(r.x, r.y, r.width, theme.border);
+    char *home = plat_home_uri();
+    int active = 0;
+    if (app.drawer_open || dview_is_open()) active = 4;
+    else if (page_shown() == PAGE_RECENT) active = 1;
+    else if (page_shown() == PAGE_FAVORITES) active = 3;
+    else if (search_shown()) active = 2;
+    float w = r.width / N;
+    for (int i = 0; i < N; i++) {
+        Rectangle cell = {r.x + w * (float)i, r.y, w, r.height};
+        int state = 0, clicked = ui_clickable(ui_id("bottom-bar", i), cell, &state);
+        Rectangle pill = {cell.x + (w - DP(56)) / 2, r.y + DP(8), DP(56), DP(30)};
+        if (i == active) ui_round(pill, 15, ui_alpha(theme.accent, 0.25f));
+        else if (state) ui_round(pill, 15, state == 2 ? theme.pressed : theme.hover);
+        Color c = i == active ? theme.accent : theme.text_dim;
+        ui_icon(items[i].icon, pill, 20, c);
+        ui_text_box(items[i].label, (Rectangle){cell.x, r.y + DP(40), w, DP(18)}, 12, i == active ? FONT_SEMIBOLD : FONT_REGULAR, c,
+                    ALIGN_CENTER, 0);
+        if (!clicked) continue;
+        if (dview_is_open()) dview_close();
+        app.drawer_open = 0;
+        page_open(PAGE_NONE);
+        if (i != 2) search_close();
+        if (i == 0) app_defer(files_home_now, NULL, 0); /* after search_close's leaving */
+        else if (i == 1) page_open(PAGE_RECENT);
+        else if (i == 2) search_everywhere();
+        else if (i == 3) page_open(PAGE_FAVORITES);
+        else if (i == 4) app.drawer_open = 1, places_refresh(1);
+    }
+    free(home);
+}
+
 /* ---- the frame ---- */
 
 /* draws and takes the widgets' input; 1 when the keys go to the list */
@@ -479,6 +532,13 @@ static int frame(void)
     int modal = ops_dialog_open() || connect_dialog_open() || ui_menu_is_open() || app.help_open || dview_modal() || bookmarks_panel_is_open() ||
                 compare_dialog_open();
     Rectangle s = ui.safe;
+    Rectangle bottom = {0};
+    /* not over the soft keyboard (its inset is far taller than the navigation bar's) */
+    if (phone_layout() && ui.ib < DP(160)) {
+        float bh = DP(64);
+        s.height -= bh;
+        bottom = (Rectangle){s.x, s.y + s.height, s.width, bh};
+    }
     if (app_wide()) {
         float sw = DP(240);
         places_draw((Rectangle){s.x, s.y, sw, s.height});
@@ -486,7 +546,10 @@ static int frame(void)
         s.x += sw, s.width -= sw;
     }
     Rectangle list = s;
-    if (dview_is_open()) {
+    if (phone_layout() && (app.drawer_open || page_shown())) {
+        list.height -= ops_draw_jobs(list);
+        pages_draw(list);
+    } else if (dview_is_open()) {
         list.height -= ops_draw_jobs(list);
         dview_draw(list);
     } else {
@@ -515,9 +578,10 @@ static int frame(void)
             ui_text_box(chord, chip, 13, FONT_REGULAR, theme.text_dim, ALIGN_CENTER, 0);
         }
     }
+    if (bottom.height) bottom_bar(bottom);
     /* the drawer slides: 180 ms, eased out opening and in closing */
     static float slide;
-    float target = !app_wide() && app.drawer_open ? 1.0f : 0.0f;
+    float target = !app_wide() && !phone_layout() && app.drawer_open ? 1.0f : 0.0f;
     if (slide != target) {
         float step = (float)ui.dt / 0.18f;
         slide = target > slide ? fminf(target, slide + step) : fmaxf(target, slide - step);
@@ -613,8 +677,20 @@ int fr_app_main(int argc, char **argv)
     fr_strs_free(&restored);
     free(start);
     float scale = 0;
+    double asked_at = 0;
     while (!app.quit && !WindowShouldClose()) {
         plat_frame();
+        /* a folder another app handed over (at start, or to the running window): it opens here, a few times a
+           second at most (each look is a call into Java on Android) */
+        if (fr_now() - asked_at > 0.25) {
+            asked_at = fr_now();
+            char *handed = plat_take_open_path();
+            if (handed) {
+                char *uri = fr_uri_from_path(handed);
+                browser_open(uri, 1);
+                free(uri), free(handed);
+            }
+        }
         ui_begin_frame();
         if (ui.scale != scale) {
             if (scale) ui_fonts_reload(), ui_icons_clear();
